@@ -20,7 +20,7 @@ Here are some ideas to get you started:
 ---
 
 <h2>🏆 Github Profile Trophy</h2>
-<img src="https://github-profile-trophy.vercel.app/?username=fastzhong&theme=vue-dark&column=5"/>
+<img src="https://github-profile-trophy.vercel.app/?username=fastzhong&theme=nord&column=5"/>
 
 ---
 
