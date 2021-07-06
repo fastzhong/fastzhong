@@ -15,16 +15,16 @@ Here are some ideas to get you started:
 - ⚡ Fun fact: ...
 -->
 
+- 🏠 Homepage at https://fastzhong.com/
+
+---
+
 <h2>🏆 Github Profile Trophy</h2>
 <img src="https://github-profile-trophy.vercel.app/?username=fastzhong&column=5"/>
 
 ---
 
-- 🏠 Homepage at https://fastzhong.com/
-
----
-
 <div>
-  <img height="170" align="left" src="https://github-readme-stats.vercel.app/api?username=fastzhong&count_private=true&include_all_commits=true" />
-  <img src="https://github-readme-stats.vercel.app/api/top-langs/?username=fastzhong&layout=compact" />
+  <img height="170" align="left" src="https://github-readme-stats.vercel.app/api?username=fastzhong&theme=vue-dark&count_private=true&include_all_commits=true" />
+  <img src="https://github-readme-stats.vercel.app/api/top-langs/?username=fastzhong&theme=vue-dark&layout=compact" />
 </div>
