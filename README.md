@@ -16,7 +16,7 @@ Here are some ideas to get you started:
 -->
 
 - 👨‍💻 Professional system architect and full stack developer over two decades
-- 🛠 Java, Javascript, Python, Golang
+- 🛠 Java, Javascript, Python, Golang, C
 - 🏠 Blog at https://fastzhong.com/
 
 ![Gender](https://img.shields.io/badge/gender-%F0%9F%A4%B5-lightgrey)
