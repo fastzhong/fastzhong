@@ -20,8 +20,8 @@ Here are some ideas to get you started:
 ![Gender](https://img.shields.io/badge/gender-%F0%9F%A4%B5-lightgrey)
 ![wechat](https://img.shields.io/badge/茶·咖啡-seagreen?style=flat&logo=wechat&labelColor=white)
 [![Twitter Follow](https://img.shields.io/twitter/follow/fastzhong?label=%40fastzhonng&style=social)](https://twitter.com/fastzhong)
-![GitHub followers](https://img.shields.io/github/followers/fastzhong?style=social)
-[![Linkedin](https://img.shields.io/badge/-blue?style=flat&logo=linkedin&labelColor=blue)](https://www.linkedin.com/in/zhonglun/)
+[![GitHub followers](https://img.shields.io/github/followers/fastzhong?label=fastzhong&style=social)](htttps://github.com/fastzhong)
+[![Linkedin Profile](https://img.shields.io/badge/Linkedin-blue?style=flat&logo=linkedin&labelColor=blue)](https://www.linkedin.com/in/zhonglun/)
 
 ---
 
