@@ -17,7 +17,7 @@ Here are some ideas to get you started:
 
 - 🏠 Homepage at https://fastzhong.com/
 
-![Gender](https://img.shields.io/badge/gender-fastzhong-lightgrey)
+![Gender](https://img.shields.io/badge/gender-lightgrey)
 ![Twitter Follow](https://img.shields.io/twitter/follow/fastzhong?style=social)
 ![GitHub followers](https://img.shields.io/github/followers/fastzhong?style=social)
 [![fastzhong.com](https://img.shields.io/badge/Website-46a2f1.svg?&style=flat-square&logo=Google-Chrome&logoColor=white&link=https://fastzhong.com/)](https://fastzhong.com/)
