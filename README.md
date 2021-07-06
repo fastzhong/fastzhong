@@ -18,7 +18,7 @@ Here are some ideas to get you started:
 - 🏠 Homepage at https://fastzhong.com/
 
 ![Gender](https://img.shields.io/badge/gender-%F0%9F%A4%B5-lightgrey)
-![wechat](https://img.shields.io/badge/fastzhong-seagreen?style=flat&logo=wechat&labelColor=white)
+![wechat](https://img.shields.io/badge/ID:fastzhong-seagreen?style=flat&logo=wechat&labelColor=white)
 [![Twitter Follow](https://img.shields.io/twitter/follow/fastzhong?label=%40fastzhonng&style=social)](https://twitter.com/fastzhong)
 [![GitHub followers](https://img.shields.io/github/followers/fastzhong?label=fastzhong&style=social)](htttps://github.com/fastzhong)
 [![Linkedin Profile](https://img.shields.io/badge/Linkedin-blue?style=flat&logo=linkedin&labelColor=blue)](https://www.linkedin.com/in/zhonglun/)
