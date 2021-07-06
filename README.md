@@ -15,6 +15,7 @@ Here are some ideas to get you started:
 - ⚡ Fun fact: ...
 -->
 
+- 👨‍💻 Professional system architect and full stack developer over two decades
 - 🏠 Homepage at https://fastzhong.com/
 
 ![Gender](https://img.shields.io/badge/gender-%F0%9F%A4%B5-lightgrey)
