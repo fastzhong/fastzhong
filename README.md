@@ -21,7 +21,7 @@ Here are some ideas to get you started:
 ![wechat](https://img.shields.io/badge/茶·咖啡-seagreen?style=flat&logo=wechat&labelColor=white)
 [![Twitter Follow](https://img.shields.io/twitter/follow/fastzhong?label=%40fastzhonng&style=social)](https://twitter.com/fastzhong)
 ![GitHub followers](https://img.shields.io/github/followers/fastzhong?style=social)
-![Linkedin](https://img.shields.io/badge/LinkedIn-blue?style=flat&logo=linkedin&labelColor=blue)
+[![Linkedin](https://img.shields.io/badge/-blue?style=flat&logo=linkedin&labelColor=blue)](https://www.linkedin.com/in/zhonglun/)
 
 ---
 
