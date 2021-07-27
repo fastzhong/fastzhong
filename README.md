@@ -16,7 +16,7 @@ Here are some ideas to get you started:
 -->
 
 - 👨‍💻 Professional system architect/full stack developer/team lead over two decades
-- 🛠 Java, Javascript, Python, Golang, C
+- 🛠 Java, Javascript, Python, Golang, C/C++
 - 🏠 Blog at https://fastzhong.com/
 - 🔭 Open for hire and freelance opportunity
 
