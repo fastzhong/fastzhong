@@ -1,4 +1,4 @@
-### Hi 👏
+### Hi 🤝
 
 <!--
 **fastzhong/fastzhong** is a ✨ _special_ ✨ repository because its `README.md` (this file) appears on your GitHub profile.
@@ -16,7 +16,7 @@ Here are some ideas to get you started:
 -->
 
 - 👨‍💻 Professional system architect/full stack developer/team lead over two decades
-- 🛠 Java/Javascript/Python/Golang/C and Rust newbie
+- 🛠 Java/Javascript/Python/C and Golang/Rust newbie
 - 🏠 Blog at https://fastzhong.com/
 - 🔭 Open for hire and freelance opportunity
 
@@ -27,7 +27,7 @@ Here are some ideas to get you started:
 
 ---
 
-<h2>🏆 Github Profile Trophy</h2>
+<h2>🏆 Github Profile Trophy </h2>
 <img src="https://github-profile-trophy.vercel.app/?username=fastzhong&theme=nord&column=6"/>
 
 ---
