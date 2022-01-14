@@ -20,7 +20,8 @@ Here are some ideas to get you started:
 - 🏠 Blog at https://fastzhong.com/
 - 🔭 Open for hire and freelance opportunity
 
-[![Telegram Group](https://img.shields.io/badge/SGSWD-white?style=flat&logo=telegram&labelColor=grey)](https://t.me/+kDWxKk6PmaplODc9)
+👉
+[![Telegram Group](https://img.shields.io/badge/SGSWD-white?style=flat&logo=telegram&labelColor=grey)](https://t.me/+_AXCXiYqp-M0YmY1)
 [![Twitter Follow](https://img.shields.io/twitter/follow/fastzhong?label=%40fastzhonng&style=social)](https://twitter.com/fastzhong)
 [![GitHub followers](https://img.shields.io/github/followers/fastzhong?label=fastzhong&style=social)](htttps://github.com/fastzhong)
 [![Linkedin Profile](https://img.shields.io/badge/Linkedin-blue?style=flat&logo=linkedin&labelColor=blue)](https://www.linkedin.com/in/zhonglun/)
