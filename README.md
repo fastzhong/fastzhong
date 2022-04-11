@@ -20,7 +20,6 @@ Here are some ideas to get you started:
 - 🏠 Blog(Chinese) at https://fastzhong.com/
 - 🔭 Open for hire and freelance opportunity
 
-👉. 
 [![Telegram Group](https://img.shields.io/badge/KopiKing-white?style=flat&logo=telegram&labelColor=grey)](https://t.me/+_AXCXiYqp-M0YmY1)
 [![Twitter Follow](https://img.shields.io/twitter/follow/fastzhong?label=%40fastzhonng&style=social)](https://twitter.com/fastzhong)
 [![GitHub followers](https://img.shields.io/github/followers/fastzhong?label=fastzhong&style=social)](htttps://github.com/fastzhong)
