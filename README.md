@@ -16,7 +16,7 @@ Here are some ideas to get you started:
 -->
 
 - 👨‍💻 Professional system architect/full stack developer/team lead for many years
-- 🛠 Java/Javascript/Python/C and Golang/Rust newbie
+- 🛠 Java/Javascript/Python and Golang/Rust/Scala/C++ newbie
 - 🏠 Blog(Chinese) at https://fastzhong.com/
 - 🔭 Open for hire and freelance opportunity
 
