@@ -33,6 +33,6 @@ Here are some ideas to get you started:
 ---
 
 <div>
-  <img height="170" align="left" src="https://github-readme-stats.vercel.app/api?username=fastzhong&theme=vue-dark&count_private=true&include_all_commits=true" />
-  <img src="https://github-readme-stats.vercel.app/api/top-langs/?username=fastzhong&theme=vue-dark&layout=compact" />
+  <img height="170" align="left" src="https://github-readme-stats-sigma-five.vercel.app/api?username=fastzhong&theme=vue-dark&count_private=true&include_all_commits=true" />
+  <img src="https://github-readme-stats-sigma-five.vercel.app/api/top-langs/?username=fastzhong&theme=vue-dark&layout=compact" />
 </div>
