@@ -15,8 +15,8 @@ Here are some ideas to get you started:
 - ⚡ Fun fact: ...
 -->
 
-- 👨‍💻 System building, delivering and supporting for many years
-- 🛠 Java/Javascript/Python and Golang/Rust/Scala/C++ newbie
+- 👨‍💻 Desiging, building and deliverying softare systems for many years
+- 🛠 experience in Java/Javascript/Python and Golang/Rust/Scala/C++ newbie
 - 🏠 Blog(Chinese) at https://fastzhong.com/
 - 🔭 Open for hire and freelance opportunity
 
