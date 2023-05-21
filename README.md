@@ -15,10 +15,10 @@ Here are some ideas to get you started:
 - ⚡ Fun fact: ...
 -->
 
-- 👨‍💻 Desiging, building and deliverying softare systems for many years
+- 👨‍💻 designing, building, and engineering large software/systems for many years
 - 🛠 experience in Java/Javascript/Python and Golang/Rust/Scala/C++ newbie
-- 🏠 Blog(Chinese) at https://fastzhong.com/
-- 🔭 Open for hire and freelance opportunity
+- 🏠 blog (Chinese): https://fastzhong.com/
+- 🔭 open for hire and freelance opportunity
 
 [![Telegram Group](https://img.shields.io/badge/KopiKing-white?style=flat&logo=telegram&labelColor=grey)](https://t.me/+_AXCXiYqp-M0YmY1)
 [![Twitter Follow](https://img.shields.io/twitter/follow/fastzhong?label=%40fastzhonng&style=social)](https://twitter.com/fastzhong)
