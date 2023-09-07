@@ -18,7 +18,7 @@ Here are some ideas to get you started:
 - 👨‍💻 designing, building, and engineering large software/systems for many years
 - 🛠 experience in Java/Javascript/Python and Golang/Rust/Scala/C++ newbie
 - 🏠 blog (Chinese): https://fastzhong.com/
-- 🔭 open for hire and freelance opportunity
+- 🔭 open for interesting opportunity
 
 [![Telegram Group](https://img.shields.io/badge/KopiKing-white?style=flat&logo=telegram&labelColor=grey)](https://t.me/+_AXCXiYqp-M0YmY1)
 [![Twitter Follow](https://img.shields.io/twitter/follow/fastzhong?label=%40fastzhonng&style=social)](https://twitter.com/fastzhong)
