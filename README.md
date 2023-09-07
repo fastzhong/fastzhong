@@ -15,7 +15,7 @@ Here are some ideas to get you started:
 - ⚡ Fun fact: ...
 -->
 
-- 👨‍💻 designing, building, and engineering large software/systems for many years
+- 👨‍💻 designing, building, and engineering large software/systems for nearly two decades
 - 🛠 experience in Java/Javascript/Python and Golang/Rust/Scala/C++ newbie
 - 🏠 blog (Chinese): https://fastzhong.com/
 - 🔭 open for interesting opportunity
