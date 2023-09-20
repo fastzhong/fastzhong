@@ -16,9 +16,10 @@ Here are some ideas to get you started:
 -->
 
 - 👨‍💻 Designing, building, and engineering large commercial software and systems for two decades
-- 🛠 Fullstack, extensive experience in Java/Kotlin/Javascript/Python/bash and Golang/Rust/Scala/C++ newbie
 - ✍️ blog (Chinese): https://fastzhong.com/
 - 🔭 Open for exciting opportunities
+
+[![My Skills](https://skillicons.dev/icons?i=html,css,js,react,nextjs,ngnix,nodejs,selenium,aws,java,kotlin,scala,spring,py,linux,ansible,docker,kubernetes,kafka,redis,mysql,postgres)](https://skillicons.dev)
 
 [![Telegram Group](https://img.shields.io/badge/KopiKing-white?style=flat&logo=telegram&labelColor=grey)](https://t.me/+_AXCXiYqp-M0YmY1)
 [![Twitter Follow](https://img.shields.io/twitter/follow/fastzhong?label=%40fastzhonng&style=social)](https://twitter.com/fastzhong)
