@@ -19,7 +19,7 @@ Here are some ideas to get you started:
 - ✍️ blog (Chinese): https://fastzhong.com/
 - 💼 Open for exciting opportunities 🇸🇬
 
-[![My Skills](https://skillicons.dev/icons?i=html,css,js,react,nextjs,nginx,nodejs,postman,selenium,aws,java,kotlin,scala,spring,py,go,linux,ansible,docker,kubernetes,kafka,redis,mysql,postgres)](https://skillicons.dev)
+[![My Skills](https://skillicons.dev/icons?i=html,css,js,react,nextjs,nginx,nodejs,postman,selenium,java,kotlin,scala,spring,py,go,linux,ansible,terraform,docker,kubernetes,aws,kafka,redis,MongoDB,Cassandra,elasticsearch,mysql,postgres,flink,spark)](https://skillicons.dev)
 
 [![GitHub followers](https://img.shields.io/github/followers/fastzhong?label=fastzhong&style=social)](https://github.com/fastzhong) &nbsp;
 [![Twitter Follow](https://img.shields.io/twitter/follow/fastzhong?label=%40fastzhonng&style=social)](https://twitter.com/fastzhong) &nbsp;
