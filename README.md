@@ -23,7 +23,7 @@ Here are some ideas to get you started:
 
 [![My Skills](https://skillicons.dev/icons?i=java,kotlin,scala,spring,py,go,rust,git,kafka,rabbitmq,cassandra,mongodb,redis,mysql,postgres,pytorch,tensorflow)](https://skillicons.dev)
 
-[![My Skills](https://skillicons.dev/icons?i=linux,bash,ansible,terraform,docker,kubernetes,prometheus,aws,azure)](https://skillicons.dev)
+[![My Skills](https://skillicons.dev/icons?i=linux,bash,ansible,docker,kubernetes,prometheus,aws,azure)](https://skillicons.dev)
 
 [![GitHub followers](https://img.shields.io/github/followers/fastzhong?label=fastzhong&style=social)](https://github.com/fastzhong) &nbsp;
 [![Twitter Follow](https://img.shields.io/twitter/follow/fastzhong?label=%40fastzhonng&style=social)](https://twitter.com/fastzhong) &nbsp;
