@@ -19,10 +19,11 @@ Here are some ideas to get you started:
 - ✍️ blog (Chinese): https://fastzhong.com/
 - 💼 Open for exciting opportunities 🇸🇬
 
-[![My Skills](https://skillicons.dev/icons?i=html,css,js,react,nextjs,nginx,nodejs,postman,selenium)](https://skillicons.dev)
+[![My Skills](https://skillicons.dev/icons?i=html,css,tailwind,js,ts,react,nextjs,d3,nginx,nodejs,supabase,postman,selenium)](https://skillicons.dev)
 
-[![My Skills](https://skillicons.dev/icons?i=html,css,js,react,nextjs,nginx,nodejs,postman,selenium,java,kotlin,scala,spring,py,go,linux,ansible,terraform,docker,kubernetes,aws,azure,kafka,redis,,cassandra,elasticsearch,mysql,postgres,flink,spark)](https://skillicons.dev)
+[![My Skills](https://skillicons.dev/icons?i=java,kotlin,scala,spring,py,go,rust,git,kafka,rabbitmq,cassandra,mongodb,redis,mysql,postgres,pytorch,tensorflow)](https://skillicons.dev)
 
+[![My Skills](https://skillicons.dev/icons?i=linux,bash,ansible,terraform,docker,kubernetes,prometheus,aws,azure)](https://skillicons.dev)
 
 [![GitHub followers](https://img.shields.io/github/followers/fastzhong?label=fastzhong&style=social)](https://github.com/fastzhong) &nbsp;
 [![Twitter Follow](https://img.shields.io/twitter/follow/fastzhong?label=%40fastzhonng&style=social)](https://twitter.com/fastzhong) &nbsp;
