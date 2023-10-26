@@ -15,9 +15,9 @@ Here are some ideas to get you started:
 - ⚡ Fun fact: ...
 -->
 
-- 👨‍💻 Designing, building, and engineering large commercial software and systems for two decades
+- 👨‍💻 Designing, building, and engineering large commercial software and systems for more than two decades
 - ✍️ blog (Chinese): https://fastzhong.com/
-- 💼 Open for exciting opportunities
+- 💼 Open for exciting opportunities 🇸🇬
 
 [![My Skills](https://skillicons.dev/icons?i=html,css,js,react,nextjs,nginx,nodejs,postman,selenium,aws,java,kotlin,scala,spring,py,go,linux,ansible,docker,kubernetes,kafka,redis,mysql,postgres)](https://skillicons.dev)
 
