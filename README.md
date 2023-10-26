@@ -21,9 +21,9 @@ Here are some ideas to get you started:
 
 [![My Skills](https://skillicons.dev/icons?i=html,css,js,react,nextjs,nginx,nodejs,postman,selenium,aws,java,kotlin,scala,spring,py,go,linux,ansible,docker,kubernetes,kafka,redis,mysql,postgres)](https://skillicons.dev)
 
-[![Telegram Group](https://img.shields.io/badge/KopiKing-white?style=flat&logo=telegram&labelColor=grey)](https://t.me/+_AXCXiYqp-M0YmY1)
-[![Twitter Follow](https://img.shields.io/twitter/follow/fastzhong?label=%40fastzhonng&style=social)](https://twitter.com/fastzhong)
-[![GitHub followers](https://img.shields.io/github/followers/fastzhong?label=fastzhong&style=social)](https://github.com/fastzhong)
+[![GitHub followers](https://img.shields.io/github/followers/fastzhong?label=fastzhong&style=social)](https://github.com/fastzhong) &nbsp;
+[![Twitter Follow](https://img.shields.io/twitter/follow/fastzhong?label=%40fastzhonng&style=social)](https://twitter.com/fastzhong) &nbsp;
+[![Telegram Group](https://img.shields.io/badge/KopiKing-white?style=flat&logo=telegram&labelColor=grey)](https://t.me/+_AXCXiYqp-M0YmY1) &nbsp;
 [![Linkedin Profile](https://img.shields.io/badge/Linkedin-blue?style=flat&logo=linkedin&labelColor=blue)](https://www.linkedin.com/in/zhonglun/)
 
 ---
