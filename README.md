@@ -16,6 +16,7 @@ Here are some ideas to get you started:
 -->
 
 - 👨‍💻 Designing, building, and engineering large commercial software and systems for more than two decades
+- 🏠 Singapore property hacker
 - ✍️ blog (Chinese): https://fastzhong.com/
 - 💼 Open for exciting opportunities 🇸🇬
 
