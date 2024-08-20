@@ -300,3 +300,80 @@ public class RiskDecisionMatrixRow implements DecisionMatrixRow {
     // Getters and setters for individual fields if needed
 }
 ```
+
+```java
+@Configuration
+public class DroolsConfig {
+
+    @Bean
+    public KieContainer kieContainer(KieFileSystem kfs) {
+        KieServices kieServices = KieServices.Factory.get();
+        KieBuilder kieBuilder = kieServices.newKieBuilder(kfs);
+        kieBuilder.buildAll();
+        if (kieBuilder.getResults().hasMessages(org.kie.api.builder.Message.Level.ERROR)) {
+            throw new RuntimeException("Error in Drools configuration: " + kieBuilder.getResults().toString());
+        }
+        ReleaseId krDefaultReleaseId = kieServices.getRepository().getDefaultReleaseId();
+        return kieServices.newKieContainer(krDefaultReleaseId);
+    }
+
+    @Bean
+    public KieSession kieSession(KieContainer kieContainer) {
+        return kieContainer.newKieSession();
+    }
+
+    @Bean
+    public KModuleBeanFactoryPostProcessor kiePostProcessor() {
+        return new KModuleBeanFactoryPostProcessor();
+    }
+}
+```
+
+```java
+@Service
+public class LoanApprovalService {
+
+    @Autowired
+    private DecisionMatrixMapper decisionMatrixMapper;
+
+    @Autowired
+    private DroolsRuleGeneratorService ruleGeneratorService;
+
+    @Autowired
+    private KieContainer kieContainer;
+
+    @Autowired
+    private KieFileSystem kieFileSystem;
+
+    @PostConstruct
+    public void initializeDroolsRules() {
+        // Load the decision matrix rows from the database
+        List<DecisionMatrixRow> rows = decisionMatrixMapper.getAllDecisionMatrixRows();
+        
+        // Generate Drools rules using the GenericRuleTemplate
+        String rules = ruleGeneratorService.generateRules(rows, new GenericRuleTemplate());
+        
+        // Write rules directly to the KieFileSystem in-memory
+        kieFileSystem.write("src/main/resources/rules/generated_rules.drl", rules);
+        
+        // Compile the rules and load them into the KieContainer
+        KieBuilder kieBuilder = kieContainer.getKieServices().newKieBuilder(kieFileSystem);
+        kieBuilder.buildAll();
+        
+        // Check for any errors in the rule compilation process
+        if (kieBuilder.getResults().hasMessages(org.kie.api.builder.Message.Level.ERROR)) {
+            throw new RuntimeException("Error compiling generated rules: " + kieBuilder.getResults());
+        }
+    }
+
+    public void processLoanApplication(Applicant applicant) {
+        // Create a new session, insert the applicant, and fire all rules
+        KieSession kieSession = kieContainer.newKieSession();
+        kieSession.insert(applicant);
+        kieSession.fireAllRules();
+        kieSession.dispose();
+    }
+}
+```
+
+
