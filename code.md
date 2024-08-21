@@ -376,4 +376,46 @@ public class LoanApprovalService {
 }
 ```
 
+```txt
+rule "Compute TotalTransferAmount"
+when
+    $payments : List(size > 0) from collect(PaymentDto(creditorAccountNo == $creditorAccountNo, valueDate == $valueDate))
+then
+    BigDecimal totalAmount = $payments.stream()
+                                       .map(PaymentDto::getPaymentAmount)
+                                       .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+    for (PaymentDto payment : $payments) {
+        payment.setTotalTransferAmount(totalAmount);
+    }
+end
+```
+
+```txt
+rule "Derive ResourceId and FeatureId"
+when
+    $payment : PaymentDto(paymentChannel == "ONLINE", fileType == "XML", creditorBankBic != "24", totalTransferAmount > 2000000)
+then
+    $payment.setResourceId("RES1");
+    $payment.setFeatureId("FEAT1");
+end
+```
+
+```txt
+rule "Compute BulkAmount and BulkSize"
+when
+    $payments : List(size > 0) from collect(PaymentDto(splittingKey == $splittingKey))
+then
+    BigDecimal bulkAmount = $payments.stream()
+                                      .map(PaymentDto::getPaymentAmount)
+                                      .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+    int bulkSize = $payments.size();
+
+    for (PaymentDto payment : $payments) {
+        payment.setBulkAmount(bulkAmount);
+        payment.setBulkSize(bulkSize);
+    }
+end
+```
 
