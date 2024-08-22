@@ -334,3 +334,134 @@ then
 end
 ```
 
+## Spring Integration
+
+```java
+public class ProcessingHandler {
+
+     private final ProcessContext processContextHolder;
+     private final ObjectMapper objectMapper;
+     private final AuthFileService authFileService;
+     private final PwsService pwsService;
+     private final NotificationService notificationService;
+     private final FileBackupService fileBackService;
+
+     public List<Message<PwsMessage>> processAuthFile(Message<AuthPain001> message) {
+         MessageHeaders headers = message.getHeaders();
+         AuthPain001 authPain001 = message.getPayload();
+         String status = authFileService.getAuthFileStatus(authPain001);
+         log.info("auth file status: {}", status);
+         if (AUTH_STATUS02.equals(status)) {
+             log.warn("reject auth file: {}", "path");
+             File file = (File) Objects.requireNonNull(headers.get("file_originalFile"));
+             // ToDo: update process status
+             throw new AuthFileRejectedException(file.getAbsolutePath());
+         }
+         /* ToDo
+            1. check status = 02
+            2.
+            partial rejected? RejectFileOnError?
+            retrieve the file upload information "pws_file_upload"
+            flatten payment (debtor, value date) -> PwsMessage
+          */
+         PwsMessage pwsMessage1 = new PwsMessage();
+         PwsMessage pwsMessage2 = new PwsMessage();
+         List<Message<PwsMessage>> messageList = new ArrayList<>();
+         messageList.add(MessageBuilder.withPayload(pwsMessage1).copyHeaders(headers).setHeader("handlers", HandlerName.processAuthFile).build());
+         messageList.add(MessageBuilder.withPayload(pwsMessage2).copyHeaders(headers).setHeader("handlers", HandlerName.processAuthFile).build());
+         return messageList;
+     }
+
+     public Message<NotificationMessage> processPwsMessage(Message<PwsMessage> message) {
+         MessageHeaders headers = message.getHeaders();
+         PwsMessage authPain001 = message.getPayload();
+
+         log.info("splitting started");
+         /* ToDo: pws message
+           1. charge type
+           2. totalTransferAmount: debtor account & value date
+           3. derive product, resource id, feature id
+           4. splittingKey: product, charge type, debtor account, value date (xml/uff: NRA/RA)
+           5. bulk level computation
+           6. generate pws bulk & child instructions
+        */
+
+         log.info("validation started");
+         log.info("persisting started");
+         /* ToDo: pwsMesage
+            1. validation
+            2. persisting
+        */
+         NotificationMessage notificationMessage = new NotificationMessage();
+         return MessageBuilder.withPayload(notificationMessage).copyHeaders(headers).setHeader("handlers", HandlerName.processPws).build();
+     }
+
+     public Message<?> sendNotification(Message<NotificationMessage> message) {
+         MessageHeaders headers = message.getHeaders();
+         NotificationMessage notificationMessage = message.getPayload();
+         log.info("sendNotification started");
+         FileBackupMessage msg = new FileBackupMessage();
+         return MessageBuilder.withPayload(msg).copyHeaders(headers).setHeader("handlers", HandlerName.sendNotification).build();
+
+     }
+
+     public void backupFile(Message<FileBackupMessage> message) {
+         MessageHeaders headers = message.getHeaders();
+         FileBackupMessage backupMessage = message.getPayload();
+         log.info("backupFile started");
+         File file = (File) Objects.requireNonNull(headers.get("file_originalFile"));
+         fileBackService.backupAuthFile(file);
+         List<HandlerName> handlers = (List<HandlerName>) headers.get("handlers");
+         handlers.add(HandlerName.backupFile);
+     }
+
+ }
+```
+
+```java
+public class ProcessingHandlerErrorAdvice extends AbstractRequestHandlerAdvice  {
+
+    private final ProcessContext processContext;
+    private final MessageChannel notificationInputChannel;
+
+    private volatile long sendTimeout = 1000000L;
+
+    @Override
+    protected Object doInvoke(ExecutionCallback callback, Object target, Message<?> message) {
+        MessageHeaders headers = message.getHeaders();
+        NotificationMessage notificationMessage = new NotificationMessage();
+        try {
+            return callback.execute();
+        } catch (AuthFileRejectedException e) {
+            // ToDo
+        } catch (RejectFileOnErrorException e) {
+            // ToDo
+        } catch (Exception e) {
+            // ToDo
+        }
+        Message<NotificationMessage> messageToSend = MessageBuilder.withPayload(notificationMessage).copyHeaders(headers).build();
+        boolean sent = notificationInputChannel.send(messageToSend, sendTimeout);
+        if (!sent) {
+            log.error("Failed to send error message to notificationInputChannel");
+            throw new MessageDeliveryException(message, "Failed to send message to channel '" + notificationInputChannel + "' within timeout: " + sendTimeout);
+        }
+        return null;
+    }
+}
+```
+
+```java
+@Bean
+    public IntegrationFlow fileProcessingFlow(ProcessingHandler processingHandler, ProcessingHandlerErrorAdvice advice) {
+        return IntegrationFlow.from("fileProcessingInputChannel")
+                .handle(processingHandler, HandlerName.processAuthFile.name())
+                .channel("pwsProcessingInputChannel")
+                .handle(processingHandler, HandlerName.processPws.name())
+                .channel("notificationInputChannel")
+                .handle(processingHandler, HandlerName.sendNotification.name())
+                .channel("fileBackupInputChannel")
+                .handle(processingHandler, HandlerName.backupFile.name())
+                .get();
+    }
+```
+
