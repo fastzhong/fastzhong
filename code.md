@@ -10,458 +10,81 @@ xml: false
 ## RuleTemplate
 
 ```java
+public interface DecisionMatrixRow {
+
+    Long getId();
+
+    Map<String, String> getFieldConditionColumns();
+
+    Map<String, String> getBusinessConditionColumns();
+
+    Map<String, String> getFieldActionColumns();
+
+    Map<String, String> getBusinessActionColumns();
+
+}
+```
+
+```java
 public class GenericRuleTemplate implements RuleTemplate {
 
     @Override
     public String generateRule(DecisionMatrixRow row) {
+
         StringBuilder rule = new StringBuilder();
         rule.append("rule \"Rule_").append(row.getId()).append("\"\n");
         rule.append("when\n");
         rule.append("    $entity : Entity(");
 
-        // Add simplified conditions
-        for (SimplifiedConditionColumn condition : simplifiedConditionColumns) {
-            String conditionValue = condition.getConditionExtractor().apply(row);
-            if (conditionValue != null) {
-                rule.append(condition.getVariableName()).append(" ").append(conditionValue).append(", ");
-            }
-        }
+        // Add field conditions
+        Map<String, String> fieldConditionCols = row.getFieldConditionColumns();
+        final AtomicBoolean firstCondition = new AtomicBoolean(true);
+        fieldConditionCols.keySet().forEach(k -> {
+           if (StringUtils.isNotEmpty(fieldConditionCols.get(k))) {
+               if (!firstCondition.get()) {
+                   rule.append(", ");
+               }
+               rule.append(k).append(" ").append(fieldConditionCols.get(k));
+               firstCondition.set(false);
+           }
+        });
 
-        // Add generic conditions
-        for (GenericConditionColumn condition : genericConditionColumns) {
-            String conditionExpression = condition.getConditionExtractor().apply(row);
-            if (conditionExpression != null) {
-                rule.append(conditionExpression).append(", ");
+        // Add business rule condition
+        Map<String, String> businessConditionCols = row.getBusinessConditionColumns();
+        firstCondition.set(true);
+        businessConditionCols.keySet().forEach(k -> {
+            if (StringUtils.isNotEmpty(businessConditionCols.get(k))) {
+                if (!firstCondition.get()) {
+                    rule.append(", ");
+                }
+                rule.append(businessConditionCols.get(k)).append(", ");
+                firstCondition.set(false);
             }
-        }
+        });
 
         rule.append(")\n");
         rule.append("then\n");
 
-        // Add simplified actions
-        for (SimplifiedActionColumn action : simplifiedActionColumns) {
-            String actionValue = action.getActionExtractor().apply(row);
-            if (actionValue != null) {
-                rule.append("    $entity.set").append(capitalize(action.getVariableName()))
-                    .append("(").append(actionValue).append(");\n");
+        // Add field actions
+        Map<String, String> fieldActionCols = row.getFieldActionColumns();
+        fieldActionCols.keySet().forEach(k -> {
+            if (StringUtils.isNotEmpty(fieldActionCols.get(k))) {
+                rule.append("    $entity.set").append(k)
+                        .append("(").append(fieldActionCols.get(k)).append(");\n");
             }
-        }
+        });
 
         // Add generic actions
-        for (GenericActionColumn action : genericActionColumns) {
-            String actionExpression = action.getActionExtractor().apply(row);
-            if (actionExpression != null) {
-                rule.append(actionExpression).append("\n");
+        Map<String, String> businessActionCols = row.getBusinessActionColumns();
+        businessActionCols.keySet().forEach(k -> {
+            if (StringUtils.isNotEmpty(businessActionCols.get(k))) {
+                rule.append(businessActionCols.get(k)).append("\n");
             }
-        }
+        });
 
         rule.append("end\n");
         return rule.toString();
     }
 
-    @Override
-    public String generateValidationRule(DecisionMatrixRow row) {
-        StringBuilder rule = new StringBuilder();
-        rule.append("rule \"ValidationRule_").append(row.getId()).append("\"\n");
-        rule.append("when\n");
-        rule.ap
-```
-
-```java
-@Service
-public class DroolsRuleGeneratorService {
-
-    public <T extends DecisionMatrixRow> String generateRules(List<T> rows, RuleTemplate template) {
-        return rows.stream()
-                .map(template::generateRule)
-                .collect(Collectors.joining("\n"));
-    }
-
-    public <T extends DecisionMatrixRow> String generateValidationRules(List<T> rows, RuleTemplate template) {
-        return rows.stream()
-                .map(template::generateValidationRule)
-                .collect(Collectors.joining("\n"));
-    }
 }
 ```
-
-```java
-@Mapper
-public interface DecisionMatrixMapper {
-    List<RiskDecisionMatrixRow> getAllRiskDecisionMatrixRows();
-    List<ProductDecisionMatrixRow> getAllProductDecisionMatrixRows();
-}
-```
-
-```java
-public interface RiskDecisionMatrixDAO {
-    List<RiskDecisionMatrixRow> getAll();
-    RiskDecisionMatrixRow findById(Long id);
-    void insert(RiskDecisionMatrixRow riskDecisionMatrixRow);
-    void update(RiskDecisionMatrixRow riskDecisionMatrixRow);
-    void delete(Long id);
-}
-```
-
-```xml
-<?xml version="1.0" encoding="UTF-8" ?>
-<!DOCTYPE mapper
-    PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
-    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
-
-<mapper namespace="com.example.dao.RiskDecisionMatrixDAO">
-
-    <resultMap id="RiskDecisionMatrixResultMap" type="RiskDecisionMatrixRow">
-        <id column="id" property="id" />
-        <result column="condition_age" property="conditionAge" />
-        <result column="condition_income" property="conditionIncome" />
-        <result column="condition_credit_score" property="conditionCreditScore" />
-        <result column="action_risk_score" property="actionRiskScore" />
-        <result column="action_approval_status" property="actionApprovalStatus" />
-    </resultMap>
-
-    <select id="getAll" resultMap="RiskDecisionMatrixResultMap">
-        SELECT * FROM RiskDecisionMatrix
-    </select>
-
-    <select id="findById" resultMap="RiskDecisionMatrixResultMap">
-        SELECT * FROM RiskDecisionMatrix WHERE id = #{id}
-    </select>
-
-    <insert id="insert">
-        INSERT INTO RiskDecisionMatrix (id, condition_age, condition_income, condition_credit_score, action_risk_score, action_approval_status)
-        VALUES (#{id}, #{conditionAge}, #{conditionIncome}, #{conditionCreditScore}, #{actionRiskScore}, #{actionApprovalStatus})
-    </insert>
-
-    <update id="update">
-        UPDATE RiskDecisionMatrix
-        SET condition_age = #{conditionAge},
-            condition_income = #{conditionIncome},
-            condition_credit_score = #{conditionCreditScore},
-            action_risk_score = #{actionRiskScore},
-            action_approval_status = #{actionApprovalStatus}
-        WHERE id = #{id}
-    </update>
-
-    <delete id="delete">
-        DELETE FROM RiskDecisionMatrix WHERE id = #{id}
-    </delete>
-
-</mapper>
-```
-
-```java
-
-public interface DecisionMatrixRow {
-    Long getId();
-
-    Map<String, String> getSimplifiedConditionColumns();
-
-    Map<String, String> getGenericConditionColumns();
-
-    Map<String, String> getSimplifiedActionColumns();
-
-    Map<String, String> getGenericActionColumns();
-}
-
-
-public class RiskDecisionMatrixRow implements DecisionMatrixRow {
-    private Long id;
-    private String conditionAge;
-    private String conditionIncome;
-    private String conditionCreditScore;
-    private String genericCondition;
-
-    private String actionRiskScore;
-    private String actionApprovalStatus;
-    private String genericAction;
-
-    @Override
-    public Long getId() {
-        return id;
-    }
-
-    @Override
-    public Map<String, String> getSimplifiedConditionColumns() {
-        Map<String, String> simplifiedConditions = new HashMap<>();
-        simplifiedConditions.put("age", conditionAge);
-        simplifiedConditions.put("income", conditionIncome);
-        simplifiedConditions.put("creditScore", conditionCreditScore);
-        return simplifiedConditions;
-    }
-
-    @Override
-    public Map<String, String> getGenericConditionColumns() {
-        Map<String, String> genericConditions = new HashMap<>();
-        genericConditions.put("genericCondition", genericCondition);
-        return genericConditions;
-    }
-
-    @Override
-    public Map<String, String> getSimplifiedActionColumns() {
-        Map<String, String> simplifiedActions = new HashMap<>();
-        simplifiedActions.put("riskScore", actionRiskScore);
-        simplifiedActions.put("approvalStatus", actionApprovalStatus);
-        return simplifiedActions;
-    }
-
-    @Override
-    public Map<String, String> getGenericActionColumns() {
-        Map<String, String> genericActions = new HashMap<>();
-        genericActions.put("genericAction", genericAction);
-        return genericActions;
-    }
-
-    // Getters and setters for individual fields if needed
-}
-```
-
-```java
-@Configuration
-public class DroolsConfig {
-
-    @Bean
-    public KieContainer kieContainer(KieFileSystem kfs) {
-        KieServices kieServices = KieServices.Factory.get();
-        KieBuilder kieBuilder = kieServices.newKieBuilder(kfs);
-        kieBuilder.buildAll();
-        if (kieBuilder.getResults().hasMessages(org.kie.api.builder.Message.Level.ERROR)) {
-            throw new RuntimeException("Error in Drools configuration: " + kieBuilder.getResults().toString());
-        }
-        ReleaseId krDefaultReleaseId = kieServices.getRepository().getDefaultReleaseId();
-        return kieServices.newKieContainer(krDefaultReleaseId);
-    }
-
-    @Bean
-    public KieSession kieSession(KieContainer kieContainer) {
-        return kieContainer.newKieSession();
-    }
-
-    @Bean
-    public KModuleBeanFactoryPostProcessor kiePostProcessor() {
-        return new KModuleBeanFactoryPostProcessor();
-    }
-}
-```
-
-```java
-@Service
-public class LoanApprovalService {
-
-    @Autowired
-    private DecisionMatrixMapper decisionMatrixMapper;
-
-    @Autowired
-    private DroolsRuleGeneratorService ruleGeneratorService;
-
-    @Autowired
-    private KieContainer kieContainer;
-
-    @Autowired
-    private KieFileSystem kieFileSystem;
-
-    @PostConstruct
-    public void initializeDroolsRules() {
-        // Load the decision matrix rows from the database
-        List<DecisionMatrixRow> rows = decisionMatrixMapper.getAllDecisionMatrixRows();
-        
-        // Generate Drools rules using the GenericRuleTemplate
-        String rules = ruleGeneratorService.generateRules(rows, new GenericRuleTemplate());
-        
-        // Write rules directly to the KieFileSystem in-memory
-        kieFileSystem.write("src/main/resources/rules/generated_rules.drl", rules);
-        
-        // Compile the rules and load them into the KieContainer
-        KieBuilder kieBuilder = kieContainer.getKieServices().newKieBuilder(kieFileSystem);
-        kieBuilder.buildAll();
-        
-        // Check for any errors in the rule compilation process
-        if (kieBuilder.getResults().hasMessages(org.kie.api.builder.Message.Level.ERROR)) {
-            throw new RuntimeException("Error compiling generated rules: " + kieBuilder.getResults());
-        }
-    }
-
-    public void processLoanApplication(Applicant applicant) {
-        // Create a new session, insert the applicant, and fire all rules
-        KieSession kieSession = kieContainer.newKieSession();
-        kieSession.insert(applicant);
-        kieSession.fireAllRules();
-        kieSession.dispose();
-    }
-}
-```
-
-```txt
-rule "Compute TotalTransferAmount"
-when
-    $payments : List(size > 0) from collect(PaymentDto(creditorAccountNo == $creditorAccountNo, valueDate == $valueDate))
-then
-    BigDecimal totalAmount = $payments.stream()
-                                       .map(PaymentDto::getPaymentAmount)
-                                       .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-    for (PaymentDto payment : $payments) {
-        payment.setTotalTransferAmount(totalAmount);
-    }
-end
-```
-
-```txt
-rule "Derive ResourceId and FeatureId"
-when
-    $payment : PaymentDto(paymentChannel == "ONLINE", fileType == "XML", creditorBankBic != "24", totalTransferAmount > 2000000)
-then
-    $payment.setResourceId("RES1");
-    $payment.setFeatureId("FEAT1");
-end
-```
-
-```txt
-rule "Compute BulkAmount and BulkSize"
-when
-    $payments : List(size > 0) from collect(PaymentDto(splittingKey == $splittingKey))
-then
-    BigDecimal bulkAmount = $payments.stream()
-                                      .map(PaymentDto::getPaymentAmount)
-                                      .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-    int bulkSize = $payments.size();
-
-    for (PaymentDto payment : $payments) {
-        payment.setBulkAmount(bulkAmount);
-        payment.setBulkSize(bulkSize);
-    }
-end
-```
-
-## Spring Integration
-
-```java
-public class ProcessingHandler {
-
-     private final ProcessContext processContextHolder;
-     private final ObjectMapper objectMapper;
-     private final AuthFileService authFileService;
-     private final PwsService pwsService;
-     private final NotificationService notificationService;
-     private final FileBackupService fileBackService;
-
-     public List<Message<PwsMessage>> processAuthFile(Message<AuthPain001> message) {
-         MessageHeaders headers = message.getHeaders();
-         AuthPain001 authPain001 = message.getPayload();
-         String status = authFileService.getAuthFileStatus(authPain001);
-         log.info("auth file status: {}", status);
-         if (AUTH_STATUS02.equals(status)) {
-             log.warn("reject auth file: {}", "path");
-             File file = (File) Objects.requireNonNull(headers.get("file_originalFile"));
-             // ToDo: update process status
-             throw new AuthFileRejectedException(file.getAbsolutePath());
-         }
-         /* ToDo
-            1. check status = 02
-            2.
-            partial rejected? RejectFileOnError?
-            retrieve the file upload information "pws_file_upload"
-            flatten payment (debtor, value date) -> PwsMessage
-          */
-         PwsMessage pwsMessage1 = new PwsMessage();
-         PwsMessage pwsMessage2 = new PwsMessage();
-         List<Message<PwsMessage>> messageList = new ArrayList<>();
-         messageList.add(MessageBuilder.withPayload(pwsMessage1).copyHeaders(headers).setHeader("handlers", HandlerName.processAuthFile).build());
-         messageList.add(MessageBuilder.withPayload(pwsMessage2).copyHeaders(headers).setHeader("handlers", HandlerName.processAuthFile).build());
-         return messageList;
-     }
-
-     public Message<NotificationMessage> processPwsMessage(Message<PwsMessage> message) {
-         MessageHeaders headers = message.getHeaders();
-         PwsMessage authPain001 = message.getPayload();
-
-         log.info("splitting started");
-         /* ToDo: pws message
-           1. charge type
-           2. totalTransferAmount: debtor account & value date
-           3. derive product, resource id, feature id
-           4. splittingKey: product, charge type, debtor account, value date (xml/uff: NRA/RA)
-           5. bulk level computation
-           6. generate pws bulk & child instructions
-        */
-
-         log.info("validation started");
-         log.info("persisting started");
-         /* ToDo: pwsMesage
-            1. validation
-            2. persisting
-        */
-         NotificationMessage notificationMessage = new NotificationMessage();
-         return MessageBuilder.withPayload(notificationMessage).copyHeaders(headers).setHeader("handlers", HandlerName.processPws).build();
-     }
-
-     public Message<?> sendNotification(Message<NotificationMessage> message) {
-         MessageHeaders headers = message.getHeaders();
-         NotificationMessage notificationMessage = message.getPayload();
-         log.info("sendNotification started");
-         FileBackupMessage msg = new FileBackupMessage();
-         return MessageBuilder.withPayload(msg).copyHeaders(headers).setHeader("handlers", HandlerName.sendNotification).build();
-
-     }
-
-     public void backupFile(Message<FileBackupMessage> message) {
-         MessageHeaders headers = message.getHeaders();
-         FileBackupMessage backupMessage = message.getPayload();
-         log.info("backupFile started");
-         File file = (File) Objects.requireNonNull(headers.get("file_originalFile"));
-         fileBackService.backupAuthFile(file);
-         List<HandlerName> handlers = (List<HandlerName>) headers.get("handlers");
-         handlers.add(HandlerName.backupFile);
-     }
-
- }
-```
-
-```java
-public class ProcessingHandlerErrorAdvice extends AbstractRequestHandlerAdvice  {
-
-    private final ProcessContext processContext;
-    private final MessageChannel notificationInputChannel;
-
-    private volatile long sendTimeout = 1000000L;
-
-    @Override
-    protected Object doInvoke(ExecutionCallback callback, Object target, Message<?> message) {
-        MessageHeaders headers = message.getHeaders();
-        NotificationMessage notificationMessage = new NotificationMessage();
-        try {
-            return callback.execute();
-        } catch (AuthFileRejectedException e) {
-            // ToDo
-        } catch (RejectFileOnErrorException e) {
-            // ToDo
-        } catch (Exception e) {
-            // ToDo
-        }
-        Message<NotificationMessage> messageToSend = MessageBuilder.withPayload(notificationMessage).copyHeaders(headers).build();
-        boolean sent = notificationInputChannel.send(messageToSend, sendTimeout);
-        if (!sent) {
-            log.error("Failed to send error message to notificationInputChannel");
-            throw new MessageDeliveryException(message, "Failed to send message to channel '" + notificationInputChannel + "' within timeout: " + sendTimeout);
-        }
-        return null;
-    }
-}
-```
-
-```java
-@Bean
-    public IntegrationFlow fileProcessingFlow(ProcessingHandler processingHandler, ProcessingHandlerErrorAdvice advice) {
-        return IntegrationFlow.from("fileProcessingInputChannel")
-                .handle(processingHandler, HandlerName.processAuthFile.name())
-                .channel("pwsProcessingInputChannel")
-                .handle(processingHandler, HandlerName.processPws.name())
-                .channel("notificationInputChannel")
-                .handle(processingHandler, HandlerName.sendNotification.name())
-                .channel("fileBackupInputChannel")
-                .handle(processingHandler, HandlerName.backupFile.name())
-                .get();
-    }
-```
-
