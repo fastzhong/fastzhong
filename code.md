@@ -88,3 +88,35 @@ public class GenericRuleTemplate implements RuleTemplate {
 
 }
 ```
+
+```txt
+rule "Compute TotalTransferAmount"
+when
+    $payments : List(size > 0) from collect(PaymentDto(creditorAccountNo == $creditorAccountNo, valueDate == $valueDate))
+then
+    BigDecimal totalAmount = $payments.stream()
+                                       .map(PaymentDto::getPaymentAmount)
+                                       .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+    for (PaymentDto payment : $payments) {
+        payment.setTotalTransferAmount(totalAmount);
+    }
+end
+
+rule "Compute BulkAmount and BulkSize"
+when
+    $payments : List(size > 0) from collect(PaymentDto(splittingKey == $splittingKey))
+then
+    BigDecimal bulkAmount = $payments.stream()
+                                      .map(PaymentDto::getPaymentAmount)
+                                      .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+    int bulkSize = $payments.size();
+
+    for (PaymentDto payment : $payments) {
+        payment.setBulkAmount(bulkAmount);
+        payment.setBulkSize(bulkSize);
+    }
+end
+
+```
