@@ -89,6 +89,33 @@ public class GenericRuleTemplate implements RuleTemplate {
 }
 ```
 
+```java
+public static String columnToProperty(String columnName) {
+    if (columnName == null || columnName.isEmpty()) {
+        return columnName;
+    }
+
+    StringBuilder result = new StringBuilder();
+    boolean nextUpperCase = false;
+    
+    for (int i = 0; i < columnName.length(); i++) {
+        char c = columnName.charAt(i);
+        if (c == '_') {
+            nextUpperCase = true;
+        } else {
+            if (nextUpperCase) {
+                result.append(Character.toUpperCase(c));
+                nextUpperCase = false;
+            } else {
+                result.append(Character.toLowerCase(c));
+            }
+        }
+    }
+
+    return result.toString();
+}
+```
+
 ```txt
 rule "Compute TotalTransferAmount"
 when
