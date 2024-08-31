@@ -147,3 +147,230 @@ then
 end
 
 ```
+
+# Bulk Insert & Optimization 
+
+#  Command Line Application 
+
+```java
+@SpringBootApplication
+ @Configuration
+ @Slf4j
+ public class UobCmdBootApplication implements CommandLineRunner {
+
+     @Autowired
+     ConfigurableApplicationContext context;
+
+     @Autowired
+     PfpProperties pfpProperties;
+
+     @Autowired
+     AtomicBoolean runOnce;
+
+     @Autowired
+     CountDownLatch latch;
+
+     @Autowired
+     FilePollingAdapter filePollingAdapter;
+
+     public static void main(String[] args) {
+         log.info("UobCmdBootApplication Application: starting");
+         SpringApplication.run(UobCmdBootApplication.class, args);
+     }
+
+     @Override
+     public void run(String... args) throws Exception {
+         log.info("DMP Auth file processing path: {}", pfpProperties.getDmpAuthProcessingFilePath());
+         log.info("polling {} mins", pfpProperties.getDmpAuthFilePolling());
+         boolean runOnceFlag = Arrays.asList(args).contains("--once");
+         runOnce.getAndSet(runOnceFlag);
+         filePollingAdapter.startFilePolling();
+
+         if (runOnceFlag) {
+             // run once and exit
+             log.info("run once only ...");
+             latch.await();
+             filePollingAdapter.stopFilePolling();
+             SpringApplication.exit(context, () -> 0);
+         } else {
+             log.info("continuously running ...");
+             Thread.currentThread().join();
+         }
+     }
+ }
+
+```
+
+```java
+@Component
+@Slf4j
+@RequiredArgsConstructor
+public class FilePollingAdapter {
+
+    private final ProcessContext processContext;
+    private final PollerMetadata poller;
+    private final ObjectMapper objectMapper;
+    private final FileReadingMessageSource fileReadingMessageSource;
+    private final MessageChannel fileProcessingInputChannel;
+    private final FileLockService fileLockService;
+    private final IntegrationFlowContext flowContext;
+
+    private final AtomicBoolean isPolling = new AtomicBoolean(false);
+    private IntegrationFlowContext.IntegrationFlowRegistration filePollingFlowRegistration;
+
+    @ServiceActivator(inputChannel = "startFilePollingChannel")
+    public void startFilePolling() {
+        if (isPolling.compareAndSet(false, true)) {
+            IntegrationFlow filePollingFlow = IntegrationFlow
+                    .from(fileReadingMessageSource, config -> config.poller(poller))
+                    .filter(File.class, file -> {
+                        if (fileLockService.tryLock(file.getAbsolutePath())) {
+                            return true;
+                        } else {
+                            log.info("failed to create lock for file: {}", file.getAbsolutePath());
+                            return false;
+                        }
+                    })
+                    .handle(this, HandlerName.readFile.name())
+                    .channel(fileProcessingInputChannel)
+                    .get();
+            filePollingFlowRegistration = flowContext.registration(filePollingFlow).register();
+            log.info("File Polling started");
+        } else {
+            log.info("File Polling already running");
+        }
+    }
+
+    @ServiceActivator(inputChannel = "stopFilePollingChannel")
+    public void stopFilePolling() {
+        if (isPolling.compareAndSet(true, false)) {
+            if (filePollingFlowRegistration != null) {
+                flowContext.remove(filePollingFlowRegistration.getId());
+                filePollingFlowRegistration = null;
+            }
+            log.info("File Polling stopped");
+        } else {
+            log.info("File Polling already stopped");
+        }
+    }
+
+    public Message<?> readFile(Message<?> message) {
+        log.info("readFile started");
+        MessageHeaders headers = message.getHeaders();
+        String fileName = (String)headers.get("file_name");
+        List<HandlerName> processors = new ArrayList<>();
+        processors.add(HandlerName.readFile);
+        processContext.setContext(fileName, "processors", processors);
+        File file = (File) message.getPayload();
+        String jsonString = "";
+        try {
+            jsonString = new String(Files.readAllBytes(file.toPath()));
+            log.info("successful to read file: {}", file.getAbsolutePath());
+        } catch (IOException e) {
+            log.error("failed to read file: {}", file.getAbsolutePath(), e);
+            return null;
+        }
+        AuthPain001 authPain001 = null;
+        try {
+            authPain001 = objectMapper.readValue(jsonString, AuthPain001.class);
+            log.info("successful to convert json from: {}", file.getAbsolutePath());
+        } catch (JsonProcessingException e) {
+            log.error("failed to read file: {}", file.getAbsolutePath(), e);
+            return null;
+        }
+
+        return MessageBuilder.withPayload(authPain001).copyHeaders(headers).build();
+    }
+
+}
+```
+
+```java
+
+@Configuration
+ @EnableIntegration
+ @Slf4j
+ @RequiredArgsConstructor
+ public class DmpIntegrationConfig {
+
+     private final PfpProperties pfpProperties;
+
+     @Bean
+     public ObjectMapper objectMapper() {
+         ObjectMapper mapper = new ObjectMapper();
+         mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+         return mapper;
+     }
+
+     @Bean
+     public AtomicBoolean runOnce() {
+         return new AtomicBoolean(false);
+     }
+
+     @Bean
+     public CountDownLatch runOnceLatch() {
+         return new CountDownLatch(1);
+     }
+
+     @Bean
+     public MessageChannel startFilePollingChannel() {
+         return new DirectChannel();
+     }
+
+     @Bean
+     public MessageChannel stopFilePollingChannel() {
+         return new DirectChannel();
+     }
+
+     @Bean
+     public MessageChannel fileProcessingInputChannel() {
+         return new DirectChannel();
+     }
+
+     @Bean
+     public MessageChannel pwsProcessingInputChannel() {
+         return new DirectChannel();
+     } // ToDo: change to multithreading
+
+     @Bean
+     public MessageChannel notificationInputChannel() {
+         return new DirectChannel();
+     }
+
+     @Bean
+     public MessageChannel fileBackupInputChannel() {
+         return new DirectChannel();
+     }
+
+     @Bean(name = PollerMetadata.DEFAULT_POLLER)
+     public PollerMetadata poller() {
+         return Pollers.fixedDelay(Duration.ofMinutes(pfpProperties.getDmpAuthFilePolling())).getObject();
+     }
+
+     @Bean
+     public FileReadingMessageSource fileReadingMessageSource() {
+         FileReadingMessageSource source = new FileReadingMessageSource();
+         source.setDirectory(new File(pfpProperties.getDmpAuthProcessingFilePath()));
+         source.setFilter(new SimplePatternFileListFilter(pfpProperties.getDmpAuthProcessingFilePattern()));
+         source.setUseWatchService(true);
+         source.setWatchEvents(FileReadingMessageSource.WatchEventType.CREATE,
+                 FileReadingMessageSource.WatchEventType.MODIFY);
+         return source;
+     }
+
+     @Bean
+     public IntegrationFlow fileProcessingFlow(ProcessingHandler processingHandler, ProcessingHandlerErrorAdvice advice) {
+         return IntegrationFlow.from("fileProcessingInputChannel")
+                 .handle(processingHandler, HandlerName.processAuthFile.name(), e -> e.advice(advice))
+                 .channel("pwsProcessingInputChannel")
+                 .handle(processingHandler, HandlerName.processPwsMessage.name(), e -> e.advice(advice))
+                 .channel("notificationInputChannel")
+                 .handle(processingHandler, HandlerName.sendNotification.name())
+                 .channel("fileBackupInputChannel")
+                 .handle(processingHandler, HandlerName.backupFile.name())
+                 .get();
+     }
+
+ }
+```
+
