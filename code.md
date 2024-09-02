@@ -7,7 +7,7 @@ xml: false
 
 <!--more-->
 
-## RuleTemplate
+# Rule & RuleTemplate
 
 ```java
 public interface DecisionMatrixRow {
@@ -97,7 +97,7 @@ public static String columnToProperty(String columnName) {
 
     StringBuilder result = new StringBuilder();
     boolean nextUpperCase = false;
-    
+
     for (int i = 0; i < columnName.length(); i++) {
         char c = columnName.charAt(i);
         if (c == '_') {
@@ -148,14 +148,14 @@ end
 
 ```
 
-# Bulk Insert & Optimization 
+# Bulk Insert & Optimization
 
 Key points:
 
--    We're using ExecutorType.BATCH to enable JDBC batching.
--    We flush and clear the session every BATCH_SIZE (1000 in this example) inserts to manage memory usage.
--    The @Transactional annotation ensures that the entire operation is wrapped in a database transaction.
--    Error handling is implemented to catch and log any issues during the insert process.
+-   We're using ExecutorType.BATCH to enable JDBC batching.
+-   We flush and clear the session every BATCH_SIZE (1000 in this example) inserts to manage memory usage.
+-   The @Transactional annotation ensures that the entire operation is wrapped in a database transaction.
+-   Error handling is implemented to catch and log any issues during the insert process.
 
 ```java
 import org.apache.ibatis.session.ExecutorType;
@@ -179,22 +179,22 @@ public class BulkInsertService {
     @Transactional
     public void insertLargeDataset(List<YourDataObject> dataList) {
         SqlSessionFactory sqlSessionFactory = sqlSessionTemplate.getSqlSessionFactory();
-        
+
         try (SqlSession session = sqlSessionFactory.openSession(ExecutorType.BATCH)) {
             // Set session-specific parameters
             session.update("ALTER SESSION SET SORT_AREA_SIZE = 1048576");
 
             YourMapper mapper = session.getMapper(YourMapper.class);
-            
+
             for (int i = 0; i < dataList.size(); i++) {
                 mapper.insert(dataList.get(i));
-                
+
                 if (i > 0 && i % BATCH_SIZE == 0) {
                     session.flushStatements();
                     session.clearCache();
                 }
             }
-            
+
             session.flushStatements();
         } catch (Exception e) {
             // Log the error and potentially implement a retry mechanism
@@ -211,6 +211,7 @@ public interface YourMapper {
 ```
 
 Use the APPEND hint in your INSERT statements:
+
 ```xml
 <insert id="insert" parameterType="YourDataObject">
     INSERT /*+APPEND*/ INTO your_table (column1, column2, ...)
@@ -218,7 +219,7 @@ Use the APPEND hint in your INSERT statements:
 </insert>
 ```
 
-```java    
+```java
 @Autowired
 private BulkInsertService bulkInsertService;
 
@@ -252,9 +253,9 @@ spring.datasource.hikari.data-source-properties.defaultBatchValue=100
 
 For the other optimizations (NOLOGGING, disabling indexes, changing system parameters), I would recommend:
 
-- Discuss with your database administrator and other application owners before implementing.
-- If possible, consider setting up a separate schema or database instance for your bulk operations.
-- If you must use these in a shared environment, implement them in a controlled maintenance window where other applications are not actively using the database.
+-   Discuss with your database administrator and other application owners before implementing.
+-   If possible, consider setting up a separate schema or database instance for your bulk operations.
+-   If you must use these in a shared environment, implement them in a controlled maintenance window where other applications are not actively using the database.
 
 Remember, the most important aspect is to test thoroughly in an environment that mirrors your production setup, and to communicate and coordinate with other teams that share the database resources.
 
@@ -269,9 +270,32 @@ ALTER INDEX your_index UNUSABLE;
 -- Perform bulk insert
 ALTER INDEX your_index REBUILD;
 
+# WebClient & Resilient4J
 
+```xml
+<dependency>
+    <groupId>io.github.resilience4j</groupId>
+    <artifactId>resilience4j-spring-boot2</artifactId>
+    <version>1.7.0</version>
+</dependency>
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-aop</artifactId>
+</dependency>
+```
 
-# Http Client
+```properties
+resilience4j.circuitbreaker.instances.externalService.failureRateThreshold=50
+resilience4j.circuitbreaker.instances.externalService.waitDurationInOpenState=5000
+resilience4j.circuitbreaker.instances.externalService.permittedNumberOfCallsInHalfOpenState=3
+resilience4j.circuitbreaker.instances.externalService.slidingWindowSize=10
+resilience4j.circuitbreaker.instances.externalService.minimumNumberOfCalls=5
+```
+
+export SERVICE_A_URL=http://prod-service-a1.example.com,http://prod-service-a2.example.com
+export SERVICE_B_URL=http://prod-service-b1.example.com,http://prod-service-b2.example.com
+export SERVICE_C_URL=http://prod-service-c1.example.com,http://prod-service-c2.example.com
+
 ```java
 import io.netty.channel.ChannelOption;
 import io.netty.handler.timeout.ReadTimeoutHandler;
@@ -325,7 +349,7 @@ public class WebClientConfiguration {
                     }
                 })
                 .responseTimeout(Duration.ofSeconds(10)) // Response timeout
-                .wiretap("reactor.netty.http.client.HttpClient", 
+                .wiretap("reactor.netty.http.client.HttpClient",
                           io.netty.handler.logging.LogLevel.DEBUG, AdvancedByteBufFormat.TEXTUAL) // Enable logging
                 .metrics(true) // Enable metrics for performance monitoring
                 .compress(true) // Enable response compression
@@ -379,7 +403,7 @@ public class WebClientConfiguration {
         return "your_jwt_token";
     }
 
-    
+
 }
 
 ```
@@ -390,20 +414,27 @@ import reactor.core.publisher.Mono;
 public class MyService {
 
     private final WebClient webClient;
+    private final CircuitBreakerRegistry circuitBreakerRegistry;
 
     // Inject the configured WebClient
-    public MyService(WebClient webClient) {
+    public MyService(WebClient webClient CircuitBreakerRegistry circuitBreakerRegistry) {
         this.webClient = webClient;
+        this.circuitBreakerRegistry = circuitBreakerRegistry;
     }
 
     // Example method to perform an HTTP POST request
-    public Mono<ServiceResponse> createCompanyInfo(CompanyInfoRequest companyInfoRequest) {
+    @CircuitBreaker(name = "externalService", fallbackMethod = "fallback")
+    public Mono<ServiceResponse> callExternalService(CompanyInfoRequest companyInfoRequest) {
         return webClient.post()
                 .uri("/company")
                 .body(Mono.just(companyInfoRequest), CompanyInfoRequest.class)
                 .retrieve()
                 .bodyToMono(ServiceResponse.class)
                 .doOnError(e -> System.out.println("Error: " + e.getMessage()));
+    }
+
+    public Mono<String> fallback(Exception e) {
+        return Mono.just("Fallback response");
     }
 
     // Example usage in a service class
@@ -421,11 +452,38 @@ public class MyService {
 
 ```
 
-#  Command Line Application 
+```java
+@Configuration
+@EnableRetry
+public class RetryConfig {
+    @Bean
+    public RetryTemplate retryTemplate() {
+        SimpleRetryPolicy retryPolicy = new SimpleRetryPolicy();
+        retryPolicy.setMaxAttempts(3);
 
-export SERVICE_A_URL=http://prod-service-a1.example.com,http://prod-service-a2.example.com
-export SERVICE_B_URL=http://prod-service-b1.example.com,http://prod-service-b2.example.com
-export SERVICE_C_URL=http://prod-service-c1.example.com,http://prod-service-c2.example.com
+        FixedBackOffPolicy backOffPolicy = new FixedBackOffPolicy();
+        backOffPolicy.setBackOffPeriod(5000); // 5 seconds
+
+        RetryTemplate template = new RetryTemplate();
+        template.setRetryPolicy(retryPolicy);
+        template.setBackOffPolicy(backOffPolicy);
+
+        return template;
+    }
+}
+```
+
+# Command Line Application & Spring Active Profile
+
+This approach will load properties in the following order:
+
+application.properties (default shared properties)
+application-{env}.properties (environment-specific properties)
+application-{flow}.properties (flow-specific properties)
+
+```bash
+> java -Denv=dev -Dflow=flow1 -Dconfig.path=/path/to/your/config -jar your-application.jar
+```
 
 ```java
 @SpringBootApplication
@@ -449,14 +507,14 @@ export SERVICE_C_URL=http://prod-service-c1.example.com,http://prod-service-c2.e
      FilePollingAdapter filePollingAdapter;
 
      public static void main(String[] args) {
-         String profile = Arrays.stream(args)
-        .filter(arg -> arg.startsWith("--spring.profiles.active="))
-        .findFirst()
-        .orElse("--spring.profiles.active=flow1");
-    
-        SpringApplication app = new SpringApplication(UobCmdBootApplication.class);
-        app.setAdditionalProfiles(profile.split("=")[1]);
-        app.run(args);
+        String env = System.getProperty("env", "dev");
+        String flow = System.getProperty("flow", "flow1");
+        String configPath = System.getProperty("config.path", "/etc/myapp/config")
+        SpringApplication app = new SpringApplication(UobCmdBootApplication.class)
+            .properties("spring.config.additional-location=" + configPath + "/")
+            .profiles(env, flow)
+            .build()
+            .run(args);
      }
 
      @Override
@@ -478,9 +536,37 @@ export SERVICE_C_URL=http://prod-service-c1.example.com,http://prod-service-c2.e
              Thread.currentThread().join();
          }
      }
+
+    @Autowired
+    private FileLockService fileLockService;
+
+    @PreDestroy
+    public void onShutdown() {
+        fileLockService.releaseAllLocks();
+    }
  }
 
 ```
+
+For automatic restarts, you can use a process manager like systemd on Linux or a tool like Supervisor. Here's a sample systemd service file:
+
+```txt
+[Unit]
+Description=UOB CMD Boot Application
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/java -jar /path/to/your/application.jar
+Restart=always
+User=youruser
+
+[Install]
+WantedBy=multi-user.target
+```
+
+# NAS & Non-blocking IO
+
+## File Polling
 
 ```java
 @Component
@@ -565,6 +651,162 @@ public class FilePollingAdapter {
 
 }
 ```
+
+## File Lock
+
+```java
+@Service
+public class FileLockService {
+    private final ConcurrentMap<String, FileLock> locks = new ConcurrentHashMap<>();
+
+    public boolean tryLock(String filePath) {
+        try {
+            FileChannel channel = FileChannel.open(Paths.get(filePath), StandardOpenOption.WRITE);
+            FileLock lock = channel.tryLock();
+            if (lock != null) {
+                locks.put(filePath, lock);
+                return true;
+            }
+        } catch (IOException e) {
+            // Log error
+        }
+        return false;
+    }
+
+    public void releaseLock(String filePath) {
+        FileLock lock = locks.remove(filePath);
+        if (lock != null) {
+            try {
+                lock.release();
+                lock.channel().close();
+            } catch (IOException e) {
+                // Log error
+            }
+        }
+    }
+
+    public void releaseAllLocks() {
+        locks.forEach((path, lock) -> {
+            try {
+                lock.release();
+                lock.channel().close();
+            } catch (IOException e) {
+                // Log error
+            }
+        });
+        locks.clear();
+    }
+}
+```
+
+## File Status Tracking
+
+```java
+public class FileProcessingStatus {
+
+    private String fileName;
+
+    @Enumerated(EnumType.STRING)
+    private ProcessingStatus status;
+
+    private LocalDateTime lastUpdated;
+
+    // Constructors, getters, and setters
+}
+
+public enum ProcessingStatus {
+    PENDING, PROCESSING, COMPLETED, ERROR
+}
+
+@Mapper
+public interface FileProcessingStatusMapper {
+    @Select("SELECT * FROM file_processing_status WHERE file_name = #{fileName}")
+    FileProcessingStatus findByFileName(String fileName);
+
+    @Insert("INSERT INTO file_processing_status (file_name, status, last_updated) " +
+            "VALUES (#{fileName}, #{status}, #{lastUpdated})")
+    void insert(FileProcessingStatus status);
+
+    @Update("UPDATE file_processing_status SET status = #{status}, last_updated = #{lastUpdated} " +
+            "WHERE file_name = #{fileName}")
+    void update(FileProcessingStatus status);
+}
+```
+
+```xml
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.yourpackage.FileProcessingStatusMapper">
+    <select id="findByFileName" resultType="com.yourpackage.FileProcessingStatus">
+        SELECT * FROM file_processing_status WHERE file_name = #{fileName}
+    </select>
+
+    <insert id="insert" parameterType="com.yourpackage.FileProcessingStatus">
+        INSERT INTO file_processing_status (file_name, status, last_updated)
+        VALUES (#{fileName}, #{status}, #{lastUpdated})
+    </insert>
+
+    <update id="update" parameterType="com.yourpackage.FileProcessingStatus">
+        UPDATE file_processing_status
+        SET status = #{status}, last_updated = #{lastUpdated}
+        WHERE file_name = #{fileName}
+    </update>
+</mapper>
+```
+
+```java
+@Service
+@Transactional
+public class FileProcessingService {
+    private final FileProcessingStatusRepository statusRepository;
+    private final FileLockService fileLockService;
+
+    public FileProcessingService(FileProcessingStatusRepository statusRepository, FileLockService fileLockService) {
+        this.statusRepository = statusRepository;
+        this.fileLockService = fileLockService;
+    }
+
+    public void processFile(File file) {
+        String fileName = file.getName();
+        if (!fileLockService.tryLock(file.getPath())) {
+            throw new RuntimeException("Unable to acquire lock for file: " + fileName);
+        }
+
+        try {
+            FileProcessingStatus status = statusRepository.findById(fileName)
+                .orElse(new FileProcessingStatus(fileName, ProcessingStatus.PENDING, LocalDateTime.now()));
+
+            if (status.getStatus() != ProcessingStatus.PENDING) {
+                return; // File already processed or being processed
+            }
+
+            status.setStatus(ProcessingStatus.PROCESSING);
+            status.setLastUpdated(LocalDateTime.now());
+            statusRepository.save(status);
+
+            // Process the file
+            // ...
+
+            status.setStatus(ProcessingStatus.COMPLETED);
+            status.setLastUpdated(LocalDateTime.now());
+            statusRepository.save(status);
+        } catch (Exception e) {
+            FileProcessingStatus status = statusRepository.findById(fileName)
+                .orElseThrow(() -> new RuntimeException("Status not found for file: " + fileName));
+            status.setStatus(ProcessingStatus.ERROR);
+            status.setLastUpdated(LocalDateTime.now());
+            statusRepository.save(status);
+            throw e;
+        } finally {
+            fileLockService.releaseLock(file.getPath());
+        }
+    }
+}
+```
+
+# Process flow & DLQ flow
+
+## Process Flow
 
 ```java
 
@@ -656,99 +898,64 @@ public class FilePollingAdapter {
  }
 ```
 
-```java
-@Service
-public class FileLockService {
-    private final ConcurrentMap<String, FileLock> locks = new ConcurrentHashMap<>();
+## DLQ flow
 
-    public boolean tryLock(String filePath) {
-        try {
-            FileChannel channel = FileChannel.open(Paths.get(filePath), StandardOpenOption.WRITE);
-            FileLock lock = channel.tryLock();
-            if (lock != null) {
-                locks.put(filePath, lock);
-                return true;
-            }
-        } catch (IOException e) {
-            // Log error
-        }
-        return false;
-    }
-
-    public void releaseLock(String filePath) {
-        FileLock lock = locks.remove(filePath);
-        if (lock != null) {
-            try {
-                lock.release();
-                lock.channel().close();
-            } catch (IOException e) {
-                // Log error
-            }
-        }
-    }
-
-    @PreDestroy
-    public void releaseAllLocks() {
-        locks.forEach((path, lock) -> {
-            try {
-                lock.release();
-                lock.channel().close();
-            } catch (IOException e) {
-                // Log error
-            }
-        });
-        locks.clear();
-    }
-}
+```xml
+<dependency>
+    <groupId>com.ibm.mq</groupId>
+    <artifactId>mq-jms-spring-boot-starter</artifactId>
+    <version>2.6.4</version>
+</dependency>
 ```
 
-to improve reliability
-
-1. implement retry:
+```propertis
+ibm.mq.queueManager=YOUR_QUEUE_MANAGER
+ibm.mq.channel=YOUR_CHANNEL
+ibm.mq.connName=YOUR_CONNECTION_NAME(1414)
+ibm.mq.user=YOUR_USERNAME
+ibm.mq.password=YOUR_PASSWORD
+ibm.mq.queue=YOUR_DLQ_QUEUE_NAME
+```
 
 ```java
 @Configuration
-@EnableRetry
-public class RetryConfig {
+public class MQConfig {
     @Bean
-    public RetryTemplate retryTemplate() {
-        SimpleRetryPolicy retryPolicy = new SimpleRetryPolicy();
-        retryPolicy.setMaxAttempts(3);
+    public JmsTemplate jmsTemplate(ConnectionFactory connectionFactory) {
+        return new JmsTemplate(connectionFactory);
+    }
 
-        FixedBackOffPolicy backOffPolicy = new FixedBackOffPolicy();
-        backOffPolicy.setBackOffPeriod(5000); // 5 seconds
+    @Bean
+    public MessageChannel deadLetterChannel() {
+        return new DirectChannel();
+    }
 
-        RetryTemplate template = new RetryTemplate();
-        template.setRetryPolicy(retryPolicy);
-        template.setBackOffPolicy(backOffPolicy);
-
-        return template;
+    @Bean
+    public IntegrationFlow deadLetterFlow() {
+        return IntegrationFlow.from("deadLetterChannel")
+            .<Message<?>>handle((payload, headers) -> {
+                // Log the error, potentially move the file to an error directory
+                return null;
+            })
+            .get();
     }
 }
 ```
 
-2. Implement a dead letter channel:
-
 ```java
-@Bean
-public MessageChannel deadLetterChannel() {
-    return new DirectChannel();
+@Service
+public class ErrorHandlingService {
+    private final JmsTemplate jmsTemplate;
+
+    public ErrorHandlingService(JmsTemplate jmsTemplate) {
+        this.jmsTemplate = jmsTemplate;
+    }
+
+    public void sendToDeadLetterQueue(ErrorMessage errorMessage) {
+        jmsTemplate.convertAndSend("YOUR_DLQ_QUEUE_NAME", errorMessage);
+    }
 }
 
-@Bean
-public IntegrationFlow deadLetterFlow() {
-    return IntegrationFlow.from("deadLetterChannel")
-        .<Message<?>>handle((payload, headers) -> {
-            // Log the error, potentially move the file to an error directory
-            return null;
-        })
-        .get();
-}
-```
-
-3. Update your main flow to use this:
-
-```java
 @Bean
 public IntegrationFlow fileProcessingFlow() {
     return IntegrationFlow.from("fileProcessingInputChannel")
@@ -757,44 +964,6 @@ public IntegrationFlow fileProcessingFlow() {
             .handleMessageProcessingError(error -> error.sendTo("deadLetterChannel")))
         // Rest of your flow
         .get();
-}
-
-@Bean
-public Advice retryAdvice() {
-    RequestHandlerRetryAdvice advice = new RequestHandlerRetryAdvice();
-    advice.setRetryTemplate(retryTemplate());
-    return advice;
-}
-```
-
-4. For automatic restarts, you can use a process manager like systemd on Linux or a tool like Supervisor. Here's a sample systemd service file:
-
-```txt
-[Unit]
-Description=UOB CMD Boot Application
-After=network.target
-
-[Service]
-ExecStart=/usr/bin/java -jar /path/to/your/application.jar
-Restart=always
-User=youruser
-
-[Install]
-WantedBy=multi-user.target
-```
-
-6. Proper File Lock Handling: Ensure that file locks are released in case of application shutdown:
-
-```java
-@Component
-public class ShutdownHook {
-    @Autowired
-    private FileLockService fileLockService;
-
-    @PreDestroy
-    public void onShutdown() {
-        fileLockService.releaseAllLocks();
-    }
 }
 ```
 
