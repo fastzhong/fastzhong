@@ -239,7 +239,9 @@ max-lifetime: 1800000 ms (30 minutes) maximum lifetime of a connection in the po
 spring.datasource.hikari.maximum-pool-size=20
 spring.datasource.hikari.minimum-idle=10
 spring.datasource.hikari.connection-timeout=30000
+# the maximum amount of time that a connection can sit idle in the pool before being eligible for eviction.
 spring.datasource.hikari.idle-timeout=600000
+# Connections will be retired after 30 minutes (1,800,000 ms), regardless of their activity. This is to avoid using stale connections that could have been closed by the database.
 spring.datasource.hikari.max-lifetime=1800000
 
 spring.datasource.hikari.data-source-properties.rewriteBatchedStatements=true
@@ -257,7 +259,7 @@ For the other optimizations (NOLOGGING, disabling indexes, changing system param
 -   If possible, consider setting up a separate schema or database instance for your bulk operations.
 -   If you must use these in a shared environment, implement them in a controlled maintenance window where other applications are not actively using the database.
 
-Remember, the most important aspect is to test thoroughly in an environment that mirrors your production setup, and to communicate and coordinate with other teams that share the database resources.
+-   session wise tuning
 
 Disable logging during bulk insert:
 Before the bulk insert: ALTER TABLE your_table NOLOGGING;
@@ -265,10 +267,123 @@ After the bulk insert: ALTER TABLE your_table LOGGING;
 
 Increase SORT_AREA_SIZE (if your insert involves sorting): ALTER SYSTEM SET db_file_multiblock_read_count = 128 SCOPE=BOTH;
 
+Consider ALTER SESSION SET OPTIMIZER_MODE=FIRST_ROWS_N for prioritizing the first set of rows returned, beneficial for large volume inserts.
+
+-   system wise tuning
+
 Disable indexes before insert and rebuild after:
 ALTER INDEX your_index UNUSABLE;
 -- Perform bulk insert
 ALTER INDEX your_index REBUILD;
+
+Consider ALTER SESSION SET OPTIMIZER_MODE=FIRST_ROWS_N for prioritizing the first set of rows returned, beneficial for large volume inserts.
+
+Partitioning large tables can significantly enhance performance by reducing the amount of data scanned during inserts.
+
+Ensure that the Oracle redo log files are sufficiently large and the database is configured to handle large transactions efficiently. If you're not in archivelog mode, large bulk operations will be faster. Disable logging during bulk insert:
+Before the bulk insert: ALTER TABLE your_table NOLOGGING;
+After the bulk insert: ALTER TABLE your_table LOGGING;
+
+Use Oracle’s Resource Manager to allocate appropriate resources to the bulk insert process without affecting other applications.
+
+Ensure that the temporary tablespaces have sufficient space and are optimized for large sort operations.
+
+1. Performance
+   PL/SQL Bulk Insert: Oracle's PL/SQL is highly optimized for bulk operations. The FORALL statement and the ability to work directly within the database engine allows for efficient handling of large datasets. It minimizes context switching between the application and the database, which can significantly reduce overhead and improve performance.
+   MyBatis Batch Insert: While MyBatis supports batch processing, it operates on the application side, which may involve more overhead due to network round trips and context switching between the application and the database. Although MyBatis can be tuned for batch operations, it generally won't match the efficiency of a well-designed PL/SQL bulk insert, especially with very large datasets.
+2. Scalability
+   PL/SQL Bulk Insert: PL/SQL can handle very large volumes of data natively within the Oracle database. The Oracle database is designed to manage large transactions and can handle millions of records efficiently when using bulk operations.
+   MyBatis Batch Insert: MyBatis can be configured to handle large volumes, but as the data size grows, it may struggle with memory consumption and network latency. This approach also increases the load on the application server.
+3. Resource Management
+   PL/SQL Bulk Insert: By offloading the bulk of the processing to the database, you reduce the memory and CPU load on your application server. Oracle's database engine is optimized to manage its own resources efficiently during bulk operations.
+   MyBatis Batch Insert: Batch operations in MyBatis require careful management of resources like memory and database connections. If not configured properly, you may run into issues with memory consumption and connection pool exhaustion.
+4. Error Handling
+   PL/SQL Bulk Insert: Error handling in PL/SQL is more fine-grained and can be managed directly within the stored procedure. You can handle specific exceptions and manage transactions more effectively, ensuring that large operations can be rolled back or partially committed as needed.
+   MyBatis Batch Insert: MyBatis does provide mechanisms for transaction management, but handling errors across large batches of data can be more complex, especially if you need to retry failed batches or handle partial failures.
+5. Network Overhead
+   PL/SQL Bulk Insert: Since the data is processed within the database, there is minimal network overhead. The bulk of the data transfer occurs once when sending the array of data to the database.
+   MyBatis Batch Insert: Each batch of records requires a network round trip between the application and the database. This can become a bottleneck with very large datasets.
+
+Conclusion
+
+For very large datasets, particularly when dealing with more than 100K records, the Oracle PL/SQL bulk insert approach is generally more efficient, scalable, and easier to manage in terms of performance and resource utilization. It leverages Oracle's internal optimizations for handling large volumes of data, which is ideal for high-performance data insertion tasks.
+
+## Oracle PL/SQL Bulk Insert
+
+```sql
+CREATE OR REPLACE TYPE your_table_row_type AS OBJECT (
+    field1 VARCHAR2(100),
+    field2 NUMBER,
+    field3 DATE
+    -- Other fields as necessary
+);
+/
+
+CREATE OR REPLACE TYPE your_table_type AS TABLE OF your_table_row_type;
+/
+
+CREATE OR REPLACE PROCEDURE bulk_insert_your_data (
+    p_data IN your_table_type -- This is a PL/SQL table type of your data objects
+) AS
+BEGIN
+    -- Perform the bulk insert using the FORALL statement
+    FORALL i IN p_data.FIRST .. p_data.LAST
+        INSERT INTO your_table_name (
+            column1, column2, column3 -- List all relevant columns
+        ) VALUES (
+            p_data(i).field1, p_data(i).field2, p_data(i).field3 -- Map to your data object fields
+        );
+
+    -- Optionally, handle exceptions, logging, or other business logic here
+    COMMIT; -- Commit after bulk insert
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK; -- Rollback if any error occurs
+        RAISE;    -- Rethrow the exception to the calling environment
+END;
+/
+```
+
+```java
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.SqlParameter;
+import org.springframework.jdbc.core.SqlReturnType;
+import org.springframework.jdbc.core.simple.SimpleJdbcCall;
+import org.springframework.stereotype.Service;
+
+import javax.sql.DataSource;
+import java.sql.Array;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.Struct;
+import java.util.List;
+import java.util.Map;
+
+@Service
+public class BulkInsertService {
+
+    private final SimpleJdbcCall jdbcCall;
+
+    @Autowired
+    public BulkInsertService(DataSource dataSource) {
+        this.jdbcCall = new SimpleJdbcCall(dataSource)
+                .withProcedureName("bulk_insert_your_data")
+                .declareParameters(
+                        new SqlParameter("p_data", java.sql.Types.ARRAY, "YOUR_TABLE_TYPE") // Use your custom Oracle type here
+                );
+    }
+
+    public void insertLargeDataset(List<YourDataObject> dataList) throws SQLException {
+        try (Connection connection = jdbcCall.getJdbcTemplate().getDataSource().getConnection()) {
+            Array array = connection.createArrayOf("YOUR_TABLE_TYPE", dataList.toArray()); // Create the array type
+            Map<String, Object> inParams = Map.of("p_data", array);
+
+            jdbcCall.execute(inParams); // Call the PL/SQL procedure with the array as input
+        }
+    }
+}
+```
 
 # WebClient & Resilient4J
 
@@ -378,6 +493,7 @@ public class WebClientConfiguration {
 
     private ExchangeFilterFunction loggingFilter() {
         return ExchangeFilterFunction.ofRequestProcessor(clientRequest -> {
+            // if debugging
             if (clientRequest.headers().containsKey("Authorization")) {
                 String jwtToken = clientRequest.headers().getFirst("Authorization").replace("Bearer ", "");
                 System.out.println("JWT Token: " + jwtToken);
@@ -385,9 +501,14 @@ public class WebClientConfiguration {
             System.out.println("Request: " + clientRequest.method() + " " + clientRequest.url());
             return Mono.just(clientRequest);
         }).andThen(ExchangeFilterFunction.ofResponseProcessor(clientResponse -> {
+            // if debugging
             System.out.println("Response Status: " + clientResponse.statusCode());
             return Mono.just(clientResponse);
         }));
+    }
+
+    private boolean isDebugging() {
+        return true; // Implement your logic for enabling/disabling logging
     }
 
     // Example method to construct WebClient with service-specific URL
@@ -424,6 +545,8 @@ public class MyService {
 
     // Example method to perform an HTTP POST request
     @CircuitBreaker(name = "externalService", fallbackMethod = "fallback")
+    @Retry(name = "externalService")
+    @TimeLimiter(name = "externalService")
     public Mono<ServiceResponse> callExternalService(CompanyInfoRequest companyInfoRequest) {
         return webClient.post()
                 .uri("/company")
@@ -434,7 +557,10 @@ public class MyService {
     }
 
     public Mono<String> fallback(Exception e) {
-        return Mono.just("Fallback response");
+        // Log or handle the exception
+        System.out.println("Fallback executed due to: " + throwable.getMessage());
+        // Return a fallback response or alternative value
+        return Mono.just(new ServiceResponse("Fallback response"));
     }
 
     // Example usage in a service class
@@ -450,6 +576,82 @@ public class MyService {
     }
 }
 
+```
+
+```yaml
+resilience4j:
+    retry:
+        instances:
+            externalService:
+                max-attempts: 3
+                wait-duration: 500ms
+                enable-exponential-backoff: true
+                exponential-backoff-multiplier: 1.5
+                retry-exceptions:
+                    - org.springframework.web.reactive.function.client.WebClientResponseException
+                ignore-exceptions:
+                    - java.lang.IllegalArgumentException
+
+    circuitbreaker:
+        instances:
+            externalService:
+                register-health-indicator: true
+                sliding-window-type: COUNT_BASED
+                sliding-window-size: 50
+                failure-rate-threshold: 50
+                wait-duration-in-open-state: 30s
+                permitted-number-of-calls-in-half-open-state: 10
+                minimum-number-of-calls: 10
+
+    timelimiter:
+        instances:
+            externalService:
+                timeout-duration: 2s
+                cancel-running-future: true
+```
+
+```java
+import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
+import io.github.resilience4j.retry.RetryConfig;
+import io.github.resilience4j.timelimiter.TimeLimiterConfig;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+import java.time.Duration;
+
+@Configuration
+public class Resilience4jConfig {
+
+    @Bean
+    public RetryConfig retryConfig() {
+        return RetryConfig.custom()
+                .maxAttempts(3)
+                .waitDuration(Duration.ofMillis(500))
+                .retryExceptions(WebClientResponseException.class)
+                .ignoreExceptions(IllegalArgumentException.class)
+                .build();
+    }
+
+    @Bean
+    public CircuitBreakerConfig circuitBreakerConfig() {
+        return CircuitBreakerConfig.custom()
+                .slidingWindowType(CircuitBreakerConfig.SlidingWindowType.COUNT_BASED)
+                .slidingWindowSize(50)
+                .failureRateThreshold(50)
+                .waitDurationInOpenState(Duration.ofSeconds(30))
+                .permittedNumberOfCallsInHalfOpenState(10)
+                .minimumNumberOfCalls(10)
+                .build();
+    }
+
+    @Bean
+    public TimeLimiterConfig timeLimiterConfig() {
+        return TimeLimiterConfig.custom()
+                .timeoutDuration(Duration.ofSeconds(2))
+                .cancelRunningFuture(true)
+                .build();
+    }
+}
 ```
 
 ```java
@@ -967,3 +1169,814 @@ public IntegrationFlow fileProcessingFlow() {
 }
 ```
 
+## Spring Batch Process
+
+Key Considerations:
+
+-   File Synchronization: To prevent multiple instances from processing the same CSV files, you can use a file locking mechanism or database coordination.
+-   Transaction Consistency: Using Spring Batch’s transaction management, we can ensure that all steps of the batch are either fully processed or rolled back in case of failure.
+-   Handling Multiple CSVs per Batch: You need to group the CSVs of a single batch (with the same prefix) and process them together.
+-   Notification on Completion or Failure: You can use a listener to send a success or failure message to IBM MQ.
+-   Concurrency: Running multiple batch processes on different nodes for different customers and batches should be controlled to prevent race conditions.
+
+```text
+src/main/java/com/yourcompany/batchprocessing/
+├── BatchApplication.java
+├── config/
+│   ├── BatchConfig.java
+│   ├── DatabaseConfig.java
+│   └── MQConfig.java
+├── model/
+│   ├── PaymentTransaction.java
+│   ├── PaymentInstruction.java
+│   ├── PaymentPayee.java
+│   ├── PaymentAdvice.java
+│   └── PaymentCharge.java
+├── mapper/
+│   ├── PaymentTransactionMapper.java
+│   ├── PaymentInstructionMapper.java
+│   ├── PaymentPayeeMapper.java
+│   ├── PaymentAdviceMapper.java
+│   └── PaymentChargeMapper.java
+├── processor/
+│   ├── PaymentTransactionProcessor.java
+│   ├── PaymentInstructionProcessor.java
+│   ├── PaymentPayeeProcessor.java
+│   ├── PaymentAdviceProcessor.java
+│   └── PaymentChargeProcessor.java
+├── reader/
+│   └── MultiResourceItemReader.java
+├── writer/
+│   └── MyBatisBatchItemWriter.java
+├── listener/
+│   ├── JobCompletionNotificationListener.java
+│   └── StepExecutionListener.java
+└── service/
+    ├── BatchStatusService.java
+    └── NotificationService.java
+```
+
+```java
+@SpringBootApplication
+@EnableBatchProcessing
+public class BatchApplication implements CommandLineRunner {
+
+    @Autowired
+    private JobLauncher jobLauncher;
+
+    @Autowired
+    private Job importPaymentDataJob;
+
+    public static void main(String[] args) {
+        SpringApplication.run(BatchApplication.class, args);
+    }
+
+    @Override
+    public void run(String... args) throws Exception {
+        String customerFolder = System.getProperty("customer.folder", "customer1");
+        String inputPath = "/path/to/nas/" + customerFolder + "/";
+
+        JobParameters jobParameters = new JobParametersBuilder()
+                .addString("inputPath", inputPath)
+                .addDate("date", new Date())
+                .toJobParameters();
+
+        jobLauncher.run(importPaymentDataJob, jobParameters);
+    }
+}
+```
+
+```java
+@Configuration
+@EnableBatchProcessing
+public class BatchConfig {
+
+    @Autowired
+    public JobBuilderFactory jobBuilderFactory;
+
+    @Autowired
+    public StepBuilderFactory stepBuilderFactory;
+
+    @Value("${chunk.size:1000}")
+    private int chunkSize;
+
+    @Bean
+    public Job importPaymentDataJob(Step importPaymentTransactionsStep,
+                                    Step importPaymentInstructionsStep,
+                                    Step importPaymentPayeesStep,
+                                    Step importPaymentAdvicesStep,
+                                    Step importPaymentChargesStep,
+                                    JobCompletionNotificationListener listener) {
+        return jobBuilderFactory.get("importPaymentDataJob")
+                .incrementer(new RunIdIncrementer())
+                .listener(listener)
+                .flow(importPaymentTransactionsStep)
+                .next(importPaymentInstructionsStep)
+                .next(importPaymentPayeesStep)
+                .next(importPaymentAdvicesStep)
+                .next(importPaymentChargesStep)
+                .end()
+                .build();
+    }
+
+    @Bean
+    public Step importPaymentTransactionsStep(MyBatisBatchItemWriter<PaymentTransaction> writer) {
+        return stepBuilderFactory.get("importPaymentTransactionsStep")
+                .<PaymentTransaction, PaymentTransaction>chunk(chunkSize)
+                .reader(multiResourceItemReader("paymentTransactions"))
+                .processor(new PaymentTransactionProcessor())
+                .writer(writer)
+                .listener(new StepExecutionListener())
+                .build();
+    }
+
+    // Similar step beans for other payment types...
+
+    @Bean
+    @StepScope
+    public MultiResourceItemReader<PaymentTransaction> multiResourceItemReader(@Value("#{jobParameters['inputPath']}") String inputPath) {
+        return new MultiResourceItemReader<>(inputPath, "batch*_paymentTransactions.csv", new PaymentTransactionMapper());
+    }
+
+    // Similar MultiResourceItemReader beans for other payment types...
+}
+```
+
+```java
+@Configuration
+@EnableBatchProcessing
+public class BatchConfig {
+
+    @Autowired
+    public JobBuilderFactory jobBuilderFactory;
+
+    @Autowired
+    public StepBuilderFactory stepBuilderFactory;
+
+    @Value("${chunk.size:1000}")
+    private int chunkSize;
+
+    // Define the Job that coordinates the different steps
+    @Bean
+    public Job importPaymentDataJob(JobCompletionNotificationListener listener,
+                                    Step importPaymentTransactionsStep,
+                                    Step importPaymentInstructionsStep,
+                                    Step importPaymentPayeesStep,
+                                    Step importPaymentAdvicesStep,
+                                    Step importPaymentChargesStep) {
+        return jobBuilderFactory.get("importPaymentDataJob")
+                .listener(listener)
+                .start(importPaymentTransactionsStep(paymentTransactionWriter()))  // First Step
+                .next(importPaymentInstructionsStep(paymentInstructionWriter()))    // Second Step
+                .next(importPaymentPayeesStep(paymentPayeeWriter()))
+                .end()
+                .build();
+    }
+
+    // Define the steps for each CSV file processing
+    @Bean
+    public Step importPaymentTransactionsStep(MyBatisBatchItemWriter<PaymentTransaction> writer) {
+        return stepBuilderFactory.get("importPaymentTransactionsStep")
+                .<PaymentTransaction, PaymentTransaction>chunk(chunkSize)
+                .reader(multiResourceItemReader("paymentTransactions"))
+                .processor(new PaymentTransactionProcessor())
+                .writer(writer)
+                .listener(new StepExecutionListener())
+                .build();
+    }
+
+    // Similarly define step beans for other payment files (instructions, payees, advices, charges)
+    @Bean
+    public Step importPaymentInstructionsStep(MyBatisBatchItemWriter<PaymentInstruction> writer) {
+        return stepBuilderFactory.get("importPaymentInstructionsStep")
+                .<PaymentInstruction, PaymentInstruction>chunk(chunkSize)
+                .reader(multiResourceItemReader("paymentInstructions"))
+                .processor(new PaymentInstructionProcessor())
+                .writer(writer)
+                .listener(new StepExecutionListener())
+                .build();
+    }
+
+    // Add steps for payees, advices, charges...
+}
+```
+
+```sql
+CREATE TABLE csv_file_process_status (
+    id NUMBER PRIMARY KEY,
+    file_name VARCHAR2(255) UNIQUE,
+    process_status VARCHAR2(50),
+    lock_flag NUMBER(1),  -- 0: unlocked, 1: locked
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+```java
+@Service
+public class FileProcessingLockService {
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    // Acquire the lock for a file
+    public boolean acquireLock(String fileName) {
+        String sql = "UPDATE csv_file_process_status SET lock_flag = 1 WHERE file_name = ? AND lock_flag = 0";
+        int rowsUpdated = jdbcTemplate.update(sql, fileName);
+        return rowsUpdated > 0;  // If rowsUpdated > 0, the lock was successfully acquired
+    }
+
+    // Release the lock for a file
+    public void releaseLock(String fileName) {
+        String sql = "UPDATE csv_file_process_status SET lock_flag = 0 WHERE file_name = ?";
+        jdbcTemplate.update(sql, fileName);
+    }
+
+    // Update the process status
+    public void updateProcessStatus(String fileName, String status) {
+        String sql = "UPDATE csv_file_process_status SET process_status = ?, last_updated = CURRENT_TIMESTAMP WHERE file_name = ?";
+        jdbcTemplate.update(sql, status, fileName);
+    }
+
+    // Check if file is being processed
+    public boolean isFileLocked(String fileName) {
+        String sql = "SELECT lock_flag FROM csv_file_process_status WHERE file_name = ?";
+        Integer lockFlag = jdbcTemplate.queryForObject(sql, new Object[]{fileName}, Integer.class);
+        return lockFlag != null && lockFlag == 1;
+    }
+}
+
+```
+
+```java
+@Bean
+public Step importPaymentTransactionsStep(JdbcBatchItemWriter<PaymentTransaction> writer, FileProcessingLockService lockService) {
+    return stepBuilderFactory.get("importPaymentTransactionsStep")
+            .<PaymentTransaction, PaymentTransaction>chunk(chunkSize)
+            .reader(paymentTransactionReader())
+            .processor(new PaymentTransactionProcessor())
+            .writer(new PaymentTransactionWriter())
+            .listener(new StepExecutionListener() {
+                @Override
+                public void beforeStep(StepExecution stepExecution) {
+                    String fileName = stepExecution.getJobParameters().getString("fileName");
+                    if (!lockService.acquireLock(fileName)) {
+                        throw new IllegalStateException("Unable to acquire lock for file: " + fileName);
+                    }
+                    lockService.updateProcessStatus(fileName, "IN_PROGRESS");
+                }
+
+                @Override
+                public ExitStatus afterStep(StepExecution stepExecution) {
+                    String fileName = stepExecution.getJobParameters().getString("fileName");
+                    if (stepExecution.getStatus() == BatchStatus.COMPLETED) {
+                        lockService.updateProcessStatus(fileName, "COMPLETED");
+                    } else {
+                        lockService.updateProcessStatus(fileName, "FAILED");
+                    }
+                    lockService.releaseLock(fileName);
+                    return stepExecution.getExitStatus();
+                }
+            })
+            .build();
+}
+
+```
+
+```java
+@Bean
+@StepScope
+public MultiResourceItemReader<PaymentTransaction> multiResourceItemReader(@Value("#{jobParameters['inputPath']}") String inputPath) {
+    MultiResourceItemReader<PaymentTransaction> reader = new MultiResourceItemReader<>();
+    ResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
+
+    try {
+        Resource[] resources = resolver.getResources(inputPath + "/batch*_paymentTransactions.csv");
+        reader.setResources(resources);
+    } catch (IOException e) {
+        throw new RuntimeException("Error reading CSV files", e);
+    }
+
+    reader.setDelegate(paymentTransactionReader()); // Define the CSV reader for PaymentTransaction
+    return reader;
+}
+
+@Bean
+@StepScope
+public FlatFileItemReader<PaymentTransaction> paymentTransactionReader() {
+    return new FlatFileItemReaderBuilder<PaymentTransaction>()
+            .name("paymentTransactionReader")
+            .delimited()
+            .names(new String[] {"transactionId", "amount", "currency", "date"})
+            .fieldSetMapper(new BeanWrapperFieldSetMapper<PaymentTransaction>() {{
+                setTargetType(PaymentTransaction.class);
+            }})
+            .build();
+}
+
+// Similar reader configuration for instructions, payees, advices, charges
+```
+
+1. importPaymentTransactionsStep: Insert the payment transactions, store paymentTransactionId in the StepExecutionContext.
+2. importPaymentInstructionsStep: Insert payment instructions, retrieve paymentTransactionId from the StepExecutionContext, and store paymentInstructionId in the StepExecutionContext.
+3. importPaymentPayeesStep: Retrieve both paymentTransactionId and paymentInstructionId from the StepExecutionContext and use them for inserting payee information.
+
+```java
+public class PaymentTransactionProcessor implements ItemProcessor<PaymentTransaction, PaymentTransaction> {
+
+    @Override
+    public PaymentTransaction process(PaymentTransaction item) {
+        // Any transformation logic for PaymentTransaction
+        return item;
+    }
+}
+
+public class PaymentInstructionWriter extends JdbcBatchItemWriter<PaymentInstruction> {
+
+    @Override
+    public void write(List<? extends PaymentInstruction> items) throws Exception {
+        super.write(items);
+
+        // Retrieve the StepExecution and StepExecutionContext
+        StepExecution stepExecution = StepSynchronizationManager.getContext().getStepExecution();
+        ExecutionContext stepExecutionContext = stepExecution.getExecutionContext();
+
+        // Assuming transactionId is already present in the context
+        List<Long> transactionIds = (List<Long>) stepExecutionContext.get("transactionIds");
+
+        // Store the generated instructionIds in the StepExecutionContext
+        List<Long> instructionIds = items.stream()
+                .map(PaymentInstruction::getInstructionId)  // Assuming getInstructionId is the method to get the generated ID
+                .collect(Collectors.toList());
+
+        // Save the instructionIds in the context
+        stepExecutionContext.put("instructionIds", instructionIds);
+    }
+}
+
+public class PaymentPayeeProcessor implements ItemProcessor<PaymentPayee, PaymentPayee> {
+
+    @Override
+    public PaymentPayee process(PaymentPayee item) throws Exception {
+        // Retrieve StepExecutionContext
+        StepExecution stepExecution = StepSynchronizationManager.getContext().getStepExecution();
+        ExecutionContext stepExecutionContext = stepExecution.getExecutionContext();
+
+        // Get transactionIds and instructionIds from the context
+        List<Long> transactionIds = (List<Long>) stepExecutionContext.get("transactionIds");
+        List<Long> instructionIds = (List<Long>) stepExecutionContext.get("instructionIds");
+
+        // Assign transactionId and instructionId to the Payee
+        item.setTransactionId(transactionIds.get(0));  // Assuming single transaction scenario
+        item.setInstructionId(instructionIds.get(0)); // Assign corresponding instructionId
+
+        return item;
+    }
+}
+
+public class PaymentPayeeWriter extends JdbcBatchItemWriter<PaymentPayee> {
+    // No special changes required here, as the payees with their transactionId and instructionId
+    // will be written directly to the database.
+}
+
+@Bean
+public Step importPaymentPayeesStep(JdbcBatchItemWriter<PaymentPayee> writer) {
+    return stepBuilderFactory.get("importPaymentPayeesStep")
+            .<PaymentPayee, PaymentPayee>chunk(chunkSize)
+            .reader(paymentPayeeReader())  // Custom reader to read payee data
+            .processor(new PaymentPayeeProcessor())  // Processor retrieves IDs from context
+            .writer(new PaymentPayeeWriter())  // Standard writer for payees
+            .listener(new StepExecutionListener() {
+                @Override
+                public void beforeStep(StepExecution stepExecution) {
+                    // Optionally add some logging or initialization logic
+                }
+
+                @Override
+                public ExitStatus afterStep(StepExecution stepExecution) {
+                    // Optionally handle post-step logic
+                    return stepExecution.getExitStatus();
+                }
+            })
+            .build();
+}
+
+```
+
+```java
+@Bean
+public MyBatisBatchItemWriter<PaymentTransaction> paymentTransactionWriter(SqlSessionFactory sqlSessionFactory) {
+    return new MyBatisBatchItemWriterBuilder<PaymentTransaction>()
+            .sqlSessionFactory(sqlSessionFactory)
+            .statementId("insertPaymentTransaction") // Define your MyBatis insert statement
+            .build();
+}
+
+// Similarly, define writers for instructions, payees, advices, charges
+```
+
+```java
+@Configuration
+@MapperScan("com.yourcompany.batchprocessing.mapper")
+public class DatabaseConfig {
+
+    @Bean
+    public DataSource dataSource() {
+        // Configure your Oracle DataSource
+    }
+
+    @Bean
+    public SqlSessionFactory sqlSessionFactory(DataSource dataSource) throws Exception {
+        SqlSessionFactoryBean factoryBean = new SqlSessionFactoryBean();
+        factoryBean.setDataSource(dataSource);
+        return factoryBean.getObject();
+    }
+
+    @Bean
+    public MyBatisBatchItemWriter<PaymentTransaction> paymentTransactionWriter(SqlSessionFactory sqlSessionFactory) {
+        return new MyBatisBatchItemWriter<>(sqlSessionFactory, PaymentTransactionMapper.class, "insertPaymentTransaction");
+    }
+
+    // Similar writer beans for other payment types...
+}
+```
+
+```java
+@Configuration
+@MapperScan("com.yourcompany.batchprocessing.mapper")
+public class DatabaseConfig {
+
+    @Bean
+    public DataSource dataSource() {
+        // Configure your Oracle DataSource
+    }
+
+    @Bean
+    public SqlSessionFactory sqlSessionFactory(DataSource dataSource) throws Exception {
+        SqlSessionFactoryBean factoryBean = new SqlSessionFactoryBean();
+        factoryBean.setDataSource(dataSource);
+        return factoryBean.getObject();
+    }
+
+    @Bean
+    public MyBatisBatchItemWriter<PaymentTransaction> paymentTransactionWriter(SqlSessionFactory sqlSessionFactory) {
+        return new MyBatisBatchItemWriter<>(sqlSessionFactory, PaymentTransactionMapper.class, "insertPaymentTransaction");
+    }
+
+    // Similar writer beans for other payment types...
+}
+```
+
+```java
+@Service
+public class BatchStatusService {
+
+    @Autowired
+    private BatchStatusMapper batchStatusMapper;
+
+    public void updateBatchStatus(String batchId, String status) {
+        batchStatusMapper.updateBatchStatus(batchId, status);
+    }
+}
+```
+
+```java
+@Service
+public class NotificationService {
+
+    @Autowired
+    private JmsTemplate jmsTemplate;
+
+    public void sendNotification(String message) {
+        jmsTemplate.convertAndSend("NOTIFICATION_QUEUE", message);
+    }
+}
+```
+
+```java
+@Component
+public class JobCompletionNotificationListener extends JobExecutionListenerSupport {
+
+    @Autowired
+    private BatchStatusService batchStatusService;
+
+    @Autowired
+    private NotificationService notificationService;
+
+    @Override
+    public void afterJob(JobExecution jobExecution) {
+        if(jobExecution.getStatus() == BatchStatus.COMPLETED) {
+            batchStatusService.updateBatchStatus(jobExecution.getJobParameters().getString("inputPath"), "COMPLETED");
+            notificationService.sendNotification("Batch processing completed successfully");
+        } else {
+            batchStatusService.updateBatchStatus(jobExecution.getJobParameters().getString("inputPath"), "FAILED");
+            notificationService.sendNotification("Batch processing failed");
+        }
+    }
+}
+```
+
+```java
+public class StepExecutionListener implements org.springframework.batch.core.StepExecutionListener {
+
+    @Override
+    public void beforeStep(StepExecution stepExecution) {
+        // Log step start
+    }
+
+    @Override
+    public ExitStatus afterStep(StepExecution stepExecution) {
+        // Log step completion
+        return null;
+    }
+}
+```
+
+Camel:
+
+```xml
+<!-- Apache Camel dependencies -->
+<dependency>
+    <groupId>org.apache.camel.springboot</groupId>
+    <artifactId>camel-spring-boot-starter</artifactId>
+</dependency>
+<dependency>
+    <groupId>org.apache.camel.springboot</groupId>
+    <artifactId>camel-file-starter</artifactId>
+</dependency>
+
+<!-- Spring Batch dependencies -->
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-batch</artifactId>
+</dependency>
+```
+
+```java
+@Configuration
+public class CamelFilePollingRoute extends RouteBuilder {
+
+    @Autowired
+    private JobLauncher jobLauncher;
+
+    @Autowired
+    private Job importPaymentDataJob;
+
+    @Autowired
+    private DatabaseFileLockService fileLockService;
+
+    @Value("${input.directory.path}")
+    private String inputDirectory;
+
+    @Override
+    public void configure() throws Exception {
+        from("file://" + inputDirectory + "?noop=true&include=batch.*_paymentTransactions.csv")
+            .routeId("filePollingRoute")
+            .process(this::lockAndLaunchJob)
+            .log("Processing file ${header.CamelFileName}")
+            .end();
+    }
+
+    private void lockAndLaunchJob(Exchange exchange) {
+        File file = exchange.getIn().getBody(File.class);
+        String fileName = file.getName();
+
+        // Use DatabaseFileLockService to lock the file
+        if (fileLockService.lockFile(fileName)) {
+            try {
+                JobParameters jobParameters = new JobParametersBuilder()
+                    .addString("inputPath", file.getAbsolutePath())
+                    .addLong("time", System.currentTimeMillis())  // Ensure unique job parameters
+                    .toJobParameters();
+
+                jobLauncher.run(importPaymentDataJob, jobParameters);
+                fileLockService.unlockFile(fileName, "COMPLETED");
+            } catch (JobExecutionException e) {
+                fileLockService.unlockFile(fileName, "FAILED");
+                exchange.setException(e);  // Handle exception in the route
+            }
+        } else {
+            // Skip the file if it is already being processed
+            log.info("File {} is already being processed or completed, skipping.", fileName);
+        }
+    }
+}
+```
+
+```java
+@Configuration
+@EnableBatchProcessing
+public class BatchConfig {
+
+    @Autowired
+    public JobBuilderFactory jobBuilderFactory;
+
+    @Autowired
+    public StepBuilderFactory stepBuilderFactory;
+
+    @Value("${chunk.size:1000}")
+    private int chunkSize;
+
+    @Bean
+    public Job importPaymentDataJob(Step importPaymentTransactionsStep,
+                                    Step importPaymentInstructionsStep,
+                                    Step importPaymentPayeesStep,
+                                    Step importPaymentAdvicesStep,
+                                    Step importPaymentChargesStep) {
+        return jobBuilderFactory.get("importPaymentDataJob")
+                .incrementer(new RunIdIncrementer())
+                .flow(importPaymentTransactionsStep)
+                .next(importPaymentInstructionsStep)
+                .next(importPaymentPayeesStep)
+                .next(importPaymentAdvicesStep)
+                .next(importPaymentChargesStep)
+                .end()
+                .build();
+    }
+
+    @Bean
+    public Step importPaymentTransactionsStep(JdbcBatchItemWriter<PaymentTransaction> writer) {
+        return stepBuilderFactory.get("importPaymentTransactionsStep")
+                .<PaymentTransaction, PaymentTransaction>chunk(chunkSize)
+                .reader(paymentTransactionReader(null))  // Use the CSV reader
+                .processor(new PaymentTransactionProcessor()) // Custom processor
+                .writer(writer)  // Custom writer
+                .build();
+    }
+
+    @Bean
+    @StepScope
+    public FlatFileItemReader<PaymentTransaction> paymentTransactionReader(
+            @Value("#{jobParameters['inputPath']}") String inputPath) {
+        return new FlatFileItemReaderBuilder<PaymentTransaction>()
+                .name("paymentTransactionReader")
+                .resource(new FileSystemResource(inputPath))
+                .delimited()
+                .names(new String[]{"column1", "column2", "column3"})
+                .fieldSetMapper(new BeanWrapperFieldSetMapper<>() {{
+                    setTargetType(PaymentTransaction.class);
+                }})
+                .build();
+    }
+}
+```
+
+Large-Volume Data Insertion Optimization: For large-volume data insertion (e.g., in importPaymentInstructionsStep, importPaymentPayeesStep), Spring Batch provides several mechanisms to optimize data processing and reduce resource contention:
+
+Chunk-based processing: Spring Batch processes data in chunks to optimize memory usage.
+Batch Inserts: Spring Batch can batch the database inserts to reduce round trips between the application and the database.
+Paging: Use paging techniques when reading large datasets.
+Parallel Processing: You can split data across multiple threads or nodes for faster processing.
+Partitioning: This allows splitting the data into partitions, where each partition can be processed independently on different threads or nodes.
+
+1. Database Lock (Avoiding File Lock)
+   Spring Batch uses the JobRepository to coordinate job executions across multiple instances and nodes. Ensure that the JobRepository is properly configured to use your Oracle database. Spring Batch handles locking at the job level using this repository, so you don’t need to manually implement file locking or database locks.
+
+```java
+@Configuration
+public class BatchConfig {
+
+    @Bean
+    public JobRepository jobRepository(DataSource dataSource, PlatformTransactionManager transactionManager) throws Exception {
+        JobRepositoryFactoryBean factoryBean = new JobRepositoryFactoryBean();
+        factoryBean.setDataSource(dataSource);
+        factoryBean.setTransactionManager(transactionManager);
+        factoryBean.setIsolationLevelForCreate("ISOLATION_READ_COMMITTED"); // Adjust as necessary
+        factoryBean.setDatabaseType("ORACLE"); // Specify Oracle as the database type
+        factoryBean.afterPropertiesSet();
+        return factoryBean.getObject();
+    }
+
+    @Bean
+    public JobLauncher jobLauncher(JobRepository jobRepository) throws Exception {
+        SimpleJobLauncher jobLauncher = new SimpleJobLauncher();
+        jobLauncher.setJobRepository(jobRepository);
+        jobLauncher.afterPropertiesSet();
+        return jobLauncher;
+    }
+
+    @Bean
+    public PlatformTransactionManager transactionManager(DataSource dataSource) {
+        return new DataSourceTransactionManager(dataSource);
+    }
+}
+```
+
+2. Large-Volume Data Insertion (Optimizing importPaymentInstructionsStep and importPaymentPayeesStep)
+   Here’s how you can optimize your large-volume data insertion steps:
+
+A. Chunk-based Processing and Batch Inserts
+You can use chunk-based processing with a large chunk size to process multiple records in a single transaction and perform batch inserts. Below is an example of how you can configure chunk-based processing for importPaymentInstructionsStep.
+
+```java
+@Bean
+public Step importPaymentInstructionsStep(JdbcBatchItemWriter<PaymentInstruction> writer) {
+    return stepBuilderFactory.get("importPaymentInstructionsStep")
+            .<PaymentInstruction, PaymentInstruction>chunk(1000)  // Define a suitable chunk size
+            .reader(paymentInstructionReader(null))
+            .processor(new PaymentInstructionProcessor())
+            .writer(writer)
+            .build();
+}
+
+@Bean
+@StepScope
+public FlatFileItemReader<PaymentInstruction> paymentInstructionReader(
+        @Value("#{jobParameters['inputPath']}") String inputPath) {
+    return new FlatFileItemReaderBuilder<PaymentInstruction>()
+            .name("paymentInstructionReader")
+            .resource(new FileSystemResource(inputPath))
+            .delimited()
+            .names(new String[]{"transactionId", "instructionData", "otherColumns"})
+            .fieldSetMapper(new BeanWrapperFieldSetMapper<>() {{
+                setTargetType(PaymentInstruction.class);
+            }})
+            .build();
+}
+
+@Bean
+public JdbcBatchItemWriter<PaymentInstruction> paymentInstructionWriter(DataSource dataSource) {
+    return new JdbcBatchItemWriterBuilder<PaymentInstruction>()
+            .dataSource(dataSource)
+            .sql("INSERT INTO payment_instruction (transaction_id, instruction_data, other_columns) "
+                    + "VALUES (:transactionId, :instructionData, :otherColumns)")
+            .beanMapped()
+            .build();
+}
+```
+
+Chunk Size: The chunk(1000) defines that 1000 rows will be processed per transaction. You can adjust this value based on your memory and database performance.
+Batch Inserts: JdbcBatchItemWriter automatically batches SQL inserts for efficiency.
+B. Parallel Processing with Task Executors
+You can speed up processing by running multiple threads for each step. Spring Batch provides a TaskExecutor to execute steps in parallel.
+
+```java
+@Bean
+public Step importPaymentInstructionsStep(JdbcBatchItemWriter<PaymentInstruction> writer, TaskExecutor taskExecutor) {
+    return stepBuilderFactory.get("importPaymentInstructionsStep")
+            .<PaymentInstruction, PaymentInstruction>chunk(1000)
+            .reader(paymentInstructionReader(null))
+            .processor(new PaymentInstructionProcessor())
+            .writer(writer)
+            .taskExecutor(taskExecutor)  // Enable parallel execution
+            .throttleLimit(10)  // Limit the number of concurrent threads
+            .build();
+}
+
+@Bean
+public TaskExecutor taskExecutor() {
+    ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+    executor.setCorePoolSize(5);
+    executor.setMaxPoolSize(10);
+    executor.setQueueCapacity(100);
+    executor.setThreadNamePrefix("batch-thread-");
+    executor.initialize();
+    return executor;
+}
+```
+
+TaskExecutor: This allows the step to run with multiple threads, speeding up data processing.
+Throttle Limit: Defines the maximum number of concurrent threads. Adjust this according to your system's capacity.
+C. Partitioning for Large Data Volumes
+Spring Batch allows partitioning, where you can split the data into multiple partitions, each processed by a separate thread or even a separate JVM.
+
+```java
+@Bean
+public Step masterStep(Step slaveStep) {
+    return stepBuilderFactory.get("masterStep")
+            .partitioner(slaveStep.getName(), new MultiResourcePartitioner())
+            .step(slaveStep)
+            .taskExecutor(taskExecutor())  // Parallel processing
+            .build();
+}
+
+@Bean
+public Step slaveStep(JdbcBatchItemWriter<PaymentInstruction> writer) {
+    return stepBuilderFactory.get("slaveStep")
+            .<PaymentInstruction, PaymentInstruction>chunk(1000)
+            .reader(paymentInstructionReader(null))
+            .processor(new PaymentInstructionProcessor())
+            .writer(writer)
+            .build();
+}
+
+@Bean
+@StepScope
+public MultiResourcePartitioner partitioner(@Value("#{jobParameters['inputPath']}") String inputPath) {
+    MultiResourcePartitioner partitioner = new MultiResourcePartitioner();
+    partitioner.setResources(new FileSystemResource(inputPath).getFile().listFiles());  // Partition by file
+    return partitioner;
+}
+```
+
+Master-Slave Step: The master step divides the data into partitions and delegates the work to slave steps.
+Partitioner: Here, files are partitioned, and each partition is processed in parallel. You can also partition data by ranges (e.g., ranges of IDs).
+
+Summary:
+Database Locking: Spring Batch's JobRepository ensures that jobs are locked across distributed nodes. You don't need file locks, and jobs are coordinated using Oracle database tables (BATCH_JOB_INSTANCE, BATCH_JOB_EXECUTION).
+
+Optimizing Large-Volume Data Insertions:
+
+Chunk-based processing ensures memory efficiency and batches data inserts.
+Task Executors allow parallel processing of steps for faster data insertion.
+Partitioning divides the data into smaller chunks, each processed independently, and can be run on different threads or even nodes.
+By combining these techniques, you can scale up your batch processing and handle large CSV files more efficiently.
