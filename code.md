@@ -1980,3 +1980,806 @@ Chunk-based processing ensures memory efficiency and batches data inserts.
 Task Executors allow parallel processing of steps for faster data insertion.
 Partitioning divides the data into smaller chunks, each processed independently, and can be run on different threads or even nodes.
 By combining these techniques, you can scale up your batch processing and handle large CSV files more efficiently.
+
+# Spring Batch
+
+```java
+// PaymentProcessingApplication.java
+package com.example.payment;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.CommandLineRunner;
+import org.springframework.batch.core.Job;
+import org.springframework.batch.core.JobParameters;
+import org.springframework.batch.core.JobParametersBuilder;
+import org.springframework.batch.core.launch.JobLauncher;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Bean;
+
+@SpringBootApplication
+public class PaymentProcessingApplication {
+
+    @Autowired
+    private JobLauncher jobLauncher;
+
+    @Autowired
+    private Job preDbInsertionJob;
+
+    @Autowired
+    private Job dbBatchInsertionJob;
+
+    @Autowired
+    private Job postDbInsertionJob;
+
+    public static void main(String[] args) {
+        SpringApplication.run(PaymentProcessingApplication.class, args);
+    }
+
+    @Bean
+    public CommandLineRunner commandLineRunner() {
+        return args -> {
+            if (args.length < 1) {
+                System.out.println("Usage: java -jar payment-processor.jar <stage>");
+                System.out.println("Stages: pre-db, db-batch, post-db");
+                return;
+            }
+
+            String stage = args[0];
+            JobParameters params = new JobParametersBuilder()
+                    .addLong("time", System.currentTimeMillis())
+                    .toJobParameters();
+
+            switch (stage) {
+                case "pre-db":
+                    jobLauncher.run(preDbInsertionJob, params);
+                    break;
+                case "db-batch":
+                    jobLauncher.run(dbBatchInsertionJob, params);
+                    break;
+                case "post-db":
+                    jobLauncher.run(postDbInsertionJob, params);
+                    break;
+                default:
+                    System.out.println("Invalid stage. Use pre-db, db-batch, or post-db.");
+            }
+        };
+    }
+}
+
+// application-pre-db.properties
+spring.profiles.active=pre-db
+camel.springboot.main-run-controller=true
+input.directory=/path/to/nas/directory
+file.pattern=payment_*.json
+
+// application-db-batch.properties
+spring.profiles.active=db-batch
+spring.batch.job.enabled=false
+
+// application-post-db.properties
+spring.profiles.active=post-db
+archive.directory=/path/to/archive/directory
+
+// application.properties (common settings)
+spring.datasource.url=jdbc:oracle:thin:@localhost:1521/XE
+spring.datasource.username=your_username
+spring.datasource.password=your_password
+
+error.directory=/path/to/error/directory
+
+spring.activemq.broker-url=tcp://localhost:61616
+spring.activemq.user=admin
+spring.activemq.password=admin
+
+spring.jpa.hibernate.ddl-auto=update
+```
+
+```bash
+// run.sh
+#!/bin/bash
+
+if [ "$#" -ne 1 ]; then
+    echo "Usage: $0 <stage>"
+    echo "Stages: pre-db, db-batch, post-db"
+    exit 1
+fi
+
+stage=$1
+
+case $stage in
+    pre-db|db-batch|post-db)
+        java -jar -Dspring.profiles.active=$stage payment-processor.jar $stage
+        ;;
+    *)
+        echo "Invalid stage. Use pre-db, db-batch, or post-db."
+        exit 1
+        ;;
+esac
+```
+
+```java
+// PaymentFileStatus.java
+package com.example.payment.model;
+
+import javax.persistence.*;
+import java.time.LocalDateTime;
+
+@Entity
+@Table(name = "payment_file_status")
+public class PaymentFileStatus {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(nullable = false)
+    private String fileName;
+
+    @Column(nullable = false)
+    private String status;
+
+    @Column(nullable = false)
+    private LocalDateTime lastUpdated;
+
+    @Column
+    private String errorMessage;
+
+    // Getters and setters
+}
+
+// PaymentFileStatusRepository.java
+package com.example.payment.repository;
+
+import com.example.payment.model.PaymentFileStatus;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+public interface PaymentFileStatusRepository extends JpaRepository<PaymentFileStatus, Long> {
+    PaymentFileStatus findByFileName(String fileName);
+}
+
+// CamelConfig.java (updated)
+package com.example.payment.config;
+
+import org.apache.camel.builder.RouteBuilder;
+import org.apache.camel.processor.idempotent.jdbc.JdbcMessageIdRepository;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+import javax.sql.DataSource;
+
+@Configuration
+public class CamelConfig {
+
+    @Bean
+    public RouteBuilder routeBuilder(DataSource dataSource) {
+        return new RouteBuilder() {
+            @Override
+            public void configure() throws Exception {
+                JdbcMessageIdRepository repo = new JdbcMessageIdRepository(dataSource, "CAMEL_MESSAGEPROCESSED");
+
+                errorHandler(deadLetterChannel("direct:errorHandler")
+                    .useOriginalMessage()
+                    .maximumRedeliveries(3)
+                    .redeliveryDelay(1000)
+                    .backOffMultiplier(2)
+                    .retryAttemptedLogLevel(LoggingLevel.WARN));
+
+                from("file:{{input.directory}}?include={{file.pattern}}&readLock=idempotent&idempotentRepository=#jdbcMessageIdRepo&readLockRemoveOnCommit=true")
+                    .routeId("filePollingRoute")
+                    .log("New file detected: ${header.CamelFileName}")
+                    .to("direct:preDbInsertion");
+
+                from("direct:preDbInsertion")
+                    .routeId("preDbInsertionRoute")
+                    .log("Triggering Pre-DB Insertion Job: ${header.CamelFileName}")
+                    .to("spring-batch:preDbInsertionJob");
+
+                from("jms:queue:dbBatchInsertionQueue")
+                    .routeId("dbBatchInsertionRoute")
+                    .log("Triggering DB Batch Insertion Job")
+                    .to("spring-batch:dbBatchInsertionJob");
+
+                from("jms:queue:postDbInsertionQueue")
+                    .routeId("postDbInsertionRoute")
+                    .log("Triggering Post-DB Insertion Job")
+                    .to("spring-batch:postDbInsertionJob");
+
+                from("direct:errorHandler")
+                    .routeId("errorHandlerRoute")
+                    .log(LoggingLevel.ERROR, "Error processing file: ${header.CamelFileName}")
+                    .to("bean:errorHandler?method=handleError");
+            }
+        };
+    }
+
+    @Bean
+    public JdbcMessageIdRepository jdbcMessageIdRepo(DataSource dataSource) {
+        return new JdbcMessageIdRepository(dataSource, "CAMEL_MESSAGEPROCESSED");
+    }
+}
+
+// ErrorHandler.java
+package com.example.payment.service;
+
+import com.example.payment.model.PaymentFileStatus;
+import com.example.payment.repository.PaymentFileStatusRepository;
+import org.apache.camel.Exchange;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+import java.io.File;
+import java.time.LocalDateTime;
+
+@Service
+public class ErrorHandler {
+
+    private final PaymentFileStatusRepository statusRepository;
+    private final String errorDirectory;
+
+    public ErrorHandler(PaymentFileStatusRepository statusRepository,
+                        @Value("${error.directory}") String errorDirectory) {
+        this.statusRepository = statusRepository;
+        this.errorDirectory = errorDirectory;
+    }
+
+    public void handleError(Exchange exchange) {
+        String fileName = exchange.getIn().getHeader("CamelFileName", String.class);
+        Exception cause = exchange.getProperty(Exchange.EXCEPTION_CAUGHT, Exception.class);
+
+        // Update status in database
+        PaymentFileStatus status = statusRepository.findByFileName(fileName);
+        if (status == null) {
+            status = new PaymentFileStatus();
+            status.setFileName(fileName);
+        }
+        status.setStatus("ERROR");
+        status.setLastUpdated(LocalDateTime.now());
+        status.setErrorMessage(cause.getMessage());
+        statusRepository.save(status);
+
+        // Move file to error directory
+        File sourceFile = new File(exchange.getIn().getHeader("CamelFileAbsolutePath", String.class));
+        File destFile = new File(errorDirectory, fileName);
+        sourceFile.renameTo(destFile);
+    }
+}
+
+// PreDbInsertionReader.java (updated)
+package com.example.payment.batch;
+
+import com.example.payment.model.PaymentFileStatus;
+import com.example.payment.repository.PaymentFileStatusRepository;
+import org.springframework.batch.item.ItemReader;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.integration.support.locks.LockRegistry;
+import org.springframework.stereotype.Component;
+
+import java.time.LocalDateTime;
+import java.util.concurrent.locks.Lock;
+
+@Component
+public class PreDbInsertionReader implements ItemReader<String> {
+
+    private final LockRegistry lockRegistry;
+    private final String filePath;
+    private final PaymentFileStatusRepository statusRepository;
+
+    public PreDbInsertionReader(LockRegistry lockRegistry,
+                                PaymentFileStatusRepository statusRepository,
+                                @Value("#{jobParameters['filePath']}") String filePath) {
+        this.lockRegistry = lockRegistry;
+        this.statusRepository = statusRepository;
+        this.filePath = filePath;
+    }
+
+    @Override
+    public String read() throws Exception {
+        Lock lock = lockRegistry.obtain(filePath);
+        if (lock.tryLock()) {
+            try {
+                // Update status to PROCESSING
+                String fileName = new File(filePath).getName();
+                PaymentFileStatus status = statusRepository.findByFileName(fileName);
+                if (status == null) {
+                    status = new PaymentFileStatus();
+                    status.setFileName(fileName);
+                }
+                status.setStatus("PROCESSING");
+                status.setLastUpdated(LocalDateTime.now());
+                statusRepository.save(status);
+
+                return filePath;
+            } catch (Exception e) {
+                lock.unlock();
+                throw e;
+            }
+        }
+        return null;
+    }
+}
+
+// PreDbInsertionWriter.java (updated)
+package com.example.payment.batch;
+
+import com.example.payment.model.Pan001Payment;
+import org.springframework.batch.item.ItemWriter;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jms.core.JmsTemplate;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+
+@Component
+public class PreDbInsertionWriter implements ItemWriter<Pan001Payment> {
+
+    @Autowired
+    private JmsTemplate jmsTemplate;
+
+    @Override
+    public void write(List<? extends Pan001Payment> items) throws Exception {
+        for (Pan001Payment payment : items) {
+            jmsTemplate.convertAndSend("dbBatchInsertionQueue", payment);
+        }
+    }
+}
+
+// DbBatchInsertionWriter.java (updated)
+package com.example.payment.batch;
+
+import com.example.payment.model.PaymentTransaction;
+import com.example.payment.model.PaymentFileStatus;
+import com.example.payment.repository.PaymentFileStatusRepository;
+import org.springframework.batch.item.ItemWriter;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+
+import java.time.LocalDateTime;
+import java.util.List;
+
+@Component
+public class DbBatchInsertionWriter implements ItemWriter<PaymentTransaction> {
+
+    @Autowired
+    private PaymentTransactionRepository transactionRepository;
+
+    @Autowired
+    private PaymentFileStatusRepository statusRepository;
+
+    @Autowired
+    private JmsTemplate jmsTemplate;
+
+    @Override
+    public void write(List<? extends PaymentTransaction> items) throws Exception {
+        transactionRepository.saveAll(items);
+
+        // Update status to PROCESSED
+        String fileName = items.get(0).getFileName(); // Assuming fileName is stored in PaymentTransaction
+        PaymentFileStatus status = statusRepository.findByFileName(fileName);
+        status.setStatus("PROCESSED");
+        status.setLastUpdated(LocalDateTime.now());
+        statusRepository.save(status);
+
+        // Send message to post-processing queue
+        jmsTemplate.convertAndSend("postDbInsertionQueue", fileName);
+    }
+}
+
+// PostDbInsertionWriter.java (updated)
+package com.example.payment.batch;
+
+import com.example.payment.model.PaymentFileStatus;
+import com.example.payment.repository.PaymentFileStatusRepository;
+import org.springframework.batch.item.ItemWriter;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.integration.support.locks.LockRegistry;
+import org.springframework.stereotype.Component;
+
+import java.io.File;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.concurrent.locks.Lock;
+
+@Component
+public class PostDbInsertionWriter implements ItemWriter<String> {
+
+    private final LockRegistry lockRegistry;
+    private final String filePath;
+    private final PaymentFileStatusRepository statusRepository;
+    private final String archiveDirectory;
+
+    public PostDbInsertionWriter(LockRegistry lockRegistry,
+                                 PaymentFileStatusRepository statusRepository,
+                                 @Value("#{jobParameters['filePath']}") String filePath,
+                                 @Value("${archive.directory}") String archiveDirectory) {
+        this.lockRegistry = lockRegistry;
+        this.statusRepository = statusRepository;
+        this.filePath = filePath;
+        this.archiveDirectory = archiveDirectory;
+    }
+
+    @Override
+    public void write(List<? extends String> items) throws Exception {
+        String fileName = new File(filePath).getName();
+
+        // Update status to COMPLETED
+        PaymentFileStatus status = statusRepository.findByFileName(fileName);
+        status.setStatus("COMPLETED");
+        status.setLastUpdated(LocalDateTime.now());
+        statusRepository.save(status);
+
+        // Move file to archive directory
+        File sourceFile = new File(filePath);
+        File destFile = new File(archiveDirectory, fileName);
+        sourceFile.renameTo(destFile);
+
+        // Release the lock
+        Lock lock = lockRegistry.obtain(filePath);
+        lock.unlock();
+    }
+}
+
+// application.properties (updated)
+spring.datasource.url=jdbc:oracle:thin:@localhost:1521/XE
+spring.datasource.username=your_username
+spring.datasource.password=your_password
+
+input.directory=/path/to/nas/directory
+error.directory=/path/to/error/directory
+archive.directory=/path/to/archive/directory
+file.pattern=payment_*.json
+
+spring.batch.job.enabled=false
+
+spring.activemq.broker-url=tcp://localhost:61616
+spring.activemq.user=admin
+spring.activemq.password=admin
+
+spring.jpa.hibernate.ddl-auto=update
+```
+
+```java
+// PaymentFileStatus.java
+package com.example.payment.model;
+
+import javax.persistence.*;
+import java.time.LocalDateTime;
+
+@Entity
+@Table(name = "payment_file_status")
+public class PaymentFileStatus {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(nullable = false, unique = true)
+    private String fileName;
+
+    @Column(nullable = false)
+    private String status;
+
+    @Column(nullable = false)
+    private String stage;
+
+    @Column(nullable = false)
+    private String customer;
+
+    @Column(nullable = false)
+    private LocalDateTime createdAt;
+
+    @Column(nullable = false)
+    private LocalDateTime updatedAt;
+
+    @Column
+    private String errorMessage;
+
+    @Column
+    private String csvFileName;
+
+    // Getters and setters
+}
+
+-- SQL schema for payment_file_status table
+CREATE TABLE payment_file_status (
+    id NUMBER GENERATED ALWAYS AS IDENTITY,
+    file_name VARCHAR2(255) NOT NULL UNIQUE,
+    status VARCHAR2(50) NOT NULL,
+    stage VARCHAR2(50) NOT NULL,
+    customer VARCHAR2(100) NOT NULL,
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL,
+    error_message VARCHAR2(4000),
+    csv_file_name VARCHAR2(255),
+    CONSTRAINT pk_payment_file_status PRIMARY KEY (id)
+);
+
+CREATE INDEX idx_payment_file_status_file_name ON payment_file_status (file_name);
+CREATE INDEX idx_payment_file_status_customer ON payment_file_status (customer);
+
+// PreDbInsertionConfig.java
+package com.example.payment.config;
+
+import com.example.payment.batch.PreDbInsertionProcessor;
+import org.springframework.batch.core.Job;
+import org.springframework.batch.core.Step;
+import org.springframework.batch.core.configuration.annotation.JobBuilderFactory;
+import org.springframework.batch.core.configuration.annotation.StepBuilderFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+@Configuration
+public class PreDbInsertionConfig {
+
+    private final JobBuilderFactory jobBuilderFactory;
+    private final StepBuilderFactory stepBuilderFactory;
+
+    public PreDbInsertionConfig(JobBuilderFactory jobBuilderFactory, StepBuilderFactory stepBuilderFactory) {
+        this.jobBuilderFactory = jobBuilderFactory;
+        this.stepBuilderFactory = stepBuilderFactory;
+    }
+
+    @Bean
+    public Job preDbInsertionJobForCustomer1(
+            @Qualifier("preDbInsertionStepForCustomer1") Step preDbInsertionStepForCustomer1) {
+        return jobBuilderFactory.get("preDbInsertionJobForCustomer1")
+                .flow(preDbInsertionStepForCustomer1)
+                .end()
+                .build();
+    }
+
+    @Bean
+    public Step preDbInsertionStepForCustomer1(
+            PreDbInsertionReader reader,
+            @Qualifier("preDbInsertionProcessorForCustomer1") PreDbInsertionProcessor processor,
+            PreDbInsertionWriter writer) {
+        return stepBuilderFactory.get("preDbInsertionStepForCustomer1")
+                .<String, Pan001Payment>chunk(10)
+                .reader(reader)
+                .processor(processor)
+                .writer(writer)
+                .build();
+    }
+
+    @Bean
+    public PreDbInsertionProcessor preDbInsertionProcessorForCustomer1() {
+        return new PreDbInsertionProcessor("Customer1");
+    }
+
+    // Add more beans for other customers as needed
+}
+
+// PreDbInsertionProcessor.java
+package com.example.payment.batch;
+
+import com.example.payment.model.Pan001Payment;
+import org.springframework.batch.item.ItemProcessor;
+
+public class PreDbInsertionProcessor implements ItemProcessor<String, Pan001Payment> {
+
+    private final String customer;
+
+    public PreDbInsertionProcessor(String customer) {
+        this.customer = customer;
+    }
+
+    @Override
+    public Pan001Payment process(String item) throws Exception {
+        Pan001Payment payment = parsePayment(item);
+        validatePayment(payment);
+        enrichPayment(payment);
+        return payment;
+    }
+
+    private Pan001Payment parsePayment(String item) {
+        // Parse the payment based on customer-specific format
+        // ...
+    }
+
+    private void validatePayment(Pan001Payment payment) {
+        // Perform customer-specific validation
+        // ...
+    }
+
+    private void enrichPayment(Pan001Payment payment) {
+        // Perform customer-specific enrichment
+        // ...
+    }
+}
+
+// PreDbInsertionWriter.java
+package com.example.payment.batch;
+
+import com.example.payment.model.Pan001Payment;
+import com.example.payment.model.PaymentFileStatus;
+import com.example.payment.repository.PaymentFileStatusRepository;
+import org.springframework.batch.item.ItemWriter;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+
+import java.io.FileWriter;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.time.LocalDateTime;
+import java.util.List;
+
+@Component
+public class PreDbInsertionWriter implements ItemWriter<Pan001Payment> {
+
+    private final PaymentFileStatusRepository statusRepository;
+    private final String outputDirectory;
+
+    public PreDbInsertionWriter(PaymentFileStatusRepository statusRepository,
+                                @Value("${output.directory}") String outputDirectory) {
+        this.statusRepository = statusRepository;
+        this.outputDirectory = outputDirectory;
+    }
+
+    @Override
+    public void write(List<? extends Pan001Payment> items) throws Exception {
+        if (items.isEmpty()) return;
+
+        String originalFileName = items.get(0).getOriginalFileName();
+        String csvFileName = originalFileName.replace(".json", ".csv");
+        Path csvPath = Paths.get(outputDirectory, csvFileName);
+
+        try (FileWriter writer = new FileWriter(csvPath.toFile())) {
+            // Write CSV header
+            writer.write("id,amount,currency,paymentDate\n");
+
+            for (Pan001Payment payment : items) {
+                // Write payment data to CSV
+                writer.write(String.format("%s,%f,%s,%s\n",
+                        payment.getId(),
+                        payment.getAmount(),
+                        payment.getCurrency(),
+                        payment.getPaymentDate()));
+            }
+        }
+
+        // Update status in database
+        PaymentFileStatus status = statusRepository.findByFileName(originalFileName);
+        status.setStatus("PRE_DB_COMPLETED");
+        status.setStage("DB_BATCH_INSERTION");
+        status.setUpdatedAt(LocalDateTime.now());
+        status.setCsvFileName(csvFileName);
+        statusRepository.save(status);
+    }
+}
+
+// CamelConfig.java (updated)
+package com.example.payment.config;
+
+import org.apache.camel.builder.RouteBuilder;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+@Configuration
+public class CamelConfig {
+
+    @Bean
+    public RouteBuilder routeBuilder() {
+        return new RouteBuilder() {
+            @Override
+            public void configure() throws Exception {
+                from("file:{{input.directory}}?include={{file.pattern}}&readLock=changed")
+                    .routeId("jsonFilePollingRoute")
+                    .log("New JSON file detected: ${header.CamelFileName}")
+                    .to("direct:preDbInsertion");
+
+                from("direct:preDbInsertion")
+                    .routeId("preDbInsertionRoute")
+                    .log("Triggering Pre-DB Insertion Job: ${header.CamelFileName}")
+                    .to("spring-batch:preDbInsertionJobForCustomer1");
+
+                from("file:{{output.directory}}?include=*.csv&readLock=changed")
+                    .routeId("csvFilePollingRoute")
+                    .log("New CSV file detected: ${header.CamelFileName}")
+                    .to("direct:dbBatchInsertion");
+
+                from("direct:dbBatchInsertion")
+                    .routeId("dbBatchInsertionRoute")
+                    .log("Triggering DB Batch Insertion Job: ${header.CamelFileName}")
+                    .to("spring-batch:dbBatchInsertionJob");
+
+                // ... (rest of the routes remain the same)
+            }
+        };
+    }
+}
+
+// application.properties (updated)
+spring.datasource.url=jdbc:oracle:thin:@localhost:1521/XE
+spring.datasource.username=your_username
+spring.datasource.password=your_password
+
+input.directory=/path/to/nas/directory
+output.directory=/path/to/output/directory
+error.directory=/path/to/error/directory
+archive.directory=/path/to/archive/directory
+file.pattern=payment_*.json
+
+spring.batch.job.enabled=false
+
+spring.jpa.hibernate.ddl-auto=update
+
+// PaymentProcessingApplication.java (updated)
+package com.example.payment;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.CommandLineRunner;
+import org.springframework.batch.core.Job;
+import org.springframework.batch.core.JobParameters;
+import org.springframework.batch.core.JobParametersBuilder;
+import org.springframework.batch.core.launch.JobLauncher;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.context.annotation.Bean;
+
+@SpringBootApplication
+public class PaymentProcessingApplication {
+
+    @Autowired
+    private JobLauncher jobLauncher;
+
+    @Autowired
+    @Qualifier("preDbInsertionJobForCustomer1")
+    private Job preDbInsertionJobForCustomer1;
+
+    @Autowired
+    private Job dbBatchInsertionJob;
+
+    @Autowired
+    private Job postDbInsertionJob;
+
+    public static void main(String[] args) {
+        SpringApplication.run(PaymentProcessingApplication.class, args);
+    }
+
+    @Bean
+    public CommandLineRunner commandLineRunner() {
+        return args -> {
+            if (args.length < 2) {
+                System.out.println("Usage: java -jar payment-processor.jar <stage> <customer>");
+                System.out.println("Stages: pre-db, db-batch, post-db");
+                System.out.println("Customers: customer1, customer2, ...");
+                return;
+            }
+
+            String stage = args[0];
+            String customer = args[1];
+            JobParameters params = new JobParametersBuilder()
+                    .addString("customer", customer)
+                    .addLong("time", System.currentTimeMillis())
+                    .toJobParameters();
+
+            switch (stage) {
+                case "pre-db":
+                    if ("customer1".equals(customer)) {
+                        jobLauncher.run(preDbInsertionJobForCustomer1, params);
+                    } else {
+                        System.out.println("Unsupported customer for pre-db stage: " + customer);
+                    }
+                    break;
+                case "db-batch":
+                    jobLauncher.run(dbBatchInsertionJob, params);
+                    break;
+                case "post-db":
+                    jobLauncher.run(postDbInsertionJob, params);
+                    break;
+                default:
+                    System.out.println("Invalid stage. Use pre-db, db-batch, or post-db.");
+            }
+        };
+    }
+}
+```
+
+This integration provides several benefits:
+
+Separation of Concerns: Camel handles file monitoring and routing, while Spring Batch manages the complex data processing tasks.
+-   Scalability: Multiple instances of the application can run on different nodes, each polling for files and triggering jobs as needed.
+-   Flexibility: It's easy to add new routes for different file types or customers, and to trigger different jobs based on file characteristics.
+-   Reliability: The use of file locks and idempotent repositories (configured elsewhere) ensures that files are processed exactly once, even in distributed environments.
+
+To summarize, Camel acts as the orchestrator, detecting new files and triggering the appropriate Spring Batch jobs. This separation allows for efficient file handling (Camel's strength) combined with robust, scalable data processing (Spring Batch's strength).
