@@ -1,65 +1,149 @@
 ```yml
-# Assumptions
-# Core Payment Model is common for all flows, country
-# Customer File Upload Table and NAS design is common for all countries
+# application.yml
 
-bulk-file-processors:
-  bulk-routes:
-    -   route-name: CUSTOMER_SUBMITTED
-        processing-type: OUTBOUND
-        input-source: DATABASE #NAS can be other alternative
-        trigger-type: JMS # File Watcher can be other option
-        source-trigger-endpoint: QUEUENAME # QUEUE or Folder
-        transformation-required: FALSE
-        meta-data-file-required: TRUE #For DMP to use while transforming file
-        meta-data-config: MetaData.json #For DMP to use while transforming file
-        enabled: false #enable disable job
-    -   route-name: CUSTOMER_AUTHORIZED # Post release to bank
-        processing-type: OUTBOUND
-        input-source: DATABASE
-        trigger-type: JMS
-        source-trigger-endpoint: QUEUENAME #Message in this queue which triggers Batch flow
-        transformation-required: TRUE
-        transformation-format-config: UTRI.JSON #Should handle reading from database and writing data to file
-        destination-system: ROS #NPP OR REM is another option
-        destination-delivery: FILE
-        enabled: false #enable disable job
-    -   route-name: CUSTOMER_SUBMITTED_TRANSFORMED # Post DMP transformation
-        processing-type: INBOUND
-        input-source: FILE
-        trigger-type: FILE
-        source-trigger-endpoint: ./payment_transaction.avro #File to load
-        transformation-required: FALSE
-        load-to-database: TRUE
-        enabled: false #enable disable job
-    -   route-name: CUSTOMER_AUTHORIZED_TECH_ACK #L4.1
-        processing-type: INBOUND
-        input-source: FILE #API is other option
-        trigger-type: API
-        source-trigger-endpoint: QUEUENAME
-        transformation-required: TRUE
-        transformation-format-config: UTRO.JSON #Should handle reading from database and writing data to file
-        receive: FILE # API is alternative way
-        enabled: false #enable disable job
-    -   route-name: TT_CUSTOMER_AUTHORIZED_FINAL_ACK #L4
-        processing-type: INBOUND
-        input-source: FILE #API is other option
-        inputFilePath: ./ROS_UTRI.TXT
-        trigger-type: FILE # For ROS it's file and for NPP API
-        source-trigger-endpoint: QUEUENAME
-        transformation-required: TRUE
-        transformation-format-config: UTRO.JSON #Should handle reading from database and writing data to file
-        receive: FILE # API is alternative way
-        enabled: true #enable disable job
-    -   route-name: CBP_CUSTOMER_AUTHORIZED_FINAL_ACK #L4
-        processing-type: INBOUND
-        input-source: FILE #API is other option
-        trigger-type: API # For ROS it's file and for NPP API
-        source-trigger-endpoint: QUEUENAME
-        transformation-required: TRUE
-        transformation-format-config: UTRO.JSON #Should handle reading from database and writing data to file
-        receive: FILE # API is alternative way
-        enabled: false #enable disable job
+bulk-routes:
+  - route-name: CUSTOMER_SUBMITTED_TRANSFORMED
+    processing-type: INBOUND
+    input-source: FILE
+    trigger-type: FILE
+    source-trigger-endpoint: ./payment_transaction_auth.json
+    transformation-required: false
+    load-to-database: true
+    enabled: true
+    processing-steps:
+      - step: PARSE_PAIN001_JSON
+        enabled: true
+      - step: VALIDATE_GROUP_LEVEL
+        enabled: true
+      - step: VALIDATE_INSTRUCTION_LEVEL
+        enabled: true
+      - step: VALIDATE_TXN_LEVEL
+        enabled: true
+      - step: ENRICH_PAYMENT_PURPOSE_CODE
+        enabled: true
+      - step: ENRICH_CATEGORY_PURPOSE_CODE
+        enabled: true
+      - step: COMPUTE_BULK_HIGH_AMOUNT
+        enabled: true
+      - step: COMPUTE_TOTAL_CHILD_TXN
+        enabled: true
+      - step: SAVE_TO_DATABASE
+        enabled: true
+      - step: SEND_NOTIFICATION
+        enabled: true
+      - step: ARCHIVE_FILE
+        enabled: true
+
+    validations:
+      group-level:
+        fields:
+          - name: GroupId
+            type: String
+            required: true
+            regex: '^[A-Z0-9]{10}$'
+          - name: CreationDate
+            type: Date
+            format: 'yyyy-MM-dd'
+            required: true
+      instruction-level:
+        fields:
+          - name: InstructionId
+            type: String
+            required: true
+          - name: DebtorName
+            type: String
+            required: true
+      txn-level:
+        fields:
+          - name: TransactionId
+            type: String
+            required: true
+          - name: Amount
+            type: Decimal
+            required: true
+            min: 0.01
+          - name: Currency
+            type: String
+            required: true
+            allowed-values: ['USD', 'EUR', 'GBP']
+
+    enrichments:
+      paymentPurposeCode:
+        lookup-table: PaymentPurposeCodes
+        key-field: PurposeCode
+        value-field: Description
+      categoryPurposeCode:
+        lookup-table: CategoryPurposeCodes
+        key-field: CategoryCode
+        value-field: Description
+
+    computations:
+      bulkHighAmount:
+        threshold: 1000000
+        action: FLAG
+      totalChildTxn:
+        aggregate-field: ChildTransactionCount
+        action: SUM
+
+    database:
+      type: oracle
+      url: jdbc:oracle:thin:@//localhost:1521/orclpdb
+      username: your_db_username
+      password: your_db_password
+      tables:
+        payment_transactions: PAYMENT_TRANSACTIONS
+        enriched_data: ENRICHED_DATA
+
+    notification:
+      type: EMAIL
+      smtp:
+        host: smtp.yourdomain.com
+        port: 587
+        username: your_smtp_username
+        password: your_smtp_password
+      recipients:
+        - finance-team@yourdomain.com
+        - operations@yourdomain.com
+      subject: "Payment File Processing Result"
+      body: "The payment file has been processed successfully with status: ${processingStatus}."
+
+    archiving:
+      enabled: true
+      archive-directory: ./archive/
+      retention-period-days: 30
+
+    # Additional configurations for future extensibility
+    triggers:
+      - type: API
+        endpoint: /api/payment/process
+      - type: MESSAGE_QUEUE
+        queue-name: paymentProcessingQueue
+
+# Example of another route for outbound processing (future extension)
+  - route-name: OUTBOUND_PAYMENT_PROCESSING
+    processing-type: OUTBOUND
+    input-source: DATABASE
+    trigger-type: MESSAGE_QUEUE
+    source-trigger-endpoint: paymentOutboundQueue
+    transformation-required: true
+    load-to-database: false
+    enabled: false
+    processing-steps:
+      - step: FETCH_PAYMENTS
+        enabled: true
+      - step: TRANSFORM_TO_PAIN002_JSON
+        enabled: true
+      - step: VALIDATE_OUTBOUND_FIELDS
+        enabled: true
+      - step: SEND_TO_DESTINATION
+        enabled: true
+      - step: UPDATE_STATUS
+        enabled: true
+      - step: ARCHIVE_OUTBOUND_FILE
+        enabled: true
+
+    # Similar sub-configurations as the inbound route can be added here
+
 ```
 
 ```java
