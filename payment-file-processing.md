@@ -6,85 +6,88 @@ bulk-routes:
     processing-type: INBOUND
     input-source: FILE
     trigger-type: FILE
-    source-trigger-endpoint: ./payment_transaction_auth.json
+    source-trigger-endpoint: ./payment20241006.json
     transformation-required: false
     load-to-database: true
     enabled: true
-    processing-steps:
-      - step: PARSE_PAIN001_JSON
-        enabled: true
-      - step: VALIDATE_GROUP_LEVEL
-        enabled: true
-      - step: VALIDATE_INSTRUCTION_LEVEL
-        enabled: true
-      - step: VALIDATE_TXN_LEVEL
-        enabled: true
-      - step: ENRICH_PAYMENT_PURPOSE_CODE
-        enabled: true
-      - step: ENRICH_CATEGORY_PURPOSE_CODE
-        enabled: true
-      - step: COMPUTE_BULK_HIGH_AMOUNT
-        enabled: true
-      - step: COMPUTE_TOTAL_CHILD_TXN
-        enabled: true
-      - step: SAVE_TO_DATABASE
-        enabled: true
-      - step: SEND_NOTIFICATION
-        enabled: true
-      - step: ARCHIVE_FILE
-        enabled: true
 
-    validations:
-      group-level:
+    # Processing Steps
+    steps:
+      - step-name: validation-group
+        type: VALIDATION
+        enabled: true
         fields:
-          - name: GroupId
+          - name: fileStatus
             type: String
             required: true
-            regex: '^[A-Z0-9]{10}$'
-          - name: CreationDate
-            type: Date
-            format: 'yyyy-MM-dd'
-            required: true
-      instruction-level:
+            regex: '^(VALID|INVALID)$' # Example regex
+            error-message: "fileStatus must be either VALID or INVALID."
+
+      - step-name: validation-instruction
+        type: VALIDATION
+        enabled: true
         fields:
-          - name: InstructionId
+          - name: debitAccount
             type: String
             required: true
-          - name: DebtorName
+            regex: '^[A-Z0-9]{12}$'
+            error-message: "debitAccount must be a 12-character alphanumeric string."
+          - name: debitAgent
             type: String
             required: true
-      txn-level:
+            regex: '^[A-Z]{3}$'
+            error-message: "debitAgent must be a 3-letter code."
+
+      - step-name: validation-transaction
+        type: VALIDATION
+        enabled: true
         fields:
-          - name: TransactionId
+          - name: creditorName
             type: String
             required: true
-          - name: Amount
-            type: Decimal
-            required: true
-            min: 0.01
-          - name: Currency
+            max-length: 100
+            error-message: "creditorName cannot exceed 100 characters."
+          - name: creditorAccount
             type: String
             required: true
-            allowed-values: ['USD', 'EUR', 'GBP']
+            regex: '^[A-Z0-9]{12}$'
+            error-message: "creditorAccount must be a 12-character alphanumeric string."
 
-    enrichments:
-      paymentPurposeCode:
-        lookup-table: PaymentPurposeCodes
-        key-field: PurposeCode
-        value-field: Description
-      categoryPurposeCode:
-        lookup-table: CategoryPurposeCodes
-        key-field: CategoryCode
-        value-field: Description
+      - step-name: enrichment
+        type: ENRICHMENT
+        enabled: true
+        fields:
+          - name: paymentPurposeCode
+            enrichment-type: LOOKUP
+            lookup-table: PaymentPurposeCodes
+            key-field: code
+            value-field: description
+            default-value: "UNKNOWN"
+            error-message: "Invalid paymentPurposeCode."
 
-    computations:
-      bulkHighAmount:
-        threshold: 1000000
-        action: FLAG
-      totalChildTxn:
-        aggregate-field: ChildTransactionCount
-        action: SUM
+      - step-name: bulk
+        type: BULK_PROCESSING
+        enabled: true
+        fields:
+          - name: sourceId
+            type: String
+            required: true
+          - name: featureId
+            type: String
+            required: true
 
+      - step-name: computation
+        type: COMPUTATION
+        enabled: true
+        computations:
+          - name: highestAmount
+            operation: MAX
+            field: amount
+          - name: totalChild
+            operation: COUNT
+            field: childTransactions
+
+    # Database Configuration
     database:
       type: oracle
       url: jdbc:oracle:thin:@//localhost:1521/orclpdb
@@ -92,8 +95,9 @@ bulk-routes:
       password: your_db_password
       tables:
         payment_transactions: PAYMENT_TRANSACTIONS
-        enriched_data: ENRICHED_DATA
+        customer_file_upload: CUSTOMER_FILE_UPLOAD
 
+    # Notification Settings
     notification:
       type: EMAIL
       smtp:
@@ -107,43 +111,18 @@ bulk-routes:
       subject: "Payment File Processing Result"
       body: "The payment file has been processed successfully with status: ${processingStatus}."
 
+    # Archiving Settings
     archiving:
       enabled: true
       archive-directory: ./archive/
       retention-period-days: 30
 
-    # Additional configurations for future extensibility
+    # Future Extensibility Triggers
     triggers:
       - type: API
         endpoint: /api/payment/process
       - type: MESSAGE_QUEUE
         queue-name: paymentProcessingQueue
-
-# Example of another route for outbound processing (future extension)
-  - route-name: OUTBOUND_PAYMENT_PROCESSING
-    processing-type: OUTBOUND
-    input-source: DATABASE
-    trigger-type: MESSAGE_QUEUE
-    source-trigger-endpoint: paymentOutboundQueue
-    transformation-required: true
-    load-to-database: false
-    enabled: false
-    processing-steps:
-      - step: FETCH_PAYMENTS
-        enabled: true
-      - step: TRANSFORM_TO_PAIN002_JSON
-        enabled: true
-      - step: VALIDATE_OUTBOUND_FIELDS
-        enabled: true
-      - step: SEND_TO_DESTINATION
-        enabled: true
-      - step: UPDATE_STATUS
-        enabled: true
-      - step: ARCHIVE_OUTBOUND_FILE
-        enabled: true
-
-    # Similar sub-configurations as the inbound route can be added here
-
 ```
 
 ```java
