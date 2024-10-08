@@ -2930,3 +2930,15 @@ public class DlqController {
     }
 }
 ```
+
+```java
+private File fileTransformer(String fileName, String localDirectory, Document document)
+            throws TransformerException {
+        DOMSource dom = new DOMSource(document);
+        Transformer transformer = newDefaultInstance().newTransformer();
+        File signatureFile = archiveFileUtils.fileWithDirectory(localDirectory, fileName);
+        StreamResult result = new StreamResult(signatureFile);
+        transformer.transform(dom, result);
+        return signatureFile;
+    }
+```
