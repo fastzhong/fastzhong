@@ -2942,3 +2942,77 @@ private File fileTransformer(String fileName, String localDirectory, Document do
         return signatureFile;
     }
 ```
+
+```yml
+server:
+  servlet:
+    encoding:
+      charset: UTF-8
+      force: true
+```
+
+```java
+import org.springframework.stereotype.Component;
+import java.io.File;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.text.Normalizer;
+import java.util.regex.Pattern;
+
+@Component
+public class FileUtil {
+
+    private static final int MAX_FILENAME_LENGTH = 255;
+    private static final Pattern INVALID_CHARS = Pattern.compile("[\\\\/:*?\"<>|]");
+
+    public String sanitizeFilename(String filename) {
+        // Replace invalid characters with underscore
+        String sanitized = INVALID_CHARS.matcher(filename).replaceAll("_");
+        
+        // Trim to max length, being careful not to cut in the middle of a multi-byte character
+        if (sanitized.length() > MAX_FILENAME_LENGTH) {
+            byte[] bytes = sanitized.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            if (bytes.length > MAX_FILENAME_LENGTH) {
+                sanitized = new String(bytes, 0, MAX_FILENAME_LENGTH, java.nio.charset.StandardCharsets.UTF_8);
+                // Ensure we don't end with an incomplete multi-byte character
+                while (!sanitized.isEmpty() && !Character.isValidCodePoint(sanitized.charAt(sanitized.length() - 1))) {
+                    sanitized = sanitized.substring(0, sanitized.length() - 1);
+                }
+            }
+        }
+        
+        return sanitized.isEmpty() ? "file" : sanitized;
+    }
+
+    public String getUniqueFilename(Path directory, String filename) throws IOException {
+        String baseName = filename;
+        String extension = "";
+        int dotIndex = filename.lastIndexOf('.');
+        if (dotIndex > 0) {
+            baseName = filename.substring(0, dotIndex);
+            extension = filename.substring(dotIndex);
+        }
+
+        Path filePath = directory.resolve(filename);
+        int counter = 1;
+
+        while (Files.exists(filePath)) {
+            String newName = String.format("%s(%d)%s", baseName, counter++, extension);
+            filePath = directory.resolve(newName);
+        }
+
+        return filePath.getFileName().toString();
+    }
+
+    public String storeFile(Path directory, String originalFilename, byte[] content) throws IOException {
+        String sanitizedFilename = sanitizeFilename(originalFilename);
+        String uniqueFilename = getUniqueFilename(directory, sanitizedFilename);
+        
+        Path filePath = directory.resolve(uniqueFilename);
+        Files.write(filePath, content);
+        
+        return uniqueFilename;
+    }
+}
+```
