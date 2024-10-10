@@ -2943,6 +2943,9 @@ private File fileTransformer(String fileName, String localDirectory, Document do
     }
 ```
 
+# Multilingual File Name for File Upload/Download
+
+Ensure your Spring Boot application is configured to use UTF-8 encoding globally:
 ```yml
 server:
   servlet:
@@ -2950,6 +2953,16 @@ server:
       charset: UTF-8
       force: true
 ```
+
+Invalid Character Handling: Instead of trying to transliterate or remove non-Latin characters, we now only replace characters that are typically invalid in most file systems (like /, , :, *, ?, ", <, >, |).
+
+Length Limitation: We still trim the filename to a maximum length, but we do so carefully to avoid cutting in the middle of a multi-byte character (which is common in Asian scripts).
+
+
+File System Considerations: Ensure your Linux file system is configured to use UTF-8. Most modern Linux distributions do this by default. For the ext4 file system (commonly used in Linux), file names are stored as byte sequences, which works well with UTF-8 encoded Asian characters.
+
+
+Database Storage: Make sure your Oracle database columns for storing file names use a character set that supports Asian languages, such as AL32UTF8 (which is Oracle's implementation of UTF-8).
 
 ```java
 import org.springframework.stereotype.Component;
@@ -3014,5 +3027,22 @@ public class FileUtil {
         
         return uniqueFilename;
     }
+}
+```
+
+When serving files for download, use UTF-8 encoding for the file name in the Content-Disposition header:
+```java
+@GetMapping("/download/{storedFilename}")
+public ResponseEntity<ByteArrayResource> downloadFile(@PathVariable String storedFilename) throws IOException {
+    byte[] data = fileService.getFile(storedFilename);
+    String originalFilename = fileService.getOriginalFilename(storedFilename);
+    ByteArrayResource resource = new ByteArrayResource(data);
+
+    return ResponseEntity.ok()
+        .header(HttpHeaders.CONTENT_DISPOSITION, 
+                "attachment;filename*=UTF-8''" + URLEncoder.encode(originalFilename, StandardCharsets.UTF_8.toString()).replaceAll("\\+", "%20"))
+        .contentType(MediaType.APPLICATION_OCTET_STREAM)
+        .contentLength(data.length)
+        .body(resource);
 }
 ```
