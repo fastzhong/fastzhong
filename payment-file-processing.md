@@ -1,128 +1,35 @@
 ```yml
-# application.yml
 
 bulk-routes:
   - route-name: CUSTOMER_SUBMITTED_TRANSFORMED
     processing-type: INBOUND
-    input-source: FILE
-    trigger-type: FILE
-    source-trigger-endpoint: ./payment20241006.json
-    transformation-required: false
-    load-to-database: true
+    source-type: FILE # JMS, JDBC, API
     enabled: true
-
     # Processing Steps
     steps:
-      - step-name: validation-group
-        type: VALIDATION
-        enabled: true
-        fields:
-          - name: fileStatus
-            type: String
-            required: true
-            regex: '^(VALID|INVALID)$' # Example regex
-            error-message: "fileStatus must be either VALID or INVALID."
-
-      - step-name: validation-instruction
-        type: VALIDATION
-        enabled: true
-        fields:
-          - name: debitAccount
-            type: String
-            required: true
-            regex: '^[A-Z0-9]{12}$'
-            error-message: "debitAccount must be a 12-character alphanumeric string."
-          - name: debitAgent
-            type: String
-            required: true
-            regex: '^[A-Z]{3}$'
-            error-message: "debitAgent must be a 3-letter code."
-
-      - step-name: validation-transaction
-        type: VALIDATION
-        enabled: true
-        fields:
-          - name: creditorName
-            type: String
-            required: true
-            max-length: 100
-            error-message: "creditorName cannot exceed 100 characters."
-          - name: creditorAccount
-            type: String
-            required: true
-            regex: '^[A-Z0-9]{12}$'
-            error-message: "creditorAccount must be a 12-character alphanumeric string."
-
-      - step-name: enrichment
-        type: ENRICHMENT
-        enabled: true
-        fields:
-          - name: paymentPurposeCode
-            enrichment-type: LOOKUP
-            lookup-table: PaymentPurposeCodes
-            key-field: code
-            value-field: description
-            default-value: "UNKNOWN"
-            error-message: "Invalid paymentPurposeCode."
-
-      - step-name: bulk
-        type: BULK_PROCESSING
-        enabled: true
-        fields:
-          - name: sourceId
-            type: String
-            required: true
-          - name: featureId
-            type: String
-            required: true
-
-      - step-name: computation
-        type: COMPUTATION
-        enabled: true
-        computations:
-          - name: highestAmount
-            operation: MAX
-            field: amount
-          - name: totalChild
-            operation: COUNT
-            field: childTransactions
-
-    # Database Configuration
-    database:
-      type: oracle
-      url: jdbc:oracle:thin:@//localhost:1521/orclpdb
-      username: your_db_username
-      password: your_db_password
-      tables:
-        payment_transactions: PAYMENT_TRANSACTIONS
-        customer_file_upload: CUSTOMER_FILE_UPLOAD
-
-    # Notification Settings
+      - validation-group
+      - validation-instruction
+      - validation-transaction
+      - enrichment
+      - computation
+      - pws-insertion
+      - notification
+      - file-archive
+    file-source:
+    validation:
+    pws-insertion:
     notification:
-      type: EMAIL
-      smtp:
-        host: smtp.yourdomain.com
-        port: 587
-        username: your_smtp_username
-        password: your_smtp_password
-      recipients:
-        - finance-team@yourdomain.com
-        - operations@yourdomain.com
-      subject: "Payment File Processing Result"
-      body: "The payment file has been processed successfully with status: ${processingStatus}."
-
-    # Archiving Settings
-    archiving:
-      enabled: true
-      archive-directory: ./archive/
-      retention-period-days: 30
-
-    # Future Extensibility Triggers
-    triggers:
-      - type: API
-        endpoint: /api/payment/process
-      - type: MESSAGE_QUEUE
-        queue-name: paymentProcessingQueue
+    file-archive:
+  - route-name: CUSTOMER_AUTHORIZED
+    processing-type: OUTBOUND
+    destination-type: FILE # JMS, JDBC, API
+    enabled: true
+    # Processing Steps
+    steps:
+      - pws-loading
+      - pain001-transformation
+    pws-insertion:
+    file-destination: 
 ```
 
 ```java
