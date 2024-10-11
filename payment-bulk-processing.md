@@ -358,16 +358,20 @@ import org.springframework.batch.core.Job;
 import org.springframework.batch.core.Step;
 import org.springframework.batch.core.configuration.annotation.JobBuilderFactory;
 import org.springframework.batch.core.configuration.annotation.StepBuilderFactory;
+import org.springframework.batch.core.job.builder.FlowBuilder;
+import org.springframework.batch.core.job.flow.Flow;
+import org.springframework.batch.core.job.flow.support.SimpleFlow;
+import org.springframework.batch.core.step.builder.FaultTolerantStepBuilder;
+import org.springframework.batch.repeat.CompletionPolicy;
+import org.springframework.batch.repeat.RepeatStatus;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import com.example.paymentprocessing.config.BulkRoutesConfig;
-import com.example.paymentprocessing.config.BulkRoutesConfig.RouteConfig;
-import java.util.HashMap;
-import java.util.Map;
+import org.springframework.core.task.TaskExecutor;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 @Configuration
-public class DynamicBatchJobConfig {
+public class Pain001BatchConfig {
 
     @Autowired
     private JobBuilderFactory jobBuilderFactory;
@@ -376,11 +380,189 @@ public class DynamicBatchJobConfig {
     private StepBuilderFactory stepBuilderFactory;
 
     @Autowired
-    private BulkRoutesConfig bulkRoutesConfig;
+    private ErrorHandlingListener errorHandlingListener;
 
+    @Bean
+    public Job pain001ProcessingJob() {
+        return jobBuilderFactory.get("pain001ProcessingJob")
+                .start(pain001ProcessingFlow())
+                .listener(errorHandlingListener)
+                .build();
+    }
+
+    @Bean
+    public Flow pain001ProcessingFlow() {
+        return new FlowBuilder<SimpleFlow>("pain001ProcessingFlow")
+                .start(groupValidationStep())
+                .next(paymentInfoSplittingStep())
+                .next(transactionProcessingStep())
+                .next(pwsComputationStep())
+                .next(pwsInsertionStep())
+                .next(notificationStep())
+                .build();
+    }
+
+    @Bean
+    public Step groupValidationStep() {
+        return stepBuilderFactory.get("groupValidationStep")
+                .tasklet((contribution, chunkContext) -> {
+                    // Implement group validation logic
+                    boolean validationPassed = true;
+                    if (!validationPassed && isErrorOnFileEnabled()) {
+                        throw new ValidationException("Group validation failed");
+                    }
+                    return RepeatStatus.FINISHED;
+                })
+                .build();
+    }
+
+    @Bean
+    public Step paymentInfoSplittingStep() {
+        return stepBuilderFactory.get("paymentInfoSplittingStep")
+                .tasklet((contribution, chunkContext) -> {
+                    // Implement payment info splitting logic
+                    return RepeatStatus.FINISHED;
+                })
+                .build();
+    }
+
+    @Bean
+    public Step transactionProcessingStep() {
+        FaultTolerantStepBuilder<Transaction, Transaction> builder = stepBuilderFactory.get("transactionProcessingStep")
+                .<Transaction, Transaction>chunk(1000)
+                .reader(transactionReader())
+                .processor(compositeTransactionProcessor())
+                .writer(transactionWriter())
+                .faultTolerant()
+                .retry(RetryableException.class)
+                .retryLimit(3)
+                .skip(SkippableException.class)
+                .skipLimit(10)
+                .listener(new TransactionProcessingListener())
+                .taskExecutor(taskExecutor())
+                .throttleLimit(20);
+
+        if (isErrorOnFileEnabled()) {
+            builder.completionPolicy(new ErrorAwareCompletionPolicy());
+        }
+
+        return builder.build();
+    }
+
+    @Bean
+    public Step pwsComputationStep() {
+        return stepBuilderFactory.get("pwsComputationStep")
+                .tasklet((contribution, chunkContext) -> {
+                    // Implement PWS computation logic
+                    return RepeatStatus.FINISHED;
+                })
+                .build();
+    }
+
+    @Bean
+    public Step pwsInsertionStep() {
+        return stepBuilderFactory.get("pwsInsertionStep")
+                .<PwsRecord, PwsRecord>chunk(1000)
+                .reader(pwsRecordReader())
+                .writer(pwsRecordWriter())
+                .faultTolerant()
+                .retry(RetryableException.class)
+                .retryLimit(3)
+                .skip(SkippableException.class)
+                .skipLimit(10)
+                .taskExecutor(taskExecutor())
+                .throttleLimit(10)
+                .build();
+    }
+
+    @Bean
+    public Step notificationStep() {
+        return stepBuilderFactory.get("notificationStep")
+                .tasklet((contribution, chunkContext) -> {
+                    // Implement notification logic
+                    return RepeatStatus.FINISHED;
+                })
+                .build();
+    }
+
+    @Bean
+    public TaskExecutor taskExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(10);
+        executor.setMaxPoolSize(20);
+        executor.setQueueCapacity(500);
+        executor.setThreadNamePrefix("pain001-");
+        executor.initialize();
+        return executor;
+    }
+
+    @Bean
+    public CompositeItemProcessor<Transaction, Transaction> compositeTransactionProcessor() {
+        CompositeItemProcessor<Transaction, Transaction> processor = new CompositeItemProcessor<>();
+        processor.setDelegates(Arrays.asList(
+            transactionValidator(),
+            transactionEnricher()
+        ));
+        return processor;
+    }
+
+    private boolean isErrorOnFileEnabled() {
+        // Implement logic to check if errorOnFile setting is enabled
+        return true; // Placeholder
+    }
+
+    // Other beans (readers, processors, writers) ...
+}
+
+class ErrorAwareCompletionPolicy implements CompletionPolicy {
+    private boolean errorOccurred = false;
+
+    @Override
+    public boolean isComplete(RepeatContext context, RepeatStatus result) {
+        return errorOccurred || RepeatStatus.FINISHED.equals(result);
+    }
+
+    @Override
+    public boolean isComplete(RepeatContext context) {
+        return errorOccurred;
+    }
+
+    @Override
+    public RepeatContext start(RepeatContext parent) {
+        return parent;
+    }
+
+    @Override
+    public void update(RepeatContext context) {
+        // This method can be called to set errorOccurred to true when an error is detected
+    }
+
+    public void setErrorOccurred(boolean errorOccurred) {
+        this.errorOccurred = errorOccurred;
+    }
+}
+
+class TransactionProcessingListener implements ItemProcessListener<Transaction, Transaction>,
+                                              ItemWriteListener<Transaction> {
     @Autowired
-    private Map<String, Step> steps;
+    private ErrorAwareCompletionPolicy completionPolicy;
 
+    @Override
+    public void onProcessError(Transaction item, Exception e) {
+        if (isErrorOnFileEnabled()) {
+            completionPolicy.setErrorOccurred(true);
+        }
+    }
+
+    @Override
+    public void onWriteError(Exception exception, List<? extends Transaction> items) {
+        if (isErrorOnFileEnabled()) {
+            completionPolicy.setErrorOccurred(true);
+        }
+    }
+
+    // Other interface methods...
+}
     @Bean
     public Map<String, Job> jobs() {
         Map<String, Job> jobs = new HashMap<>();
