@@ -45,8 +45,11 @@ spring:
       password: pws_load_password
 
   batch:
-    jdbc:
-      initialize-schema: always
+    job:
+      enabled: false  # Disable auto-start of jobs
+    job-repository:
+      initialize: false  # Set to true to use database-backed job repository
+
 server:
   port: 8080
 
@@ -506,5 +509,55 @@ public class DynamicBatchJobConfig {
     public ItemWriter<Pain001Payment> pain001Writer() {
         // Write Pain001 payments to the configured destination
     }
+
+    @Value("${spring.batch.job-repository.initialize:false}")
+    private boolean shouldInitializeJobRepository;
+
+    private final DataSource dataSource;
+
+    public BatchConfig(DataSource dataSource) {
+        // This will be the default datasource if it exists
+        this.dataSource = dataSource;
+    }
+
+    @Override
+    public void setDataSource(DataSource dataSource) {
+        // Override to use no datasource if initialization is disabled
+        if (shouldInitializeJobRepository) {
+            super.setDataSource(dataSource);
+        }
+    }
+
+    @Override
+    protected JobRepository createJobRepository() throws Exception {
+        if (shouldInitializeJobRepository) {
+            return super.createJobRepository();
+        } else {
+            MapJobRepositoryFactoryBean factoryBean = new MapJobRepositoryFactoryBean();
+            factoryBean.afterPropertiesSet();
+            return factoryBean.getObject();
+        }
+    }
+
+    @Override
+    protected JobExplorer createJobExplorer() throws Exception {
+        if (shouldInitializeJobRepository) {
+            return super.createJobExplorer();
+        } else {
+            MapJobExplorerFactoryBean factoryBean = new MapJobExplorerFactoryBean(createJobRepository());
+            factoryBean.afterPropertiesSet();
+            return factoryBean.getObject();
+        }
+    }
+
+    @Bean
+    public JobLauncher jobLauncher() throws Exception {
+        SimpleJobLauncher jobLauncher = new SimpleJobLauncher();
+        jobLauncher.setJobRepository(createJobRepository());
+        jobLauncher.setTaskExecutor(new SimpleAsyncTaskExecutor());
+        jobLauncher.afterPropertiesSet();
+        return jobLauncher;
+    }
+
 }
 ```
