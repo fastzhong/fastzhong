@@ -591,11 +591,16 @@ spring:
       type: com.zaxxer.hikari.HikariDataSource
       driver-class-name: oracle.jdbc.OracleDriver
       hikari:
-        maximum-pool-size: 5
-        minimum-idle: 2
-        idle-timeout: 300000
-        connection-timeout: 20000
+        maximum-pool-size: 20
+        minimum-idle: 10
+        connection-timeout: 30000
+        idle-timeout: 600000
         max-lifetime: 1800000
+        data-source-properties:
+          rewriteBatchedStatement: true
+          cachePrepStmts: true
+          preStmtCacheSize: 250
+          preStmtCacheSqlLimit: 2048
       vault:
         enabled: false
         key-store: /path/to/keystore.jks
@@ -819,18 +824,28 @@ bulk-routes:
 ```
 
 ```java
-package com.example.paymentprocessing.config;
+ /*
+ * Copyright (c) United Overseas Bank Limited Co.
+ * All rights reserved.
+ *
+ * This software is the confidential and proprietary information of
+ * United Overseas Bank Limited Co. ("Confidential Information").  You shall not
+ * disclose such Confidential Information and shall use it only in accordance
+ * with the terms of the license agreement you entered into with
+ * United Overseas Bank Limited Co.
+ */
+package com.uob.gwb.pbp.config;
+
 
 import com.zaxxer.hikari.HikariDataSource;
+import java.util.Properties;
+import javax.sql.DataSource;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 import org.springframework.core.env.Environment;
-
-import javax.sql.DataSource;
-import java.util.Properties;
 
 @Configuration
 public class DataSourceConfig {
@@ -862,43 +877,60 @@ public class DataSourceConfig {
 
     private DataSource createDataSource(String prefix) {
         HikariDataSource dataSource = DataSourceBuilder.create().type(HikariDataSource.class).build();
-        
+
         // Set common properties
         dataSource.setDriverClassName(env.getProperty("spring.datasource.common.driver-class-name"));
         dataSource.setJdbcUrl(env.getProperty(prefix + ".jdbc-url"));
         dataSource.setUsername(env.getProperty(prefix + ".username"));
         dataSource.setPassword(env.getProperty(prefix + ".password"));
-        
+
         // Set Hikari-specific properties
-        dataSource.setMaximumPoolSize(env.getProperty("spring.datasource.common.hikari.maximum-pool-size", Integer.class));
+        dataSource.setMaximumPoolSize(
+                env.getProperty("spring.datasource.common.hikari.maximum-pool-size", Integer.class));
         dataSource.setMinimumIdle(env.getProperty("spring.datasource.common.hikari.minimum-idle", Integer.class));
         dataSource.setIdleTimeout(env.getProperty("spring.datasource.common.hikari.idle-timeout", Long.class));
-        dataSource.setConnectionTimeout(env.getProperty("spring.datasource.common.hikari.connection-timeout", Long.class));
+        dataSource.setConnectionTimeout(
+                env.getProperty("spring.datasource.common.hikari.connection-timeout", Long.class));
         dataSource.setMaxLifetime(env.getProperty("spring.datasource.common.hikari.max-lifetime", Long.class));
-        
+
         // Configure Oracle Vault if enabled
         if (Boolean.parseBoolean(env.getProperty("spring.datasource.common.vault.enabled"))) {
             Properties props = new Properties();
-            props.setProperty("oracle.net.wallet_location", env.getProperty("spring.datasource.common.vault.wallet-location"));
+            props.setProperty("oracle.net.wallet_location",
+                    env.getProperty("spring.datasource.common.vault.wallet-location"));
             props.setProperty("javax.net.ssl.keyStore", env.getProperty("spring.datasource.common.vault.key-store"));
-            props.setProperty("javax.net.ssl.keyStorePassword", env.getProperty("spring.datasource.common.vault.key-store-password"));
-            props.setProperty("javax.net.ssl.keyStoreType", env.getProperty("spring.datasource.common.vault.key-store-type"));
-            props.setProperty("javax.net.ssl.trustStore", env.getProperty("spring.datasource.common.vault.trust-store"));
-            props.setProperty("javax.net.ssl.trustStorePassword", env.getProperty("spring.datasource.common.vault.trust-store-password"));
-            
+            props.setProperty("javax.net.ssl.keyStorePassword",
+                    env.getProperty("spring.datasource.common.vault.key-store-password"));
+            props.setProperty("javax.net.ssl.keyStoreType",
+                    env.getProperty("spring.datasource.common.vault.key-store-type"));
+            props.setProperty("javax.net.ssl.trustStore",
+                    env.getProperty("spring.datasource.common.vault.trust-store"));
+            props.setProperty("javax.net.ssl.trustStorePassword",
+                    env.getProperty("spring.datasource.common.vault.trust-store-password"));
+
             dataSource.setDataSourceProperties(props);
         }
-        
+
         return dataSource;
     }
 }
 ```
 
 ```java
-package com.example.paymentprocessing.config;
+ /*
+ * Copyright (c) United Overseas Bank Limited Co.
+ * All rights reserved.
+ *
+ * This software is the confidential and proprietary information of
+ * United Overseas Bank Limited Co. ("Confidential Information").  You shall not
+ * disclose such Confidential Information and shall use it only in accordance
+ * with the terms of the license agreement you entered into with
+ * United Overseas Bank Limited Co.
+ */
+package com.uob.gwb.pbp.config;
+
 
 import javax.sql.DataSource;
-
 import org.apache.ibatis.session.SqlSessionFactory;
 import org.mybatis.spring.SqlSessionFactoryBean;
 import org.mybatis.spring.annotation.MapperScan;
@@ -935,26 +967,32 @@ public class MyBatisConfig {
 
     @Bean
     @Primary
-    public SqlSessionFactory primarySqlSessionFactory(@Qualifier("primaryDataSource") DataSource dataSource) throws Exception {
+    public SqlSessionFactory primarySqlSessionFactory(@Qualifier("primaryDataSource") DataSource dataSource)
+            throws Exception {
         SqlSessionFactoryBean sessionFactory = new SqlSessionFactoryBean();
         sessionFactory.setDataSource(dataSource);
-        sessionFactory.setMapperLocations(new PathMatchingResourcePatternResolver().getResources("classpath:mappers/**/*.xml"));
+        sessionFactory.setMapperLocations(
+                new PathMatchingResourcePatternResolver().getResources("classpath:mappers/**/*.xml"));
         return sessionFactory.getObject();
     }
 
     @Bean
-    public SqlSessionFactory pwsInsertionSqlSessionFactory(@Qualifier("pwsInsertionDataSource") DataSource dataSource) throws Exception {
+    public SqlSessionFactory pwsInsertionSqlSessionFactory(@Qualifier("pwsInsertionDataSource") DataSource dataSource)
+            throws Exception {
         SqlSessionFactoryBean sessionFactory = new SqlSessionFactoryBean();
         sessionFactory.setDataSource(dataSource);
-        sessionFactory.setMapperLocations(new PathMatchingResourcePatternResolver().getResources("classpath:mappers/pwsinsertion/**/*.xml"));
+        sessionFactory.setMapperLocations(
+                new PathMatchingResourcePatternResolver().getResources("classpath:mappers/pwsinsertion/**/*.xml"));
         return sessionFactory.getObject();
     }
 
     @Bean
-    public SqlSessionFactory pwsLoadingSqlSessionFactory(@Qualifier("pwsLoadingDataSource") DataSource dataSource) throws Exception {
+    public SqlSessionFactory pwsLoadingSqlSessionFactory(@Qualifier("pwsLoadingDataSource") DataSource dataSource)
+            throws Exception {
         SqlSessionFactoryBean sessionFactory = new SqlSessionFactoryBean();
         sessionFactory.setDataSource(dataSource);
-        sessionFactory.setMapperLocations(new PathMatchingResourcePatternResolver().getResources("classpath:mappers/pwsloading/**/*.xml"));
+        sessionFactory.setMapperLocations(
+                new PathMatchingResourcePatternResolver().getResources("classpath:mappers/pwsloading/**/*.xml"));
         return sessionFactory.getObject();
     }
 }
