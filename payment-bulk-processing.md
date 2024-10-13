@@ -253,6 +253,133 @@ public class MyBatisConfig {
 ```
 
 ```java
+package com.example.paymentprocessing.config;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.context.annotation.Configuration;
+
+import java.util.List;
+import java.util.Map;
+
+@Configuration
+@ConfigurationProperties(prefix = "bulk-routes")
+public class BulkRoutesConfig {
+    private List<RouteConfig> routes;
+
+    public List<RouteConfig> getRoutes() {
+        return routes;
+    }
+
+    public void setRoutes(List<RouteConfig> routes) {
+        this.routes = routes;
+    }
+
+    public static class RouteConfig {
+        private String routeName;
+        private ProcessingType processingType;
+        private SourceDestinationType sourceType;
+        private SourceDestinationType destinationType;
+        private boolean enabled;
+        private List<String> steps;
+        private Map<String, Object> fileSource;
+        private Map<String, Object> pwsInsertion;
+        private Map<String, Object> notification;
+        private Map<String, Object> fileArchive;
+        private Map<String, Object> pwsLoading;
+        private Map<String, Object> pain001Transformation;
+        private Map<String, Object> fileDestination;
+
+        // Getters and setters for all fields
+
+        public String getRouteName() {
+            return routeName;
+        }
+
+        public void setRouteName(String routeName) {
+            this.routeName = routeName;
+        }
+
+        public ProcessingType getProcessingType() {
+            return processingType;
+        }
+
+        public void setProcessingType(ProcessingType processingType) {
+            this.processingType = processingType;
+        }
+
+        public SourceDestinationType getSourceType() {
+            return sourceType;
+        }
+
+        public void setSourceType(SourceDestinationType sourceType) {
+            this.sourceType = sourceType;
+        }
+
+        public SourceDestinationType getDestinationType() {
+            return destinationType;
+        }
+
+        public void setDestinationType(SourceDestinationType destinationType) {
+            this.destinationType = destinationType;
+        }
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public List<String> getSteps() {
+            return steps;
+        }
+
+        public void setSteps(List<String> steps) {
+            this.steps = steps;
+        }
+
+        public Map<String, Object> getFileSource() {
+            return fileSource;
+        }
+
+        public void setFileSource(Map<String, Object> fileSource) {
+            this.fileSource = fileSource;
+        }
+
+        public Map<String, Object> getPwsInsertion() {
+            return pwsInsertion;
+        }
+
+        public void setPwsInsertion(Map<String, Object> pwsInsertion) {
+            this.pwsInsertion = pwsInsertion;
+        }
+
+        public Map<String, Object> getNotification() {
+            return notification;
+        }
+
+        public void setNotification(Map<String, Object> notification) {
+            this.notification = notification;
+        }
+
+        public Map<String, Object> getFileArchive() {
+            return fileArchive;
+        }
+
+        public void setFileArchive(Map<String, Object> fileArchive) {
+            this.fileArchive = fileArchive;
+        }
+
+        public Map<String, Object> getPwsLoading() {
+            return pwsLoading;
+        }
+
+        public void setPwsLoading(Map<String, Object> pwsLoading) {
+            this.pwsLoading = pwsLoading;
+```
+
+```java
 package com.example.paymentprocessing.route;
 
 import org.apache.camel.builder.RouteBuilder;
