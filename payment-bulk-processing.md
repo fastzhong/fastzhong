@@ -1001,59 +1001,71 @@ public class MyBatisConfig {
 ```java
 package com.example.paymentprocessing.config;
 
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.batch.core.configuration.annotation.EnableBatchProcessing;
 import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.batch.core.repository.support.JobRepositoryFactoryBean;
+import org.springframework.batch.core.repository.support.MapJobRepositoryFactoryBean;
 import org.springframework.batch.core.explore.JobExplorer;
 import org.springframework.batch.core.explore.support.JobExplorerFactoryBean;
+import org.springframework.batch.core.explore.support.MapJobExplorerFactoryBean;
 import org.springframework.batch.core.launch.JobLauncher;
 import org.springframework.batch.core.launch.support.TaskExecutorJobLauncher;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.batch.BatchProperties;
-import org.springframework.boot.autoconfigure.batch.JobRepositoryDatabaseInitializer;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.task.SimpleAsyncTaskExecutor;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.batch.support.transaction.ResourcelessTransactionManager;
 
 import javax.sql.DataSource;
 
 @Slf4j
 @Configuration
 @EnableBatchProcessing
-@RequiredArgsConstructor
 public class BatchConfig {
 
-    private final DataSource dataSource;
-    private final BatchProperties properties;
-
-    @Value("${spring.batch.jdbc.initialize-schema:ALWAYS}")
+    @Value("${spring.batch.jdbc.initialize-schema:NEVER}")
     private String initializeSchema;
 
     @Bean
-    public PlatformTransactionManager transactionManager() {
-        return new DataSourceTransactionManager(this.dataSource);
+    public PlatformTransactionManager transactionManager(@Qualifier("defaultDataSource") DataSource dataSource) {
+        return "NEVER".equalsIgnoreCase(initializeSchema) 
+               ? new ResourcelessTransactionManager() 
+               : new DataSourceTransactionManager(dataSource);
     }
 
     @Bean
-    public JobRepository jobRepository(PlatformTransactionManager transactionManager) throws Exception {
-        JobRepositoryFactoryBean factory = new JobRepositoryFactoryBean();
-        factory.setDataSource(this.dataSource);
-        factory.setTransactionManager(transactionManager);
-        factory.afterPropertiesSet();
-        return factory.getObject();
+    public JobRepository jobRepository(PlatformTransactionManager transactionManager, 
+                                       @Qualifier("defaultDataSource") DataSource dataSource) throws Exception {
+        if ("NEVER".equalsIgnoreCase(initializeSchema)) {
+            MapJobRepositoryFactoryBean factory = new MapJobRepositoryFactoryBean(transactionManager);
+            factory.afterPropertiesSet();
+            return factory.getObject();
+        } else {
+            JobRepositoryFactoryBean factory = new JobRepositoryFactoryBean();
+            factory.setDataSource(dataSource);
+            factory.setTransactionManager(transactionManager);
+            factory.afterPropertiesSet();
+            return factory.getObject();
+        }
     }
 
     @Bean
-    public JobExplorer jobExplorer() throws Exception {
-        JobExplorerFactoryBean factory = new JobExplorerFactoryBean();
-        factory.setDataSource(this.dataSource);
-        factory.afterPropertiesSet();
-        return factory.getObject();
+    public JobExplorer jobExplorer(JobRepository jobRepository, 
+                                   @Qualifier("defaultDataSource") DataSource dataSource) throws Exception {
+        if ("NEVER".equalsIgnoreCase(initializeSchema)) {
+            MapJobExplorerFactoryBean factory = new MapJobExplorerFactoryBean(jobRepository);
+            factory.afterPropertiesSet();
+            return factory.getObject();
+        } else {
+            JobExplorerFactoryBean factory = new JobExplorerFactoryBean();
+            factory.setDataSource(dataSource);
+            factory.afterPropertiesSet();
+            return factory.getObject();
+        }
     }
 
     @Bean
@@ -1063,12 +1075,6 @@ public class BatchConfig {
         jobLauncher.setTaskExecutor(new SimpleAsyncTaskExecutor());
         jobLauncher.afterPropertiesSet();
         return jobLauncher;
-    }
-
-    @Bean
-    @ConditionalOnProperty(name = "spring.batch.jdbc.initialize-schema", havingValue = "ALWAYS")
-    JobRepositoryDatabaseInitializer jobRepositoryDatabaseInitializer(DataSource dataSource, BatchProperties properties) {
-        return new JobRepositoryDatabaseInitializer(dataSource, properties.getJdbc());
     }
 }
 ```
