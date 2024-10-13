@@ -1053,6 +1053,158 @@ public class BulkRoutesConfig {
 ```
 
 ```java
+package com.uob.pwb.pbp.config;
+
+import org.apache.camel.builder.RouteBuilder;
+import org.springframework.batch.core.Job;
+import org.springframework.batch.core.JobParameters;
+import org.springframework.batch.core.JobParametersBuilder;
+import org.springframework.batch.core.Step;
+import org.springframework.batch.core.configuration.annotation.JobBuilderFactory;
+import org.springframework.batch.core.configuration.annotation.StepBuilderFactory;
+import org.springframework.batch.core.launch.JobLauncher;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Configuration;
+
+import com.uob.pwb.pbp.config.BulkRoutesConfig.RouteConfig;
+import com.uob.pwb.pbp.config.BulkRoutesConfig.ProcessingType;
+
+import org.apache.camel.Exchange;
+
+@Configuration
+public class BulkProcessingFlowBuilder extends RouteBuilder {
+
+    @Autowired
+    private JobBuilderFactory jobBuilderFactory;
+
+    @Autowired
+    private StepBuilderFactory stepBuilderFactory;
+
+    @Autowired
+    private BulkRoutesConfig bulkRoutesConfig;
+
+    @Autowired
+    private JobLauncher jobLauncher;
+
+    @Override
+    public void configure() throws Exception {
+        for (RouteConfig routeConfig : bulkRoutesConfig.getRoutes()) {
+            if (routeConfig.isEnabled()) {
+                configureRoute(routeConfig);
+            }
+        }
+    }
+
+    private void configureRoute(RouteConfig routeConfig) {
+        if (routeConfig.getProcessingType() == ProcessingType.INBOUND) {
+            from(buildInboundFromUri(routeConfig))
+                .routeId(routeConfig.getRouteName())
+                .process(exchange -> {
+                    Job job = createJob(routeConfig);
+                    jobLauncher.run(job, createJobParameters(exchange, routeConfig));
+                })
+                .to(buildInboundToUri(routeConfig));
+        } else { // OUTBOUND
+            from(buildOutboundFromUri(routeConfig))
+                .routeId(routeConfig.getRouteName())
+                .process(exchange -> {
+                    Job job = createJob(routeConfig);
+                    jobLauncher.run(job, createJobParameters(exchange, routeConfig));
+                })
+                .to(buildOutboundToUri(routeConfig));
+        }
+    }
+
+    private String buildInboundFromUri(RouteConfig routeConfig) {
+        return String.format("file:%s?include=%s&delay=%d",
+            routeConfig.getFileSource().getPath(),
+            routeConfig.getFileSource().getFilePatterns(),
+            routeConfig.getFileSource().getInterval());
+    }
+
+    private String buildInboundToUri(RouteConfig routeConfig) {
+        return "direct:fileArchive";
+    }
+
+    private String buildOutboundFromUri(RouteConfig routeConfig) {
+        return String.format("quartz://pwsLoadTimer?cron=%s", routeConfig.getPwsLoading().getCron());
+    }
+
+    private String buildOutboundToUri(RouteConfig routeConfig) {
+        return "file:" + routeConfig.getFileDestination().getPath();
+    }
+
+    private JobParameters createJobParameters(Exchange exchange, RouteConfig routeConfig) {
+        return new JobParametersBuilder()
+            .addString("routeName", routeConfig.getRouteName())
+            .addString("fileName", exchange.getIn().getHeader("CamelFileName", String.class))
+            .addLong("time", System.currentTimeMillis())
+            .toJobParameters();
+    }
+
+    private Job createJob(RouteConfig routeConfig) {
+        JobBuilder jobBuilder = jobBuilderFactory.get(routeConfig.getRouteName() + "Job");
+
+        for (String stepName : routeConfig.getSteps()) {
+            Step step = createStepForName(stepName, routeConfig);
+            jobBuilder = jobBuilder.next(step);
+        }
+
+        return jobBuilder.build();
+    }
+
+    private Step createStepForName(String stepName, RouteConfig routeConfig) {
+        switch (stepName) {
+            case "file-validation":
+                return createFileValidationStep(routeConfig);
+            case "group-validation":
+                return createGroupValidationStep(routeConfig);
+            case "paymentInfo-splitting":
+                return createPaymentInfoSplittingStep(routeConfig);
+            case "paymentInfo-validation":
+                return createPaymentInfoValidationStep(routeConfig);
+            case "paymentInfo-enrichment":
+                return createPaymentInfoEnrichmentStep(routeConfig);
+            case "transaction-validation":
+                return createTransactionValidationStep(routeConfig);
+            case "transaction-enrichment":
+                return createTransactionEnrichmentStep(routeConfig);
+            case "pws-computation":
+                return createPwsComputationStep(routeConfig);
+            case "pws-insertion":
+                return createPwsInsertionStep(routeConfig);
+            case "notification":
+                return createNotificationStep(routeConfig);
+            case "file-archive":
+                return createFileArchiveStep(routeConfig);
+            case "pws-loading":
+                return createPwsLoadingStep(routeConfig);
+            case "pain001-transformation":
+                return createPain001TransformationStep(routeConfig);
+            default:
+                throw new IllegalArgumentException("Unknown step: " + stepName);
+        }
+    }
+
+    // Individual step creation methods (implement these based on your requirements)
+    private Step createFileValidationStep(RouteConfig routeConfig) {
+        return stepBuilderFactory.get("fileValidationStep")
+            .tasklet((contribution, chunkContext) -> {
+                // Implement file validation logic
+                return null;
+            })
+            .build();
+    }
+
+    // Implement other step creation methods similarly
+    // ...
+
+    // Define readers, processors, writers here if needed
+    // ...
+}
+```
+
+```java
 package com.example.paymentprocessing.route;
 
 import org.apache.camel.builder.RouteBuilder;
