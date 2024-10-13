@@ -1,12 +1,52 @@
 ```yml
+server:
+  port: ${pbp_port}
+  servlet:
+    context-path: /paymentbulkprocessing
+  shutdown: graceful
+  tomcat:
+    threads:
+      min-spare: 100
+      max: 200
+    connection-timeout: 10s
+    accept-count: 200
+    max-connections: 600
+    accesslog:
+      enabled: true
+      buffered: false
+      rotate: true
+      max-days: 90
+      encoding: UTF-8
+      request-attributes-enabled: true
+      pattern: "%{yyyy-MM-dd HH:mm:ss.SSS}t %h %r %s %b [%D ms]"
+      directory: ${log_dir}
+      prefix: access_log_paymentbulkprocessing
+      suffix: .log
+  ssl:
+    enabled: false
+    client-auth:
+    key-store:
+    key-alias:
+    key-store-type:
+    key-store-password:
+    key-password:
+    trust-store:
+    trust-store-password:
+    trust-store-type:
+
 spring:
-  application:
-    name: payment-processing-application
-
-  spring:
-  application:
-    name: payment-processing-application
-
+  config:
+    import: bootstrap.yml,classpath:trancommon.yml,classpath:tran-common-caches.yml,classpath:common-utils.yml
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+  jackson:
+    serialization:
+      WRITE_DATES_AS_TIMESTAMPS: false
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: http://127.0.0.1:8080/auth/realms/oauth2-sample/protocol/openid-connect/certs
   datasource:
     common:
       type: com.zaxxer.hikari.HikariDataSource
@@ -26,7 +66,7 @@ spring:
         trust-store-password: truststorePassword
         wallet-location: /path/to/wallet
 
-    # Default datasource for Spring Batch metadata
+    # Default datasource for Spring Batch and pws
     default:
       jdbc-url: jdbc:oracle:thin:@localhost:1521/XEPDB1
       username: batch_user
@@ -44,24 +84,105 @@ spring:
       username: pws_load_user
       password: pws_load_password
 
-  batch:
-    job:
-      enabled: false  # Disable auto-start of jobs
-    job-repository:
-      initialize: false  # Set to true to use database-backed job repository
-
-server:
-  port: 8080
-
-logging:
-  level:
-    root: INFO
-    com.example.paymentprocessing: DEBUG
-    com.zaxxer.hikari: DEBUG
+    batch:
+      job:
+        enabled: false  # Disable auto-start of jobs
+      job-repository:
+        initialize: false  # Set to true to use database-backed job repository
 
 mybatis:
-  config-location: classpath:mybatis-config.xml
-  mapper-locations: classpath:mappers/**/*.xml
+  mapper-locations:
+    - classpath:mappers/**/*.xml
+  configuration:
+    jdbc-type-for-null: VARCHAR
+    default-statement-timeout: 5          #public-key-location: file:${ssl_dir}/geb-sg-sso-jwt.pub
+
+management:
+  endpoint:
+    prometheus:
+      enabled: true
+    health:
+      probes:
+        enabled: true
+      show-details: ALWAYS
+    caches:
+      enabled: true
+    metrics:
+      enabled: true
+  endpoints:
+    web:
+      exposure:
+        include:
+          - health
+          - info
+          - prometheus
+          - metrics
+          - caches
+
+country: th
+country_code: TH
+
+ufw:
+  app:
+    enable-db-performance-logging: true
+    enable-camel-performance-logging: true
+    jwt-require-claims: false
+    jwt-subject-additional-fields:
+      - userSegmentUUID
+    jwt-claim-keys:
+      - sub
+      - iss
+      - userSegmentUUID
+    enable-entitlements: true
+    enable-simple-policy-enforcement: true
+    symmetric-crypto:
+      secret: password
+      salt: 5c0744940b5c369b
+    jwt-public-keys:
+      - client-id: IDBv2
+        client-public-key-path: ${ssl_dir}/geb-${country}-sso-jwt.pub
+        key-algorithm: rs256
+    async-protocol: cew-mq
+    mq-properties:
+
+tranCommon:
+  connection-per-route@: 40
+  sort-per-route@: asc
+  max-total-connections@: 400
+  socket-timeout@: 5000
+  connect-timeout@: 3000
+  request-timeout@: 1000
+  initiateService:
+    enable@: false
+  ueqs:
+    defaultEntitlementRole@:
+    enable@: true
+    url:
+      routes@: ${scheme}://${hostname}:${ueqs_port},${scheme}://${hostname}:${ueqs_routes_1}
+      maximumFailoverAttempts@: 2
+      base-path@: /userentitlementqueryapi
+      companyAndAccount@: /api/entitlements/v1/companyAndAccounts/
+      resourcesAndFeatures@: /api/entitlements/v1/resourceAndFeaturesFromJWT
+      companyAndAccountsForUserResourceFeatures@: /api/entitlements/v3/companyAndAccountsForUserResourceFeatures
+      resourceAndFileType@: /api/entitlements/v1/getResourceAndFileType
+  rds:
+    enable@: true
+    url:
+      routes@: ${scheme}://${hostname}:${rds_port}
+      maximumFailoverAttempts@: 2
+      base-path@: /banklookupapi
+      v2-country-list@: /api/refData/v2/countries
+      payment-codes@: /api/refData/v1/paymentCodes
+      v2-banks-list@: /api/refData/v2/banks
+  fx:
+    enable@: true
+    url:
+      routes@: ${scheme}://${hostname}:${fx_port}
+      maximumFailoverAttempts@: 2
+      base-path@: /fxservice
+      prebook-contract@: /api/foreignExchange/v1/prebookedContracts
+      fxRate@: /api/foreignExchange/v1/fxRate
+      computeEquivalentAmount@: /api/foreignExchange/v1/computeEquivalentAmount
 
 bulk-routes:
   - route-name: CUSTOMER_SUBMITTED_TRANSFORMED
@@ -69,17 +190,18 @@ bulk-routes:
     source-type: FILE
     enabled: true
     steps:
-      - file-validation  
+      - file-validation
       - group-validation
+      - paymentInfo-splitting
       - paymentInfo-validation
       - paymentInfo-enrichment
       - transaction-validation
-      - transaction-enrichment 
+      - transaction-enrichment
       - pws-computation
       - pws-insertion
       - notification
       - file-archive
-    file-source: 
+    file-source:
       path: /path/to/inbound/files
       file-patterns: *.json
       interval: 60000  # 60 seconds
@@ -101,13 +223,60 @@ bulk-routes:
     steps:
       - pws-loading
       - pain001-transformation
-    pws-loading: 
+    pws-loading:
       datasource: datasource-pws-loading
       cron: 0 0/15 * * * ?  # Every 15 minutes
-    pain001-transformation: 
+    pain001-transformation:
       template-path: /path/to/pain001/template.xml
-    file-destination: 
+    file-destination:
       path: /path/to/outbound/files
+```
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+
+	<appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+		<encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %highlight(%-5level) [%thread] %cyan(%logger{36}) - %msg%n</pattern>
+		</encoder>
+	</appender>
+
+	<!-- LOG everything at INFO level -->
+	<root level="info">
+		<appender-ref ref="STDOUT" />
+	</root>
+
+
+	<logger name="com.zaxxer.hikari" level="info"/>
+	<logger name="org.apache.camel" level="debug"/>
+	<logger name="org.apache.kafka" level="debug"/>
+	<logger name="org.mybatis" level="debug"/>
+	<logger name="org.springframework.security" level="debug"/>
+	<logger name="org.springframework" level="debug"/>
+
+
+	<logger name="com.uob.gwb.pre.processing" level="debug"/>
+	<logger name="com.uob.gwb.transaction" level="debug"/>
+	<logger name="com.uob.gwb.common" level="debug"/>
+	<logger name="com.uob.gwb.paymentv3" level="debug"/>
+	<logger name="com.uob.gwb.pws" level="debug"/>
+	<logger name="com.uob.gwb.ufw" level="debug"/>
+	<logger name="com.uob.gwb.utils" level="info"/>
+	<logger name="com.uob.trx.auth.matrix" level="debug"/>
+	<logger name="com.uob.ufw" level="debug"/>
+	<logger name="com.uob.ufw.security" level="debug"/>
+
+
+	<logger name="com.uob.gwb.ans" level="debug"/>
+	<logger name="com.uob.gwb.aes" level="debug"/>
+	<logger name="com.uob.gwb.bms" level="debug"/>
+	<logger name="com.uob.gwb.pis" level="debug"/>
+	<logger name="com.uob.gwb.pws" level="debug"/>
+	<logger name="com.uob.ref" level="debug"/>
+	<logger name="com.uob.gwb.tws" level="debug"/>
+
+</configuration>
 ```
 
 ```java
