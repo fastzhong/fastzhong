@@ -965,23 +965,19 @@ package com.example.paymentprocessing.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
+import lombok.Data;
+import lombok.Getter;
+import lombok.Setter;
 
 import java.util.List;
-import java.util.Map;
 
 @Configuration
 @ConfigurationProperties(prefix = "bulk-routes")
+@Data
 public class BulkRoutesConfig {
     private List<RouteConfig> routes;
 
-    public List<RouteConfig> getRoutes() {
-        return routes;
-    }
-
-    public void setRoutes(List<RouteConfig> routes) {
-        this.routes = routes;
-    }
-
+    @Data
     public static class RouteConfig {
         private String routeName;
         private ProcessingType processingType;
@@ -989,102 +985,71 @@ public class BulkRoutesConfig {
         private SourceDestinationType destinationType;
         private boolean enabled;
         private List<String> steps;
-        private Map<String, Object> fileSource;
-        private Map<String, Object> pwsInsertion;
-        private Map<String, Object> notification;
-        private Map<String, Object> fileArchive;
-        private Map<String, Object> pwsLoading;
-        private Map<String, Object> pain001Transformation;
-        private Map<String, Object> fileDestination;
+        private FileSource fileSource;
+        private PwsInsertion pwsInsertion;
+        private Notification notification;
+        private FileArchive fileArchive;
+        private PwsLoading pwsLoading;
+        private Pain001Transformation pain001Transformation;
+        private FileDestination fileDestination;
+    }
 
-        // Getters and setters for all fields
+    @Data
+    public static class FileSource {
+        private String path;
+        private String filePatterns;
+        private int interval;
+    }
 
-        public String getRouteName() {
-            return routeName;
+    @Data
+    public static class PwsInsertion {
+        private String datasource;
+    }
+
+    @Data
+    public static class Notification {
+        private Email email;
+
+        @Data
+        public static class Email {
+            private String host;
+            private int port;
+            private String username;
+            private String password;
         }
+    }
 
-        public void setRouteName(String routeName) {
-            this.routeName = routeName;
-        }
+    @Data
+    public static class FileArchive {
+        private String path;
+    }
 
-        public ProcessingType getProcessingType() {
-            return processingType;
-        }
+    @Data
+    public static class PwsLoading {
+        private String datasource;
+        private String cron;
+    }
 
-        public void setProcessingType(ProcessingType processingType) {
-            this.processingType = processingType;
-        }
+    @Data
+    public static class Pain001Transformation {
+        private String templatePath;
+    }
 
-        public SourceDestinationType getSourceType() {
-            return sourceType;
-        }
+    @Data
+    public static class FileDestination {
+        private String path;
+    }
 
-        public void setSourceType(SourceDestinationType sourceType) {
-            this.sourceType = sourceType;
-        }
+    @Getter
+    public enum ProcessingType {
+        INBOUND, OUTBOUND
+    }
 
-        public SourceDestinationType getDestinationType() {
-            return destinationType;
-        }
-
-        public void setDestinationType(SourceDestinationType destinationType) {
-            this.destinationType = destinationType;
-        }
-
-        public boolean isEnabled() {
-            return enabled;
-        }
-
-        public void setEnabled(boolean enabled) {
-            this.enabled = enabled;
-        }
-
-        public List<String> getSteps() {
-            return steps;
-        }
-
-        public void setSteps(List<String> steps) {
-            this.steps = steps;
-        }
-
-        public Map<String, Object> getFileSource() {
-            return fileSource;
-        }
-
-        public void setFileSource(Map<String, Object> fileSource) {
-            this.fileSource = fileSource;
-        }
-
-        public Map<String, Object> getPwsInsertion() {
-            return pwsInsertion;
-        }
-
-        public void setPwsInsertion(Map<String, Object> pwsInsertion) {
-            this.pwsInsertion = pwsInsertion;
-        }
-
-        public Map<String, Object> getNotification() {
-            return notification;
-        }
-
-        public void setNotification(Map<String, Object> notification) {
-            this.notification = notification;
-        }
-
-        public Map<String, Object> getFileArchive() {
-            return fileArchive;
-        }
-
-        public void setFileArchive(Map<String, Object> fileArchive) {
-            this.fileArchive = fileArchive;
-        }
-
-        public Map<String, Object> getPwsLoading() {
-            return pwsLoading;
-        }
-
-        public void setPwsLoading(Map<String, Object> pwsLoading) {
-            this.pwsLoading = pwsLoading;
+    @Getter
+    public enum SourceDestinationType {
+        FILE, JDBC, MESSAGE, API
+    }
+}
 ```
 
 ```java
