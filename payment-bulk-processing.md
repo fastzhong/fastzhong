@@ -922,23 +922,22 @@ public class BatchConfig {
 ```java
 package com.uob.gwb.pbp.flow;
 
-
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.uob.gwb.pbp.config.BulkRoutesConfig;
-import com.uob.gwb.pbp.config.BulkRoutesConfig.ProcessingType;
 import com.uob.gwb.pbp.config.BulkRoutesConfig.RouteConfig;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.camel.Exchange;
 import org.apache.camel.builder.RouteBuilder;
-import org.springframework.batch.core.Job;
-import org.springframework.batch.core.JobParameters;
-import org.springframework.batch.core.JobParametersBuilder;
-import org.springframework.batch.core.Step;
-import org.springframework.batch.core.launch.JobLauncher;
+import org.springframework.batch.core.*;
+import org.springframework.batch.core.job.builder.JobBuilder;
 import org.springframework.batch.core.repository.JobRepository;
+import org.springframework.batch.core.step.builder.StepBuilder;
+import org.springframework.batch.core.launch.JobLauncher;
+import org.springframework.batch.item.ExecutionContext;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.transaction.PlatformTransactionManager;
+
+import java.util.List;
 
 @Slf4j
 @Configuration
@@ -949,100 +948,135 @@ public class BulkProcessingFlowBuilder extends RouteBuilder {
     private final ObjectMapper mapper;
     private final JobRepository jobRepository;
     private final JobLauncher jobLauncher;
+    private final PlatformTransactionManager transactionManager;
+
+    // ... existing methods (configure, configureRoute, buildInboundFromUri, etc.) ...
+
+    private Job createJob(RouteConfig routeConfig) {
+        JobBuilder jobBuilder = new JobBuilder(routeConfig.getRouteName() + "Job", jobRepository)
+                .listener(new JobExecutionListener() {
+                    @Override
+                    public void beforeJob(JobExecution jobExecution) {
+                        ExecutionContext executionContext = jobExecution.getExecutionContext();
+                        executionContext.put("routeConfig", routeConfig);
+                        // Add any other common metadata here
+                    }
+
+                    @Override
+                    public void afterJob(JobExecution jobExecution) {
+                        if (jobExecution.getStatus() == BatchStatus.COMPLETED) {
+                            log.info("Job completed successfully");
+                        } else if (jobExecution.getStatus() == BatchStatus.FAILED) {
+                            log.error("Job failed with status: {}", jobExecution.getStatus());
+                        }
+                    }
+                });
+
+        List<String> stepNames = routeConfig.getSteps();
+        if (stepNames == null || stepNames.isEmpty()) {
+            throw new BulkProcessingException("No steps defined for route: " + routeConfig.getRouteName());
+        }
+
+        Step firstStep = createStepForName(stepNames.get(0), routeConfig);
+        JobBuilder flowJobBuilder = jobBuilder.start(firstStep);
+
+        for (int i = 1; i < stepNames.size(); i++) {
+            Step step = createStepForName(stepNames.get(i), routeConfig);
+            flowJobBuilder = flowJobBuilder.next(step);
+        }
+
+        return flowJobBuilder.build();
+    }
+
+    private Step createStepForName(String stepName, RouteConfig routeConfig) {
+        log.info("Creating step: {} for route: {}", stepName, routeConfig.getRouteName());
+        StepBuilder stepBuilder = new StepBuilder(stepName, jobRepository);
+
+        switch (stepName) {
+            case "pain001-validation":
+                return createPain001ValidationStep(stepBuilder, routeConfig);
+            case "group-validation":
+                return createGroupValidationStep(stepBuilder, routeConfig);
+            // ... other cases ...
+            default:
+                throw new BulkProcessingException("Unknown step: " + stepName);
+        }
+    }
+
+    private Step createPain001ValidationStep(StepBuilder stepBuilder, RouteConfig routeConfig) {
+        return stepBuilder
+            .tasklet((contribution, chunkContext) -> {
+                ExecutionContext jobContext = chunkContext.getStepContext().getStepExecution().getJobExecution().getExecutionContext();
+                // Access routeConfig or other metadata from jobContext
+                
+                // Implement Pain001 validation logic here
+                return RepeatStatus.FINISHED;
+            }, transactionManager)
+            .listener(new StepExecutionListener() {
+                @Override
+                public void beforeStep(StepExecution stepExecution) {
+                    // Preparation logic
+                }
+
+                @Override
+                public ExitStatus afterStep(StepExecution stepExecution) {
+                    if (stepExecution.getStatus() == BatchStatus.FAILED) {
+                        // If errorOnFile is set, we return a special exit status
+                        return new ExitStatus("FAILED_STOP_JOB");
+                    }
+                    return stepExecution.getExitStatus();
+                }
+            })
+            .build();
+    }
+
+    private Step createGroupValidationStep(StepBuilder stepBuilder, RouteConfig routeConfig) {
+        return stepBuilder
+            .<Pain001Group, Pain001Group>chunk(10, transactionManager)
+            .reader(pain001GroupReader(routeConfig))
+            .processor(groupValidator())
+            .writer(validatedGroupWriter())
+            .faultTolerant()
+            .retry(TransientDataAccessException.class)
+            .retryLimit(3)
+            .skip(ValidationException.class)
+            .skipLimit(10)
+            .listener(new StepExecutionListener() {
+                @Override
+                public ExitStatus afterStep(StepExecution stepExecution) {
+                    if (stepExecution.getStatus() == BatchStatus.FAILED) {
+                        return new ExitStatus("FAILED_STOP_JOB");
+                    }
+                    return stepExecution.getExitStatus();
+                }
+            })
+            .build();
+    }
+
+    // ... implement other step creation methods ...
 
     @Override
     public void configure() throws Exception {
         for (RouteConfig routeConfig : bulkRoutesConfig.getRoutes()) {
             if (routeConfig.isEnabled()) {
-                configureRoute(routeConfig);
+                from(buildInboundFromUri(routeConfig))
+                    .routeId(routeConfig.getRouteName())
+                    .process(exchange -> {
+                        Job job = createJob(routeConfig);
+                        JobParameters jobParameters = createJobParameters(exchange, routeConfig);
+                        JobExecution jobExecution = jobLauncher.run(job, jobParameters);
+                        
+                        // Check for the special exit status
+                        if (jobExecution.getExitStatus().getExitCode().equals("FAILED_STOP_JOB")) {
+                            exchange.setProperty(Exchange.ROUTE_STOP, Boolean.TRUE);
+                            // Optionally, set an error message or perform cleanup
+                        }
+                    });
             }
         }
     }
 
-    private void configureRoute(RouteConfig routeConfig) throws Exception {
-        log.info("creating processing flow: {}", routeConfig.toString());
-        if (routeConfig.getProcessingType() == ProcessingType.INBOUND) { // INBOUND
-            from(buildInboundFromUri(routeConfig)).routeId(routeConfig.getRouteName()).process(exchange -> {
-                Job job = createJob(routeConfig);
-                jobLauncher.run(job, createJobParameters(exchange, routeConfig));
-            });
-        } else { // OUTBOUND
-            from(buildOutboundFromUri(routeConfig)).routeId(routeConfig.getRouteName()).process(exchange -> {
-                Job job = createJob(routeConfig);
-                jobLauncher.run(job, createJobParameters(exchange, routeConfig));
-            }).to(buildOutboundToUri(routeConfig));
-        }
-    }
-
-    private String buildInboundFromUri(RouteConfig routeConfig) {
-        switch (routeConfig.getSourceType()) {
-            case FILE :
-                BulkRoutesConfig.FileSource f = routeConfig.getFileSource();
-                String fileUri = "file:%s?antInclude=%s" + "&antExclude=%s" + "&charset=%s" + "&doneFileName=%s"
-                        + "&delay=%d" + "&sortBy=%s" + "&maxMessagesPerPoll=%d" + "&noop=%b" + "&recursive=%b"
-                        + "&move=%s" + "&moveFailed=%s" + "&readLock=%s" + "&readLockTimeout=%d"
-                        + "&readLockLoggingLevel=%s";
-                return String.format(fileUri, f.getDirectoryName(), f.getAntInclude(), f.getAntExclude(),
-                        f.getCharset(), f.getDoneFileName(), f.getDelay(), f.getSortBy(), f.getMaxMessagesPerPoll(),
-                        f.isNoop(), f.isRecursive(), f.getMove(), f.getMoveFailed(), f.getReadLock(),
-                        f.getReadLockTimeout(), f.getReadLockInterval());
-            case JDBC, MESSAGE, API :
-                // ToDo
-                break;
-        }
-        log.error("source type {} not supported", routeConfig.getSourceType());
-        return "";
-    }
-
-    private String buildOutboundFromUri(RouteConfig routeConfig) {
-        // ToDo
-        throw new BulkProcessingException("outbound flow yet to implement",
-                new Throwable("outbound flow yet to implement"));
-    }
-
-    private String buildOutboundToUri(RouteConfig routeConfig) {
-        switch (routeConfig.getDestinationType()) {
-            case FILE :
-                BulkRoutesConfig.FileDestination f = routeConfig.getFileDestination();
-                String fileUri = "file:%s?fileName=%s" + "&tempFileName=%s" + "&doneFileName=%s" + "&autoCreate=%b"
-                        + "&fileExist=%s" + "&moveExisting=%s" + "&eagerDeleteTargetFile=%b" + "&delete=%b"
-                        + "&chmod=%s";
-                return String.format(fileUri, f.getFileName(), f.getTempFileName(), f.getDoneFileName(),
-                        f.isAutoCreate(), f.getFileExist(), f.getMoveExisting(), f.isEagerDeleteTargetFile(),
-                        f.isDelete(), f.getChmod());
-            case JDBC, MESSAGE, API :
-                break;
-        }
-        log.error("destination type {} not supported", routeConfig.getDestinationType());
-        throw new BulkProcessingException("destination not supported", new Throwable("destination not supported"));
-    }
-
-    private JobParameters createJobParameters(Exchange exchange, RouteConfig routeConfig) {
-        try {
-            return new JobParametersBuilder().addString("routeName", routeConfig.getRouteName())
-                    .addString("routeConfig", mapper.writeValueAsString(routeConfig))
-                    .addLong("time", System.currentTimeMillis())
-                    .toJobParameters();
-        } catch (JsonProcessingException e) {
-            throw new BulkProcessingException("Error on converting routeConfig to json", e);
-        }
-    }
-
-    private Job createJob(RouteConfig routeConfig) {
-        return null;
-    }
-
-    private Step createStepForName(String stepName, RouteConfig routeConfig) {
-        return null;
-    }
-
-    // Individual step creation methods (implement these based on your requirements)
-
-    // Implement other step creation methods similarly
-    // ...
-
-    // Define readers, processors, writers here if needed
-    // ...
+    // ... other methods ...
 }
 
 ```
