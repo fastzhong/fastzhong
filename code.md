@@ -116,6 +116,56 @@ public static String columnToProperty(String columnName) {
 }
 ```
 
+```java 
+package com.uob.gwb.pbp.config;
+
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.kie.api.KieServices;
+import org.kie.api.builder.KieBuilder;
+import org.kie.api.builder.KieFileSystem;
+import org.kie.api.builder.ReleaseId;
+import org.kie.api.runtime.KieContainer;
+import org.kie.api.runtime.KieSession;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+@Configuration
+@Slf4j
+@RequiredArgsConstructor
+public class RulesConfig {
+
+    @Bean
+    public KieServices kieServices() {
+        return KieServices.Factory.get();
+    }
+
+    @Bean
+    public KieFileSystem kieFileSystem(KieServices kieServices) {
+        return kieServices.newKieFileSystem();
+    }
+
+    @Bean
+    public KieContainer kieContainer(KieServices kieServices, KieFileSystem kieFileSystem) {
+        KieBuilder kieBuilder = kieServices.newKieBuilder(kieFileSystem);
+        kieBuilder.buildAll();
+        if (kieBuilder.getResults().hasMessages(org.kie.api.builder.Message.Level.ERROR)) {
+            throw new RuntimeException("Error in Drools configuration: " + kieBuilder.getResults().toString());
+        }
+        ReleaseId krDefaultReleaseId = kieServices.getRepository().getDefaultReleaseId();
+        return kieServices.newKieContainer(krDefaultReleaseId);
+    }
+
+    @Bean
+    public KieSession kieSession(KieContainer kieContainer) {
+        return kieContainer.newKieSession();
+    }
+
+}
+```
+
+
 ```txt
 rule "Compute TotalTransferAmount"
 when
