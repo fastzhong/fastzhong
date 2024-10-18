@@ -177,39 +177,72 @@ public class RulesConfig {
 
 ```java
 @RequiredArgsConstructor
-public class RuleEngineService {
+@RequiredArgsConstructor
+@Slf4j
+public class RuleEngine {
 
     private final KieServices kieServices;
     private KieContainer kieContainer;
+    private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
 
     public void updateRules(List<String> rules) {
-        KieFileSystem kieFileSystem = kieServices.newKieFileSystem();
-        
-        String drlContent = String.join("\n", rules);
-        kieFileSystem.write("src/main/resources/rules/generated_rules.drl", drlContent);
+        lock.writeLock().lock();
+        try {
+            // Create a new KieModuleModel
+            KieModuleModel kieModuleModel = kieServices.newKieModuleModel();
+            KieBaseModel kieBaseModel = kieModuleModel.newKieBaseModel("KBase")
+                    .setDefault(true)
+                    .setEventProcessingMode(org.kie.api.conf.EventProcessingOption.STREAM); // Optional, depending on use case
+            kieBaseModel.newKieSessionModel("KSession").setDefault(true);
 
-        KieBuilder kieBuilder = kieServices.newKieBuilder(kieFileSystem);
-        kieBuilder.buildAll();
+            // Create a new KieFileSystem in memory
+            KieFileSystem kieFileSystem = kieServices.newKieFileSystem();
+            kieFileSystem.writeKModuleXML(kieModuleModel.toXML());
 
-        if (kieBuilder.getResults().hasMessages(org.kie.api.builder.Message.Level.ERROR)) {
-            throw new RuntimeException("Error updating rules: " + kieBuilder.getResults().toString());
+            // Write the list of rule strings directly into the in-memory file system
+            for (int i = 0; i < rules.size(); i++) {
+                String ruleName = "Rule_" + i;
+                String ruleContent = rules.get(i);
+
+                // Write each rule string as a DRL into the in-memory KieFileSystem
+                String path = "src/main/resources/rules/" + ruleName + ".drl";  // Path for KieFileSystem's virtual FS
+                kieFileSystem.write(path, ruleContent);  // Write rule string
+            }
+
+            // Build all rules in the KieFileSystem
+            KieBuilder kieBuilder = kieServices.newKieBuilder(kieFileSystem);
+            kieBuilder.buildAll();
+
+            // Check for errors in rule compilation
+            if (kieBuilder.getResults().hasMessages(Message.Level.ERROR)) {
+                log.error("Errors during rule compilation: {}", kieBuilder.getResults().getMessages());
+                throw new RuntimeException("Error compiling rules: " + kieBuilder.getResults().getMessages());
+            }
+
+            // Create a new KieContainer
+            kieContainer = kieServices.newKieContainer(kieServices.getRepository().getDefaultReleaseId());
+        } finally {
+            lock.writeLock().unlock();
         }
-
-        KieModule kieModule = kieBuilder.getKieModule();
-        kieContainer = kieServices.newKieContainer(kieModule.getReleaseId());
     }
 
     public void fireRules(Object fact) {
-        if (kieContainer == null) {
-            throw new IllegalStateException("Rules have not been initialized. Call updateRules() first.");
-        }
-
-        KieSession kieSession = kieContainer.newKieSession();
+        lock.readLock().lock();
         try {
-            kieSession.insert(fact);
-            kieSession.fireAllRules();
+            if (kieContainer == null) {
+                throw new IllegalStateException("Rules have not been initialized. Call updateRules() first.");
+            }
+
+            // Create a new KieSession from the KieContainer
+            KieSession kieSession = kieContainer.newKieSession();
+            try {
+                kieSession.insert(fact);  // Insert fact into session
+                kieSession.fireAllRules(); // Fire all applicable rules
+            } finally {
+                kieSession.dispose(); // Clean up session
+            }
         } finally {
-            kieSession.dispose();
+            lock.readLock().unlock();
         }
     }
 }
