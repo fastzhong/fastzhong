@@ -165,6 +165,69 @@ public class RulesConfig {
 }
 ```
 
+```java
+@RequiredArgsConstructor
+public class RuleEngineService {
+
+    private final KieServices kieServices;
+    private KieContainer kieContainer;
+
+    public void updateRules(List<String> rules) {
+        KieFileSystem kieFileSystem = kieServices.newKieFileSystem();
+        
+        String drlContent = String.join("\n", rules);
+        kieFileSystem.write("src/main/resources/rules/generated_rules.drl", drlContent);
+
+        KieBuilder kieBuilder = kieServices.newKieBuilder(kieFileSystem);
+        kieBuilder.buildAll();
+
+        if (kieBuilder.getResults().hasMessages(org.kie.api.builder.Message.Level.ERROR)) {
+            throw new RuntimeException("Error updating rules: " + kieBuilder.getResults().toString());
+        }
+
+        KieModule kieModule = kieBuilder.getKieModule();
+        kieContainer = kieServices.newKieContainer(kieModule.getReleaseId());
+    }
+
+    public void fireRules(Object fact) {
+        if (kieContainer == null) {
+            throw new IllegalStateException("Rules have not been initialized. Call updateRules() first.");
+        }
+
+        KieSession kieSession = kieContainer.newKieSession();
+        try {
+            kieSession.insert(fact);
+            kieSession.fireAllRules();
+        } finally {
+            kieSession.dispose();
+        }
+    }
+}
+```
+
+```java
+
+@Service
+@RequiredArgsConstructor
+public class DecisionMatrixService {
+
+    private final GenericRuleTemplate ruleTemplate;
+    private final RuleEngineService ruleEngineService;
+
+    public void updateRules(List<DecisionMatrixRow> decisionMatrix) {
+        List<String> rules = decisionMatrix.stream()
+                .map(ruleTemplate::generateRule)
+                .collect(Collectors.toList());
+
+        ruleEngineService.updateRules(rules);
+    }
+
+    public void applyRules(Object fact) {
+        ruleEngineService.fireRules(fact);
+    }
+}
+```
+
 
 ```txt
 rule "Compute TotalTransferAmount"
