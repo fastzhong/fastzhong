@@ -7,6 +7,16 @@ xml: false
 
 <!--more-->
 
+# liquibase
+
+--liquibase formatted sql
+--changeset AES_THDBUSR:24 context:AES_TH labels:AES_TH_DELTA Comments:true endDelimiter:/
+--preconditions onFail:WARN onError:WARN
+--comment: add PARENT_TASK_ID in AES_USER_ACCOUNT_RESOURCE_FEATURES_REJECT_DELETE
+
+
+
+
 # Rule & RuleTemplate
 
 ```java
