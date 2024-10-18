@@ -236,6 +236,45 @@ public class PaymentInstructionValidationService implements DecisionMatrixServic
 }
 ```
 
+```java
+public class PwsTransactions {
+
+     private long transactionId;
+     private String accountCurrency;
+     private String accountNumber;
+     private String authorizationStatus;
+     private String captureStatus;
+     private Long companyGroupId;
+     private Long companyId;
+     private String companyName;
+     private String wizard;
+     private Timestamp initiationTime;
+     private Timestamp releaseDate;
+     private String processingStatus;
+     private String bankEntityId;
+     private String bankReferenceId;
+     private String resourceId;
+     private long changeToken;
+     private long initiatedBy;
+     private long releasedBy;
+     private BigDecimal maximumAmount;
+     private String featureId;
+     private String applicationType;
+     private String correlationId;
+     private String customerTransactionStatus;
+     private String rejectReason;
+     private String transactionCurrency;
+     private BigDecimal transactionTotalAmount;
+     private boolean terminatedByDebtorFlag;
+     private BigDecimal highestAmount;
+     private String accountPAB;
+     private int totalChild;
+     private BigDecimal totalAmount;
+     private Long originalTransactionId;
+     private String transactionCategory;
+```
+
+
 ```txt
 rule "Compute TotalTransferAmount"
 when
