@@ -38,6 +38,31 @@ public interface DecisionMatrixRow {
 ```java
 public class GenericRuleTemplate implements RuleTemplate {
 
+    public static String columnToProperty(String columnName) {
+        if (columnName == null || columnName.isEmpty()) {
+            return columnName;
+        }
+
+        StringBuilder result = new StringBuilder();
+        boolean nextUpperCase = false;
+
+        for (int i = 0; i < columnName.length(); i++) {
+            char c = columnName.charAt(i);
+            if (c == '_') {
+                nextUpperCase = true;
+            } else {
+                if (nextUpperCase) {
+                    result.append(Character.toUpperCase(c));
+                    nextUpperCase = false;
+                } else {
+                    result.append(Character.toLowerCase(c));
+                }
+            }
+        }
+
+        return result.toString();
+    }
+
     @Override
     public String generateRule(DecisionMatrixRow row) {
 
@@ -50,13 +75,13 @@ public class GenericRuleTemplate implements RuleTemplate {
         Map<String, String> fieldConditionCols = row.getFieldConditionColumns();
         final AtomicBoolean firstCondition = new AtomicBoolean(true);
         fieldConditionCols.keySet().forEach(k -> {
-           if (StringUtils.isNotEmpty(fieldConditionCols.get(k))) {
-               if (!firstCondition.get()) {
-                   rule.append(", ");
-               }
-               rule.append(k).append(" ").append(fieldConditionCols.get(k));
-               firstCondition.set(false);
-           }
+            if (StringUtils.isNotEmpty(fieldConditionCols.get(k))) {
+                if (!firstCondition.get()) {
+                    rule.append(", ");
+                }
+                rule.append(columnToProperty(k)).append(" ").append(fieldConditionCols.get(k));
+                firstCondition.set(false);
+            }
         });
 
         // Add business rule condition
@@ -79,8 +104,11 @@ public class GenericRuleTemplate implements RuleTemplate {
         Map<String, String> fieldActionCols = row.getFieldActionColumns();
         fieldActionCols.keySet().forEach(k -> {
             if (StringUtils.isNotEmpty(fieldActionCols.get(k))) {
-                rule.append("    $entity.set").append(k)
-                        .append("(").append(fieldActionCols.get(k)).append(");\n");
+                rule.append("    $entity.set")
+                        .append(columnToProperty(k))
+                        .append("(")
+                        .append(fieldActionCols.get(k))
+                        .append(");\n");
             }
         });
 
@@ -99,117 +127,56 @@ public class GenericRuleTemplate implements RuleTemplate {
 }
 ```
 
-```java
-public static String columnToProperty(String columnName) {
-    if (columnName == null || columnName.isEmpty()) {
-        return columnName;
-    }
-
-    StringBuilder result = new StringBuilder();
-    boolean nextUpperCase = false;
-
-    for (int i = 0; i < columnName.length(); i++) {
-        char c = columnName.charAt(i);
-        if (c == '_') {
-            nextUpperCase = true;
-        } else {
-            if (nextUpperCase) {
-                result.append(Character.toUpperCase(c));
-                nextUpperCase = false;
-            } else {
-                result.append(Character.toLowerCase(c));
-            }
-        }
-    }
-
-    return result.toString();
-}
-```
-
 ```java 
-package com.uob.gwb.pbp.config;
-
-
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.kie.api.KieServices;
-import org.kie.api.builder.KieBuilder;
-import org.kie.api.builder.KieFileSystem;
-import org.kie.api.builder.ReleaseId;
-import org.kie.api.runtime.KieContainer;
-import org.kie.api.runtime.KieSession;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-
-@Configuration
-@Slf4j
-@RequiredArgsConstructor
 public class RulesConfig {
 
-    @Bean
-    public KieServices kieServices() {
-        return KieServices.Factory.get();
-    }
+     @Bean
+     public KieServices kieServices() {
+         return KieServices.Factory.get();
+     }
 
-    @Bean
-    public KieFileSystem kieFileSystem(KieServices kieServices) {
-        return kieServices.newKieFileSystem();
-    }
+     @Bean
+     public RuleEngine ruleEngine() {
+         return new RuleEngine(kieServices());
+     }
 
-    @Bean
-    public KieContainer kieContainer(KieServices kieServices, KieFileSystem kieFileSystem) {
-        KieBuilder kieBuilder = kieServices.newKieBuilder(kieFileSystem);
-        kieBuilder.buildAll();
-        if (kieBuilder.getResults().hasMessages(org.kie.api.builder.Message.Level.ERROR)) {
-            throw new RuntimeException("Error in Drools configuration: " + kieBuilder.getResults().toString());
-        }
-        ReleaseId krDefaultReleaseId = kieServices.getRepository().getDefaultReleaseId();
-        return kieServices.newKieContainer(krDefaultReleaseId);
-    }
-
-    @Bean
-    public KieSession kieSession(KieContainer kieContainer) {
-        return kieContainer.newKieSession();
-    }
-
-}
+ }
 ```
 
 ```java
-@RequiredArgsConstructor
-@RequiredArgsConstructor
-@Slf4j
 public class RuleEngine {
 
-    private final KieServices kieServices;
-    private KieContainer kieContainer;
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
+    private KieServices kieServices;
+    private KieContainer kieContainer;
+
+    public RuleEngine(KieServices kieServices) {
+        this.kieServices = kieServices;
+    }
 
     public void updateRules(List<String> rules) {
         lock.writeLock().lock();
         try {
-            // Create a new KieModuleModel
             KieModuleModel kieModuleModel = kieServices.newKieModuleModel();
             KieBaseModel kieBaseModel = kieModuleModel.newKieBaseModel("KBase")
                     .setDefault(true)
-                    .setEventProcessingMode(org.kie.api.conf.EventProcessingOption.STREAM); // Optional, depending on use case
+                    .setEventProcessingMode(org.kie.api.conf.EventProcessingOption.STREAM); // Optional, depending on
+                                                                                            // use case
             kieBaseModel.newKieSessionModel("KSession").setDefault(true);
 
             // Create a new KieFileSystem in memory
             KieFileSystem kieFileSystem = kieServices.newKieFileSystem();
             kieFileSystem.writeKModuleXML(kieModuleModel.toXML());
 
-            // Write the list of rule strings directly into the in-memory file system
             for (int i = 0; i < rules.size(); i++) {
                 String ruleName = "Rule_" + i;
                 String ruleContent = rules.get(i);
 
                 // Write each rule string as a DRL into the in-memory KieFileSystem
-                String path = "src/main/resources/rules/" + ruleName + ".drl";  // Path for KieFileSystem's virtual FS
-                kieFileSystem.write(path, ruleContent);  // Write rule string
+                String path = "src/main/resources/rules/" + ruleName + ".drl"; // Path for KieFileSystem's virtual FS
+                kieFileSystem.write(path, ruleContent); // Write rule string
             }
 
-            // Build all rules in the KieFileSystem
             KieBuilder kieBuilder = kieServices.newKieBuilder(kieFileSystem);
             kieBuilder.buildAll();
 
@@ -236,7 +203,7 @@ public class RuleEngine {
             // Create a new KieSession from the KieContainer
             KieSession kieSession = kieContainer.newKieSession();
             try {
-                kieSession.insert(fact);  // Insert fact into session
+                kieSession.insert(fact); // Insert fact into session
                 kieSession.fireAllRules(); // Fire all applicable rules
             } finally {
                 kieSession.dispose(); // Clean up session
@@ -249,28 +216,25 @@ public class RuleEngine {
 ```
 
 ```java
+public class PaymentInstructionValidationService implements DecisionMatrixService {
 
-@Service
-@RequiredArgsConstructor
-public class DecisionMatrixService {
+    private final GenericRuleTemplate genericRuleTemplate;
+    private final RuleEngine ruleEngine;
 
-    private final GenericRuleTemplate ruleTemplate;
-    private final RuleEngineService ruleEngineService;
-
+    @Override
     public void updateRules(List<DecisionMatrixRow> decisionMatrix) {
         List<String> rules = decisionMatrix.stream()
-                .map(ruleTemplate::generateRule)
+                .map(genericRuleTemplate::generateRule)
                 .collect(Collectors.toList());
-
-        ruleEngineService.updateRules(rules);
+        ruleEngine.updateRules(rules);
     }
 
+    @Override
     public void applyRules(Object fact) {
-        ruleEngineService.fireRules(fact);
+        ruleEngine.fireRules(fact);
     }
 }
 ```
-
 
 ```txt
 rule "Compute TotalTransferAmount"
