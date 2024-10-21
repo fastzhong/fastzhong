@@ -145,73 +145,50 @@ public class RulesConfig {
 
 ```java
 public class RuleEngine {
-
-    private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
-    private KieServices kieServices;
+    private final KieServices kieServices;
     private KieContainer kieContainer;
+    private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
 
-    public RuleEngine(KieServices kieServices) {
-        this.kieServices = kieServices;
-    }
+    // ... other methods ...
 
-    public void updateRules(List<String> rules) {
-        lock.writeLock().lock();
-        try {
-            KieModuleModel kieModuleModel = kieServices.newKieModuleModel();
-            KieBaseModel kieBaseModel = kieModuleModel.newKieBaseModel("KBase")
-                    .setDefault(true)
-                    .setEventProcessingMode(org.kie.api.conf.EventProcessingOption.STREAM); // Optional, depending on
-                                                                                            // use case
-            kieBaseModel.newKieSessionModel("KSession").setDefault(true);
-
-            // Create a new KieFileSystem in memory
-            KieFileSystem kieFileSystem = kieServices.newKieFileSystem();
-            kieFileSystem.writeKModuleXML(kieModuleModel.toXML());
-
-            for (int i = 0; i < rules.size(); i++) {
-                String ruleName = "Rule_" + i;
-                String ruleContent = rules.get(i);
-
-                // Write each rule string as a DRL into the in-memory KieFileSystem
-                String path = "src/main/resources/rules/" + ruleName + ".drl"; // Path for KieFileSystem's virtual FS
-                kieFileSystem.write(path, ruleContent); // Write rule string
-            }
-
-            KieBuilder kieBuilder = kieServices.newKieBuilder(kieFileSystem);
-            kieBuilder.buildAll();
-
-            // Check for errors in rule compilation
-            if (kieBuilder.getResults().hasMessages(Message.Level.ERROR)) {
-                log.error("Errors during rule compilation: {}", kieBuilder.getResults().getMessages());
-                throw new RuntimeException("Error compiling rules: " + kieBuilder.getResults().getMessages());
-            }
-
-            // Create a new KieContainer
-            kieContainer = kieServices.newKieContainer(kieServices.getRepository().getDefaultReleaseId());
-        } finally {
-            lock.writeLock().unlock();
-        }
-    }
-
-    public void fireRules(Object fact) {
+    public void fireRules(List<?> facts, boolean errorOnFail) {
         lock.readLock().lock();
         try {
             if (kieContainer == null) {
                 throw new IllegalStateException("Rules have not been initialized. Call updateRules() first.");
             }
 
-            // Create a new KieSession from the KieContainer
             KieSession kieSession = kieContainer.newKieSession();
             try {
-                kieSession.insert(fact); // Insert fact into session
-                kieSession.fireAllRules(); // Fire all applicable rules
+                // Add a global variable to track if we should stop processing
+                kieSession.setGlobal("shouldStop", new AtomicBoolean(false));
+
+                for (Object fact : facts) {
+                    kieSession.insert(fact);
+                    
+                    // Fire rules after each fact insertion
+                    kieSession.fireAllRules();
+                    
+                    // Check if we should stop processing
+                    AtomicBoolean shouldStop = (AtomicBoolean) kieSession.getGlobal("shouldStop");
+                    if (errorOnFail && shouldStop.get()) {
+                        break;
+                    }
+                }
             } finally {
-                kieSession.dispose(); // Clean up session
+                kieSession.dispose();
             }
         } finally {
             lock.readLock().unlock();
         }
     }
+}
+```
+
+```java
+public interface DecisionMatrixService<T> {
+    void updateRules(List<DecisionMatrixRow> decisionMatrix);
+    List<ValidationResult> applyRules(List<T> facts, boolean errorOnFail);
 }
 ```
 
@@ -233,6 +210,84 @@ public class PaymentInstructionValidationService implements DecisionMatrixServic
     public void applyRules(Object fact) {
         ruleEngine.fireRules(fact);
     }
+}
+```
+
+```java
+@Service
+@RequiredArgsConstructor
+public class PwsTransactionsValidation implements DecisionMatrixService<PwsTransactions> {
+    private final GenericRuleTemplate ruleTemplate;
+    private final RuleEngine ruleEngine;
+
+    @Override
+    public void updateRules(List<DecisionMatrixRow> decisionMatrix) {
+        List<String> rules = decisionMatrix.stream()
+                .map(ruleTemplate::generateRule)
+                .collect(Collectors.toList());
+
+        // Add a rule to set the global variable when an error is encountered
+        rules.add(
+            "rule \"Set Stop Flag On Error\"\n" +
+            "when\n" +
+            "    $tx : PwsTransactions(authorizationStatus == \"REJECTED\" || processingStatus == \"ERROR\")\n" +
+            "then\n" +
+            "    drools.getKieRuntime().setGlobal(\"shouldStop\", new AtomicBoolean(true));\n" +
+            "end"
+        );
+
+        ruleEngine.updateRules(rules);
+    }
+
+    @Override
+    public List<ValidationResult> applyRules(List<PwsTransactions> transactions, boolean errorOnFail) {
+        ruleEngine.fireRules(transactions, errorOnFail);
+        return transactions.stream()
+                .map(this::validateSingle)
+                .collect(Collectors.toList());
+    }
+
+    private ValidationResult validateSingle(PwsTransactions transaction) {
+        ValidationResult result = new ValidationResult();
+        
+        if ("REJECTED".equals(transaction.getAuthorizationStatus())) {
+            result.addError("Transaction rejected: " + transaction.getRejectReason());
+        }
+        
+        if ("ERROR".equals(transaction.getProcessingStatus())) {
+            result.addError("Processing error occurred");
+        }
+
+        return result;
+    }
+}
+
+// Example usage in a service
+@Service
+@RequiredArgsConstructor
+public class TransactionService {
+    private final PwsTransactionsValidation validator;
+
+    public void processBatchTransactions(List<PwsTransactions> transactions, boolean errorOnFail) {
+        List<ValidationResult> results = validator.applyRules(transactions, errorOnFail);
+        
+        for (int i = 0; i < results.size(); i++) {
+            PwsTransactions transaction = transactions.get(i);
+            ValidationResult result = results.get(i);
+            
+            if (result.isValid()) {
+                processValidTransaction(transaction);
+            } else {
+                handleInvalidTransaction(transaction, result);
+                if (errorOnFail) {
+                    System.out.println("Stopping processing due to error.");
+                    break;
+                }
+            }
+        }
+    }
+
+    // ... processValidTransaction and handleInvalidTransaction methods ...
 }
 ```
 
