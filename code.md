@@ -124,6 +124,15 @@ public class GenericRuleTemplate implements RuleTemplate {
         return rule.toString();
     }
 
+// Add entitlement check if needed
+        if (fieldConditionCols.containsKey("requiredEntitlement")) {
+            String requiredEntitlement = fieldConditionCols.get("requiredEntitlement");
+            rule.append(", $accountNumber : accountNumber\n");
+            rule.append("    eval(((ValidationContext) context).getEntitlements($accountNumber).contains(\"")
+                .append(requiredEntitlement).append("\"))\n");
+        }
+
+
 }
 ```
 
@@ -144,14 +153,67 @@ public class RulesConfig {
 ```
 
 ```java
+// First, let's create a context object to hold supporting information
+public class ValidationContext {
+    private Map<String, List<String>> accountEntitlements;
+    // Add other supporting data as needed
+
+    public ValidationContext(Map<String, List<String>> accountEntitlements) {
+        this.accountEntitlements = accountEntitlements;
+    }
+
+    public List<String> getEntitlements(String accountNumber) {
+        return accountEntitlements.getOrDefault(accountNumber, Collections.emptyList());
+    }
+}
+```
+
+```java
 public class RuleEngine {
     private final KieServices kieServices;
     private KieContainer kieContainer;
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
 
-    // ... other methods ...
+    public void updateRules(List<String> rules) {
+        lock.writeLock().lock();
+        try {
+            // Create a new KieModuleModel
+            KieModuleModel kieModuleModel = kieServices.newKieModuleModel();
+            KieBaseModel kieBaseModel = kieModuleModel.newKieBaseModel("KBase")
+                    .setDefault(true)
+                    .setEventProcessingMode(org.kie.api.conf.EventProcessingOption.STREAM);
+            kieBaseModel.newKieSessionModel("KSession").setDefault(true);
 
-    public void fireRules(List<?> facts, boolean errorOnFail) {
+            // Create a new KieFileSystem in memory
+            KieFileSystem kieFileSystem = kieServices.newKieFileSystem();
+            kieFileSystem.writeKModuleXML(kieModuleModel.toXML());
+
+            // Write the list of rule strings directly into the in-memory file system
+            for (int i = 0; i < rules.size(); i++) {
+                String ruleName = "Rule_" + i;
+                String ruleContent = rules.get(i);
+                String path = "src/main/resources/rules/" + ruleName + ".drl";
+                kieFileSystem.write(path, ruleContent);
+            }
+
+            // Build all rules in the KieFileSystem
+            KieBuilder kieBuilder = kieServices.newKieBuilder(kieFileSystem);
+            kieBuilder.buildAll();
+
+            // Check for errors in rule compilation
+            if (kieBuilder.getResults().hasMessages(Message.Level.ERROR)) {
+                log.error("Errors during rule compilation: {}", kieBuilder.getResults().getMessages());
+                throw new RuntimeException("Error compiling rules: " + kieBuilder.getResults().getMessages());
+            }
+
+            // Create a new KieContainer
+            kieContainer = kieServices.newKieContainer(kieServices.getRepository().getDefaultReleaseId());
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    public void fireRules(List<?> facts, ValidationContext context, boolean errorOnFail) {
         lock.readLock().lock();
         try {
             if (kieContainer == null) {
@@ -160,16 +222,13 @@ public class RuleEngine {
 
             KieSession kieSession = kieContainer.newKieSession();
             try {
-                // Add a global variable to track if we should stop processing
+                kieSession.setGlobal("context", context);
                 kieSession.setGlobal("shouldStop", new AtomicBoolean(false));
 
                 for (Object fact : facts) {
                     kieSession.insert(fact);
-                    
-                    // Fire rules after each fact insertion
                     kieSession.fireAllRules();
-                    
-                    // Check if we should stop processing
+
                     AtomicBoolean shouldStop = (AtomicBoolean) kieSession.getGlobal("shouldStop");
                     if (errorOnFail && shouldStop.get()) {
                         break;
@@ -288,6 +347,130 @@ public class TransactionService {
     }
 
     // ... processValidTransaction and handleInvalidTransaction methods ...
+}
+```
+
+```java
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import java.math.BigDecimal;
+import java.util.Arrays;
+import java.util.List;
+
+import static org.mockito.Mockito.*;
+
+class TransactionServiceTest {
+
+    @Mock
+    private PwsTransactionsValidation validator;
+
+    @Mock
+    private RuleEngine ruleEngine;
+
+    private TransactionService transactionService;
+
+    @BeforeEach
+    void setUp() {
+        MockitoAnnotations.openMocks(this);
+        transactionService = new TransactionService(validator);
+
+        // Set up the rule engine with a simple rule
+        String rule = 
+            "rule \"Validate Transaction Amount\"\n" +
+            "when\n" +
+            "    $tx : PwsTransactions(transactionTotalAmount > 10000)\n" +
+            "then\n" +
+            "    $tx.setAuthorizationStatus(\"REJECTED\");\n" +
+            "    $tx.setRejectReason(\"Amount exceeds limit\");\n" +
+            "end";
+
+        List<String> rules = Arrays.asList(rule);
+        when(validator.getRuleEngine()).thenReturn(ruleEngine);
+        doNothing().when(ruleEngine).updateRules(rules);
+        when(validator.getRules()).thenReturn(rules);
+    }
+
+    @Test
+    void testProcessBatchTransactions_ErrorOnFail() {
+        // Create test transactions
+        PwsTransactions validTx = new PwsTransactions();
+        validTx.setTransactionId(1L);
+        validTx.setTransactionTotalAmount(new BigDecimal(5000));
+
+        PwsTransactions invalidTx = new PwsTransactions();
+        invalidTx.setTransactionId(2L);
+        invalidTx.setTransactionTotalAmount(new BigDecimal(15000));
+
+        List<PwsTransactions> transactions = Arrays.asList(validTx, invalidTx);
+
+        // Mock validator behavior
+        when(validator.applyRules(eq(transactions), eq(true)))
+            .thenAnswer(invocation -> {
+                ruleEngine.fireRules(transactions, true);
+                return transactions.stream()
+                    .map(tx -> {
+                        ValidationResult result = new ValidationResult();
+                        if ("REJECTED".equals(tx.getAuthorizationStatus())) {
+                            result.addError(tx.getRejectReason());
+                        }
+                        return result;
+                    })
+                    .collect(Collectors.toList());
+            });
+
+        // Execute the method under test
+        transactionService.processBatchTransactions(transactions, true);
+
+        // Verify that processing stopped after the invalid transaction
+        verify(validator, times(1)).applyRules(eq(transactions), eq(true));
+        verify(transactionService, times(1)).processValidTransaction(validTx);
+        verify(transactionService, times(1)).handleInvalidTransaction(eq(invalidTx), any(ValidationResult.class));
+        verify(transactionService, never()).processValidTransaction(invalidTx);
+    }
+
+    @Test
+    void testProcessBatchTransactions_ContinueOnError() {
+        // Create test transactions
+        PwsTransactions validTx1 = new PwsTransactions();
+        validTx1.setTransactionId(1L);
+        validTx1.setTransactionTotalAmount(new BigDecimal(5000));
+
+        PwsTransactions invalidTx = new PwsTransactions();
+        invalidTx.setTransactionId(2L);
+        invalidTx.setTransactionTotalAmount(new BigDecimal(15000));
+
+        PwsTransactions validTx2 = new PwsTransactions();
+        validTx2.setTransactionId(3L);
+        validTx2.setTransactionTotalAmount(new BigDecimal(7000));
+
+        List<PwsTransactions> transactions = Arrays.asList(validTx1, invalidTx, validTx2);
+
+        // Mock validator behavior
+        when(validator.applyRules(eq(transactions), eq(false)))
+            .thenAnswer(invocation -> {
+                ruleEngine.fireRules(transactions, false);
+                return transactions.stream()
+                    .map(tx -> {
+                        ValidationResult result = new ValidationResult();
+                        if ("REJECTED".equals(tx.getAuthorizationStatus())) {
+                            result.addError(tx.getRejectReason());
+                        }
+                        return result;
+                    })
+                    .collect(Collectors.toList());
+            });
+
+        // Execute the method under test
+        transactionService.processBatchTransactions(transactions, false);
+
+        // Verify that all transactions were processed
+        verify(validator, times(1)).applyRules(eq(transactions), eq(false));
+        verify(transactionService, times(1)).processValidTransaction(validTx1);
+        verify(transactionService, times(1)).handleInvalidTransaction(eq(invalidTx), any(ValidationResult.class));
+        verify(transactionService, times(1)).processValidTransaction(validTx2);
+    }
 }
 ```
 
