@@ -966,31 +966,117 @@ public class BulkProcessingFlowBuilder extends RouteBuilder {
 
     @Override
     public void configure() throws Exception {
-        for (RouteConfig routeConfig : bulkRoutesConfig.getRoutes()) {
-            if (routeConfig.isEnabled()) {
-                configureRoute(routeConfig);
-            }
-        }
+	// Global error handling - simplified since file movement is handled by Camel
+    	onException(BulkProcessingException.class)
+        .handled(true)
+        .process(exchange -> {
+            Exception cause = exchange.getProperty(Exchange.EXCEPTION_CAUGHT, Exception.class);
+            String fileName = exchange.getIn().getHeader(Exchange.FILE_NAME, String.class);
+            
+            // Just log the error and update status - file movement is handled by moveFailed option
+            log.error("Processing failed for file: {}. Error: {}", fileName, cause.getMessage(), cause);
+            updateProcessingStatus(exchange, "FAILED");
+        });
+
+	    // Configure routes based on config
+	    for (RouteConfig routeConfig : bulkRoutesConfig.getRoutes()) {
+	        if (routeConfig.isEnabled()) {
+	            configureRoute(routeConfig);
+	        }
+	    }
     }
 
+    private void configureRoute(RouteConfig routeConfig) throws Exception {
+        log.info("Creating processing flow: {}", routeConfig.toString());
+        
+        if (routeConfig.getProcessingType() == ProcessingType.INBOUND) {
+            from(buildInboundFromUri(routeConfig))
+                .routeId(routeConfig.getRouteName())
+                .process(exchange -> {
+                // Create and run the batch job
+                Job job = createJob(routeConfig);
+                JobParameters jobParameters = createJobParameters(exchange, routeConfig);
+                JobExecution jobExecution = jobLauncher.run(job, jobParameters);
+                
+                // If job fails, Camel will automatically move the file using moveFailed
+                if (jobExecution.getStatus() != BatchStatus.COMPLETED) {
+                    throw new BulkProcessingException(
+                        "Job failed: " + jobExecution.getExitStatus().getExitDescription(),
+                        new Throwable(jobExecution.getExitStatus().getExitDescription())
+                    );
+                }
+            });
+                
+        } else if (routeConfig.getProcessingType() == ProcessingType.OUTBOUND) {
+            from(buildOutboundFromUri(routeConfig))
+                .routeId(routeConfig.getRouteName())
+                .process(this::prepareOutboundContext)
+                .process(exchange -> {
+                    Job job = createJob(routeConfig);
+                    JobParameters jobParameters = createJobParameters(exchange, routeConfig);
+                    JobExecution jobExecution = jobLauncher.run(job, jobParameters);
+                    handleJobExecution(exchange, jobExecution);
+                })
+                .choice()
+                    .when(header("processingStatus").isEqualTo("SUCCESS"))
+                        .to(buildOutboundToUri(routeConfig))
+                    .otherwise()
+                        .to("direct:errorHandler")
+                .end();
+        }
+    }
+		
     private String buildInboundFromUri(RouteConfig routeConfig) {
         switch (routeConfig.getSourceType()) {
-            case FILE :
+            case FILE:
                 BulkRoutesConfig.FileSource f = routeConfig.getFileSource();
-                String fileUri = "file:%s?antInclude=%s" + "&antExclude=%s" + "&charset=%s" + "&doneFileName=%s"
-                        + "&delay=%d" + "&sortBy=%s" + "&maxMessagesPerPoll=%d" + "&noop=%b" + "&recursive=%b"
-                        + "&move=%s" + "&moveFailed=%s" + "&readLock=%s" + "&readLockTimeout=%d"
-                        + "&readLockLoggingLevel=%s";
-                return String.format(fileUri, f.getDirectoryName(), f.getAntInclude(), f.getAntExclude(),
-                        f.getCharset(), f.getDoneFileName(), f.getDelay(), f.getSortBy(), f.getMaxMessagesPerPoll(),
-                        f.isNoop(), f.isRecursive(), f.getMove(), f.getMoveFailed(), f.getReadLock(),
-                        f.getReadLockTimeout(), f.getReadLockInterval());
-            case JDBC, MESSAGE, API :
-                // ToDo
-                break;
+            // Camel will automatically move failed files using moveFailed option
+            String fileUri = "file:%s?antInclude=%s"
+                    + "&antExclude=%s"
+                    + "&charset=%s"
+                    + "&doneFileName=%s"
+                    + "&delay=%d"
+                    + "&sortBy=%s"
+                    + "&maxMessagesPerPoll=%d"
+                    + "&noop=%b"
+                    + "&recursive=%b"
+                    + "&move=%s"
+                    + "&moveFailed=%s"  // This handles failed file movement automatically
+                    + "&readLock=%s"
+                    + "&readLockTimeout=%d"
+                    + "&readLockLoggingLevel=%s";
+            
+            return String.format(fileUri, 
+                f.getDirectoryName(), 
+                f.getAntInclude(),
+                f.getAntExclude(),
+                f.getCharset(),
+                f.getDoneFileName(),
+                f.getDelay(),
+                f.getSortBy(),
+                f.getMaxMessagesPerPoll(),
+                f.isNoop(),
+                f.isRecursive(),
+                f.getMove(),
+                f.getMoveFailed(),  // Failed files will be moved here automatically
+                f.getReadLock(),
+                f.getReadLockTimeout(),
+                f.getReadLockInterval());
+                
+            case JDBC:
+                return buildJdbcUri(routeConfig);
+                
+            case MESSAGE:
+                return buildMessageUri(routeConfig);
+                
+            case API:
+                return buildApiUri(routeConfig);
+                
+            default:
+                log.error("Unsupported source type: {}", routeConfig.getSourceType());
+                throw new BulkProcessingException("Unsupported source type", 
+                    new Throwable("Unsupported source type: " + routeConfig.getSourceType()));
         }
-        log.error("source type {} not supported", routeConfig.getSourceType());
-        return "";
     }
 
     private String buildOutboundFromUri(RouteConfig routeConfig) {
@@ -1016,31 +1102,40 @@ public class BulkProcessingFlowBuilder extends RouteBuilder {
         throw new BulkProcessingException("destination not supported", new Throwable("destination not supported"));
     }
 
-    private void configureRoute(RouteConfig routeConfig) throws Exception {
-        log.info("creating processing flow: {}", routeConfig.toString());
-        if (routeConfig.getProcessingType() == ProcessingType.INBOUND) {
-            // INBOUND
-            from(buildInboundFromUri(routeConfig)).routeId(routeConfig.getRouteName()).process(exchange -> {
-                Job job = createJob(routeConfig);
-                JobExecution jobExecution = jobLauncher.run(job, createJobParameters(exchange, routeConfig));
-                if (jobExecution.getExitStatus().getExitCode().equals("FAILED_STOP_JOB")) {
-                    exchange.setProperty(Exchange.ROUTE_STOP, Boolean.TRUE);
-                    // ToDo: job successful handling
-                    // ToDo: job failure handling
-                }
-            });
-        } else {
-            // OUTBOUND
-            from(buildOutboundFromUri(routeConfig)).routeId(routeConfig.getRouteName()).process(exchange -> {
-                Job job = createJob(routeConfig);
-                JobExecution jobExecution = jobLauncher.run(job, createJobParameters(exchange, routeConfig));
-                if (jobExecution.getExitStatus().getExitCode().equals("FAILED_STOP_JOB")) {
-                    exchange.setProperty(Exchange.ROUTE_STOP, Boolean.TRUE);
-                    // ToDo: set an error message or perform cleanup
-                }
-            }).to(buildOutboundToUri(routeConfig));
+    
+    private void validateInputFile(Exchange exchange) {
+        try {
+            // Get file content
+            String content = exchange.getIn().getBody(String.class);
+            
+            // Basic file validation
+            if (content == null || content.trim().isEmpty()) {
+                throw new BulkProcessingException("Empty file received", new Throwable("Empty file"));
+            }
+            
+            // Validate file format
+            Pain001 pain001 = mapper.readValue(content, Pain001.class);
+            validatePain001Structure(pain001);
+            
+            // Set validated content in exchange
+            exchange.setProperty("fileContent", content);
+            exchange.setProperty("pain001", pain001);
+            
+        } catch (Exception e) {
+            throw new BulkProcessingException("File validation failed", e);
         }
     }
+
+    private void prepareJobContext(Exchange exchange) {
+        // Create execution context with necessary data
+        Map<String, Object> jobContext = new HashMap<>();
+        jobContext.put("fileContent", exchange.getProperty("fileContent"));
+        jobContext.put("pain001", exchange.getProperty("pain001"));
+        jobContext.put("fileName", exchange.getIn().getHeader(Exchange.FILE_NAME));
+        jobContext.put("timestamp", LocalDateTime.now());
+        
+        exchange.setProperty("jobContext", jobContext);
+    }	
 
     private Job createJob(RouteConfig routeConfig) {
         JobBuilder jobBuilder = new JobBuilder(routeConfig.getRouteName() + "Job", jobRepository);
@@ -1081,17 +1176,6 @@ public class BulkProcessingFlowBuilder extends RouteBuilder {
         return simpleJobBuilder.build();
     }
 
-    private JobParameters createJobParameters(Exchange exchange, RouteConfig routeConfig) {
-        try {
-            return new JobParametersBuilder().addString("routeName", routeConfig.getRouteName())
-                    .addString("routeConfig", mapper.writeValueAsString(routeConfig))
-                    // ToDo: add payload
-                    .toJobParameters();
-        } catch (JsonProcessingException e) {
-            throw new BulkProcessingException("Error on converting routeConfig to json", e);
-        }
-    }
-
     private Step createStepForName(String stepName, RouteConfig routeConfig) {
 
         log.info("Creating step: {} for route: {}", stepName, routeConfig.getRouteName());
@@ -1108,33 +1192,207 @@ public class BulkProcessingFlowBuilder extends RouteBuilder {
 
     // implement steps
 
-    // pain001 file processing (tasklet)
-    private Step createPain001FileProcessingStep(StepBuilder stepBuilder, RouteConfig routeConfig) {
-        return stepBuilder.tasklet((contribution, chunkContext) -> {
-            ExecutionContext jobContext = chunkContext.getStepContext()
-                    .getStepExecution()
-                    .getJobExecution()
-                    .getExecutionContext();
-            // ToDo: convert json into Pain001 DTO
-            // ToDo: pain001 file and group level processing
-            return RepeatStatus.FINISHED;
-        }, (PlatformTransactionManager) platformTransactionManager).build();
+	private Step createPain001ProcessingStep(StepBuilder stepBuilder, RouteConfig routeConfig) {
+    return stepBuilder.tasklet((contribution, chunkContext) -> {
+        ExecutionContext jobContext = chunkContext.getStepContext()
+                .getStepExecution()
+                .getJobExecution()
+                .getExecutionContext();
+        
+        String fileContent = jobContext.getString("fileContent");
+        ObjectMapper objectMapper = new ObjectMapper();
+        Pain001 pain001 = objectMapper.readValue(fileContent, Pain001.class);
+        
+        // Validate file-level data
+        validatePain001FileLevel(pain001);
+        
+        // Process group header
+        processGroupHeader(pain001.getBusinessDocument()
+            .getCustomerCreditTransferInitiation()
+            .getGroupHeader());
+            
+        // Convert to business objects for further processing
+        List<PaymentInformation> paymentInformations = convertToPaymentInformation(pain001);
+        jobContext.put("paymentInformations", paymentInformations);
+        
+        return RepeatStatus.FINISHED;
+    }, platformTransactionManager).build();
+}
+
+private Step createPaymentSplittingStep(StepBuilder stepBuilder, RouteConfig routeConfig) {
+    return stepBuilder.tasklet((contribution, chunkContext) -> {
+        ExecutionContext jobContext = chunkContext.getStepContext()
+                .getStepExecution()
+                .getJobExecution()
+                .getExecutionContext();
+        
+        @SuppressWarnings("unchecked")
+        List<PaymentInformation> paymentInformations = 
+            (List<PaymentInformation>) jobContext.get("paymentInformations");
+        
+        List<PaymentInformation> splitPayments = new ArrayList<>();
+        
+        for (PaymentInformation payment : paymentInformations) {
+            // Split based on amount threshold and bank code
+            List<PaymentInformation> split = splitPaymentInformation(payment, 
+                routeConfig.getMaxTransactionAmount(),
+                routeConfig.getMaxTransactionsPerBatch());
+            splitPayments.addAll(split);
+        }
+        
+        jobContext.put("splitPaymentInformations", splitPayments);
+        return RepeatStatus.FINISHED;
+    }, platformTransactionManager).build();
+}
+
+private Step createPaymentProcessingStep(StepBuilder stepBuilder, RouteConfig routeConfig) {
+    return stepBuilder.<PaymentInformation, PaymentInformation>chunk(100, platformTransactionManager)
+        .reader(new ListItemReader<>((List<PaymentInformation>) 
+            stepBuilder.getJobRepository()
+                      .getLastJobExecution(routeConfig.getRouteName(), new JobParameters())
+                      .getExecutionContext()
+                      .get("splitPaymentInformations")))
+        .processor(payment -> {
+            // Validate payment information
+            validatePaymentInformation(payment);
+            
+            // Process credit transfer transactions
+            processCreditTransferTransactions(payment);
+            
+            // Generate bank references
+            generateBankReferences(payment);
+            
+            // Update aggregated information
+            updateAggregatedInformation(payment);
+            
+            return payment;
+        })
+        .writer(items -> {
+            ExecutionContext jobContext = stepBuilder.getJobRepository()
+                .getLastJobExecution(routeConfig.getRouteName(), new JobParameters())
+                .getExecutionContext();
+                
+            jobContext.put("processedPayments", items);
+        })
+        .build();
+}
+
+private Step createPwsTransactionInsertStep(StepBuilder stepBuilder, RouteConfig routeConfig) {
+    return stepBuilder.<PaymentInformation, PaymentInformation>chunk(100, platformTransactionManager)
+        .reader(new ListItemReader<>((List<PaymentInformation>) 
+            stepBuilder.getJobRepository()
+                      .getLastJobExecution(routeConfig.getRouteName(), new JobParameters())
+                      .getExecutionContext()
+                      .get("processedPayments")))
+        .processor(payment -> {
+            // Create and populate PwsTransactions
+            PwsTransactions pwsTransaction = createPwsTransaction(payment);
+            
+            // Create and populate PwsBulkTransactions
+            PwsBulkTransactions pwsBulkTransaction = createPwsBulkTransaction(payment);
+            
+            // Set the relationships
+            payment.setPwsTransactions(pwsTransaction);
+            payment.setPwsBulkTransactions(pwsBulkTransaction);
+            
+            return payment;
+        })
+        .writer(items -> {
+            // Persist PwsTransactions and PwsBulkTransactions
+            persistTransactions(items);
+        })
+        .build();
+}
+
+private Step createPwsInstructionInsertStep(StepBuilder stepBuilder, RouteConfig routeConfig) {
+    return stepBuilder.<CreditTransferTransaction, CreditTransferTransaction>chunk(1000, platformTransactionManager)
+        .reader(new CreditTransferTransactionReader(stepBuilder.getJobRepository()
+                .getLastJobExecution(routeConfig.getRouteName(), new JobParameters())))
+        .processor(transaction -> {
+            // Create and populate PwsBulkTransactionInstructions
+            PwsBulkTransactionInstructions instructions = createInstructions(transaction);
+            
+            // Create and populate PwsParties
+            PwsParties parties = createParties(transaction);
+            
+            // Create and populate PwsTransactionAdvices
+            PwsTransactionAdvices advices = createAdvices(transaction);
+            
+            // Create and populate PwsTransactionCharges
+            PwsTransactionCharges charges = createCharges(transaction);
+            
+            // Set all created objects to transaction
+            transaction.setPwsBulkTransactionInstructions(instructions);
+            transaction.setPwsParties(parties);
+            transaction.setPwsTransactionAdvices(advices);
+            transaction.setPwsTransactionCharges(charges);
+            
+            return transaction;
+        })
+        .writer(items -> {
+            // Persist all instruction related objects
+            persistInstructions(items);
+        })
+        .build();
+}
+
+// Helper methods for processing steps
+private void validatePain001FileLevel(Pain001 pain001) {
+    // Validate message identification
+    // Validate creation date time
+    // Validate number of transactions
+    // Validate control sum
+    // Validate initiating party
+    if (!isValid(pain001)) {
+        throw new BulkProcessingException("Invalid PAIN.001 file", new Throwable("Validation failed"));
     }
+}
 
-    // createPaymentSplittingStep
-    // ToDo: split PaymentInformation into multiple based on the amount and bank code
+private void validatePaymentInformation(PaymentInformation payment) {
+    // Validate payment method
+    // Validate execution date
+    // Validate debtor information
+    // Validate debtor account
+    // Validate debtor agent
+    if (!isValid(payment)) {
+        throw new BulkProcessingException("Invalid payment information", new Throwable("Validation failed"));
+    }
+}
 
-    // createPaymentProcessingStep
-    // ToDo: PaymentInformation and CreditTransferTransaction validation
-    // for valid PaymentInformation and CreditTransferTransactions, need to generate Bank Reference, update Total Amount, Max Amount, no. of child transactions, etc.
-    // One PaymentInformation can contain 50K CreditTransferTransaction, need to do chunk for CreditTransferTransaction
-
-    // createPwsTransactionInsertStep
-    // ToDo: persis PO PwsTransactions and PwsBulkTransactions
-
-    // createPwsInstructionInsertStep
-    // ToDo: persis PO PwsTransactions
-    // createPwsRejectedInsertStep
+private List<PaymentInformation> splitPaymentInformation(
+    PaymentInformation payment, 
+    BigDecimal maxAmount, 
+    int maxTransactions
+) {
+    List<PaymentInformation> splitPayments = new ArrayList<>();
+    List<CreditTransferTransaction> transactions = new ArrayList<>(payment.getCreditTransferTransactions());
+    
+    PaymentInformation currentBatch = copyPaymentInformationWithoutTransactions(payment);
+    BigDecimal currentBatchAmount = BigDecimal.ZERO;
+    int currentTransactionCount = 0;
+    
+    for (CreditTransferTransaction transaction : transactions) {
+        if (currentBatchAmount.add(transaction.getAmount()).compareTo(maxAmount) > 0 
+            || currentTransactionCount >= maxTransactions) {
+            splitPayments.add(currentBatch);
+            currentBatch = copyPaymentInformationWithoutTransactions(payment);
+            currentBatchAmount = BigDecimal.ZERO;
+            currentTransactionCount = 0;
+        }
+        
+        currentBatch.getCreditTransferTransactions().add(transaction);
+        currentBatchAmount = currentBatchAmount.add(transaction.getAmount());
+        currentTransactionCount++;
+    }
+    
+    if (!currentBatch.getCreditTransferTransactions().isEmpty()) {
+        splitPayments.add(currentBatch);
+    }
+    
+    return splitPayments;
+}
+	
+    
 
 }
 ```
