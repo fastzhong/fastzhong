@@ -1126,16 +1126,63 @@ public class BulkProcessingFlowBuilder extends RouteBuilder {
         }
     }
 
-    private void prepareJobContext(Exchange exchange) {
-        // Create execution context with necessary data
-        Map<String, Object> jobContext = new HashMap<>();
-        jobContext.put("fileContent", exchange.getProperty("fileContent"));
-        jobContext.put("pain001", exchange.getProperty("pain001"));
-        jobContext.put("fileName", exchange.getIn().getHeader(Exchange.FILE_NAME));
-        jobContext.put("timestamp", LocalDateTime.now());
+    private JobParameters createJobParameters(Exchange exchange, RouteConfig routeConfig) {
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> jobContext = exchange.getProperty("jobContext", Map.class);
+            
+            return new JobParametersBuilder()
+                .addString("routeName", routeConfig.getRouteName())
+                .addString("routeConfig", mapper.writeValueAsString(routeConfig))
+                .addString("fileName", (String) jobContext.get("fileName"))
+                .addLong("timestamp", System.currentTimeMillis())
+                .addString("content", (String) jobContext.get("fileContent"))
+                .toJobParameters();
+                
+        } catch (JsonProcessingException e) {
+            throw new BulkProcessingException("Error creating job parameters", e);
+        }
+    }
+
+    private void handleJobExecution(Exchange exchange, JobExecution jobExecution) {
+        // Set processing status based on job execution
+        String status = jobExecution.getStatus().equals(BatchStatus.COMPLETED) ? "SUCCESS" : "FAILED";
+        exchange.getIn().setHeader("processingStatus", status);
         
-        exchange.setProperty("jobContext", jobContext);
-    }	
+        // Handle job execution results
+        if (jobExecution.getStatus() == BatchStatus.COMPLETED) {
+            log.info("Job completed successfully: {}", jobExecution.getJobInstance().getJobName());
+            processSuccessfulExecution(exchange, jobExecution);
+        } else {
+            log.error("Job failed: {}", jobExecution.getJobInstance().getJobName());
+            ExitStatus exitStatus = jobExecution.getExitStatus();
+            String errorMessage = exitStatus.getExitDescription();
+            exchange.setProperty("errorMessage", errorMessage);
+            processFailedExecution(exchange, jobExecution);
+        }
+    }
+
+    private void processSuccessfulExecution(Exchange exchange, JobExecution jobExecution) {
+        ExecutionContext executionContext = jobExecution.getExecutionContext();
+        // Process any results from the job
+        if (executionContext.containsKey("processedPayments")) {
+            @SuppressWarnings("unchecked")
+            List<PaymentInformation> processedPayments = 
+                (List<PaymentInformation>) executionContext.get("processedPayments");
+            exchange.setProperty("processedPayments", processedPayments);
+        }
+        // Update processing status or send notifications
+        updateProcessingStatus(exchange, "SUCCESS");
+    }
+
+    private void processFailedExecution(Exchange exchange, JobExecution jobExecution) {
+        String errorMessage = exchange.getProperty("errorMessage", String.class);
+        log.error("Job failed with error: {}", errorMessage);
+        // Update processing status or send notifications
+        updateProcessingStatus(exchange, "FAILED");
+        // Handle cleanup if needed
+        handleFailureCleanup(exchange);
+    }
 
     private Job createJob(RouteConfig routeConfig) {
         JobBuilder jobBuilder = new JobBuilder(routeConfig.getRouteName() + "Job", jobRepository);
