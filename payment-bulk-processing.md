@@ -1470,6 +1470,59 @@ public class BusinessDocumentDTO {
  }
 ```
 
+```java
+import org.springframework.batch.core.JobExecution;
+import org.springframework.batch.core.StepExecution;
+import org.springframework.batch.core.annotation.BeforeStep;
+import org.springframework.batch.core.annotation.AfterStep;
+
+public abstract class StepAwareService {
+
+    protected StepExecution stepExecution;
+
+    @BeforeStep
+    public void beforeStep(StepExecution stepExecution) {
+        this.stepExecution = stepExecution;
+    }
+
+    @AfterStep
+    public void afterStep(StepExecution stepExecution) {
+        // Subclasses can optionally override this method
+    }
+
+    // Helper method to access JobExecutionContext
+    protected JobExecution getJobExecution() {
+        return stepExecution.getJobExecution();
+    }
+
+    // Helper method to access StepExecutionContext
+    protected StepExecution getStepExecution() {
+        return this.stepExecution;
+    }
+
+    protected String getFromStepContext(String key, String defaultValue) {
+        return stepExecution.getExecutionContext().getString(key, defaultValue);
+    }
+
+    protected void putToStepContext(String key, String value) {
+        stepExecution.getExecutionContext().putString(key, value);
+    }
+    
+    protected String getFromJobContext(String key, String defaultValue) {
+        return getJobExecution().getExecutionContext().getString(key, defaultValue);
+    }
+
+    protected void putToJobContext(String key, String value) {
+        getJobExecution().getExecutionContext().putString(key, value);
+    }
+
+    // Abstract method to be implemented by subclasses for specific service logic
+    public abstract void performService();
+}
+
+```
+
+
 # payment info
 ```java
 
