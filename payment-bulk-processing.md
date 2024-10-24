@@ -740,3 +740,232 @@ bulk-routes:
       delete: true
       chmod: rw-r--r--
 ```
+
+# testing
+```java
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.springframework.batch.core.Job;
+import org.springframework.batch.core.JobExecution;
+import org.springframework.batch.core.repository.JobRepository;
+import org.springframework.batch.test.JobLauncherTestUtils;
+import org.springframework.batch.test.context.SpringBatchTest;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.apache.camel.CamelContext;
+import org.apache.camel.EndpointInject;
+import org.apache.camel.ProducerTemplate;
+import org.apache.camel.component.mock.MockEndpoint;
+import org.apache.camel.test.spring.junit5.CamelSpringBootTest;
+
+import java.io.File;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.util.List;
+
+@SpringBootTest
+@SpringBatchTest
+@CamelSpringBootTest
+@ActiveProfiles("test")
+class BulkProcessingFlowBuilderTest {
+
+    @Autowired
+    private CamelContext camelContext;
+
+    @Autowired
+    private JobRepository jobRepository;
+
+    @Autowired
+    private JobLauncher jobLauncher;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+
+    @MockBean
+    private Pain001Service pain001Service;
+
+    @TempDir
+    Path tempDir;
+
+    private Path inboundDir;
+    private Path backupDir;
+    private Path errorDir;
+
+    @BeforeEach
+    void setUp() throws Exception {
+        // Create test directories
+        inboundDir = tempDir.resolve("inbound");
+        backupDir = tempDir.resolve("backup");
+        errorDir = tempDir.resolve("error");
+        
+        Files.createDirectories(inboundDir);
+        Files.createDirectories(backupDir);
+        Files.createDirectories(errorDir);
+
+        // Configure test route
+        BulkRoutesConfig.FileSource fileSource = new BulkRoutesConfig.FileSource();
+        fileSource.setDirectoryName(inboundDir.toString());
+        fileSource.setAntInclude("*.json");
+        fileSource.setMove(backupDir.toString());
+        fileSource.setMoveFailed(errorDir.toString());
+        fileSource.setReadLock("rename");
+        fileSource.setReadLockTimeout(1000);
+        fileSource.setMaxMessagesPerPoll(1);
+
+        RouteConfig routeConfig = new RouteConfig();
+        routeConfig.setRouteName("TEST_ROUTE");
+        routeConfig.setProcessingType(ProcessingType.INBOUND);
+        routeConfig.setSourceType(SourceType.FILE);
+        routeConfig.setEnabled(true);
+        routeConfig.setFileSource(fileSource);
+        routeConfig.setSteps(List.of(
+            "pain001-validation",
+            "payment-debulk",
+            "payment-validation",
+            "payment-enrichment"
+        ));
+
+        BulkRoutesConfig bulkRoutesConfig = new BulkRoutesConfig();
+        bulkRoutesConfig.setRoutes(List.of(routeConfig));
+
+        // Copy test file to inbound directory
+        Path sourceFile = Path.of("C:", "test", "pain001.json");
+        Path targetFile = inboundDir.resolve("pain001.json");
+        Files.copy(sourceFile, targetFile, StandardCopyOption.REPLACE_EXISTING);
+
+        // Mock Pain001Service responses
+        when(pain001Service.validatePain001(anyString()))
+            .thenReturn(createTestPaymentInformations());
+        when(pain001Service.debulk(anyList()))
+            .thenAnswer(i -> i.getArgument(0));
+        when(pain001Service.validate(anyList()))
+            .thenAnswer(i -> i.getArgument(0));
+        when(pain001Service.enrich(anyList()))
+            .thenAnswer(i -> i.getArgument(0));
+    }
+
+    @Test
+    void shouldProcessPain001FileSuccessfully() throws Exception {
+        // Wait for file processing
+        await().atMost(30, TimeUnit.SECONDS)
+               .until(() -> Files.list(backupDir).count() > 0);
+
+        // Verify file movement
+        assertThat(Files.list(inboundDir).count()).isEqualTo(0);
+        assertThat(Files.list(backupDir).count()).isEqualTo(1);
+        assertThat(Files.list(errorDir).count()).isEqualTo(0);
+
+        // Verify service calls
+        verify(pain001Service).validatePain001(anyString());
+        verify(pain001Service).debulk(anyList());
+        verify(pain001Service).validate(anyList());
+        verify(pain001Service).enrich(anyList());
+
+        // Verify job execution
+        List<JobExecution> jobExecutions = jobRepository.getJobExecutions(job);
+        assertThat(jobExecutions).hasSize(1);
+        assertThat(jobExecutions.get(0).getStatus()).isEqualTo(BatchStatus.COMPLETED);
+    }
+
+    @Test
+    void shouldHandleInvalidPain001File() throws Exception {
+        // Setup error scenario
+        when(pain001Service.validatePain001(anyString()))
+            .thenThrow(new BulkProcessingException("Invalid PAIN.001 file"));
+
+        // Wait for file processing
+        await().atMost(30, TimeUnit.SECONDS)
+               .until(() -> Files.list(errorDir).count() > 0);
+
+        // Verify file movement
+        assertThat(Files.list(inboundDir).count()).isEqualTo(0);
+        assertThat(Files.list(backupDir).count()).isEqualTo(0);
+        assertThat(Files.list(errorDir).count()).isEqualTo(1);
+
+        // Verify job execution
+        List<JobExecution> jobExecutions = jobRepository.getJobExecutions(job);
+        assertThat(jobExecutions).hasSize(1);
+        assertThat(jobExecutions.get(0).getStatus()).isEqualTo(BatchStatus.FAILED);
+    }
+
+    private List<PaymentInformation> createTestPaymentInformations() {
+        PaymentInformation payment = new PaymentInformation();
+        // Set test payment data
+        payment.setPaymentInformationId("TEST-PAYMENT-001");
+        // ... set other fields
+        return List.of(payment);
+    }
+}
+
+@TestConfiguration
+class TestConfig {
+    
+    @Bean
+    public ObjectMapper objectMapper() {
+        ObjectMapper mapper = new ObjectMapper();
+        mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+        return mapper;
+    }
+
+    @Bean
+    public BulkProcessingFlowBuilder bulkProcessingFlowBuilder(
+            BulkRoutesConfig bulkRoutesConfig,
+            ObjectMapper mapper,
+            JobRepository jobRepository,
+            JobLauncher jobLauncher,
+            PlatformTransactionManager transactionManager,
+            Pain001Service pain001Service) {
+        return new BulkProcessingFlowBuilder(
+            bulkRoutesConfig, 
+            mapper, 
+            jobRepository, 
+            jobLauncher, 
+            transactionManager, 
+            pain001Service
+        );
+    }
+}
+
+// application-test.yml
+@antArtifact identifier="test-config" type="text/markdown" title="Test Configuration">
+```yaml
+spring:
+  datasource:
+    default:
+      driver-class-name: org.h2.Driver
+      url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1
+      username: sa
+      password: 
+  batch:
+    jdbc:
+      initialize-schema: always
+    job:
+      enabled: false
+
+bulk-routes:
+  - route-name: TEST_ROUTE
+    processing-type: INBOUND
+    source-type: FILE
+    enabled: true
+    steps:
+      - pain001-validation
+      - payment-debulk
+      - payment-validation
+      - payment-enrichment
+    file-source:
+      directoryName: ${java.io.tmpdir}/inbound
+      antInclude: "*.json"
+      charset: utf-8
+      delay: 1000
+      maxMessagesPerPoll: 1
+      move: ${java.io.tmpdir}/backup
+      moveFailed: ${java.io.tmpdir}/error
+      readLock: rename
+      readLockTimeout: 1000
+```
+```
