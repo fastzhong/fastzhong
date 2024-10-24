@@ -774,6 +774,9 @@ import java.util.List;
 @ActiveProfiles("test")
 class BulkProcessingFlowBuilderTest {
 
+    @Value("${test.resources.path:src/test/resources}")
+    private String testResourcesPath;
+
     @Autowired
     private CamelContext camelContext;
 
@@ -795,10 +798,11 @@ class BulkProcessingFlowBuilderTest {
     private Path inboundDir;
     private Path backupDir;
     private Path errorDir;
+    private Path testFilesDir;
 
     @BeforeEach
     void setUp() throws Exception {
-        // Create test directories
+        // Create test directories under temp
         inboundDir = tempDir.resolve("inbound");
         backupDir = tempDir.resolve("backup");
         errorDir = tempDir.resolve("error");
@@ -806,6 +810,10 @@ class BulkProcessingFlowBuilderTest {
         Files.createDirectories(inboundDir);
         Files.createDirectories(backupDir);
         Files.createDirectories(errorDir);
+
+        // Load test file from classpath
+        testFilesDir = Paths.get(testResourcesPath);
+        copyTestFilesToInbound();
 
         // Configure test route
         BulkRoutesConfig.FileSource fileSource = new BulkRoutesConfig.FileSource();
@@ -833,12 +841,26 @@ class BulkProcessingFlowBuilderTest {
         BulkRoutesConfig bulkRoutesConfig = new BulkRoutesConfig();
         bulkRoutesConfig.setRoutes(List.of(routeConfig));
 
-        // Copy test file to inbound directory
-        Path sourceFile = Path.of("C:", "test", "pain001.json");
+        // Mock service responses
+        setupMockResponses();
+    }
+
+    private void copyTestFilesToInbound() throws IOException {
+        // Copy test files from resources to inbound directory
+        Path sourceFile = testFilesDir.resolve("pain001.json");
+        if (!Files.exists(sourceFile)) {
+            throw new IllegalStateException(
+                "Test file not found: " + sourceFile + 
+                ". Please ensure pain001.json exists in " + testResourcesPath
+            );
+        }
+        
         Path targetFile = inboundDir.resolve("pain001.json");
         Files.copy(sourceFile, targetFile, StandardCopyOption.REPLACE_EXISTING);
+        log.info("Copied test file from {} to {}", sourceFile, targetFile);
+    }
 
-        // Mock Pain001Service responses
+    private void setupMockResponses() {
         when(pain001Service.validatePain001(anyString()))
             .thenReturn(createTestPaymentInformations());
         when(pain001Service.debulk(anyList()))
@@ -930,6 +952,7 @@ class TestConfig {
         );
     }
 }
+```
 
 // application-test.yml
 @antArtifact identifier="test-config" type="text/markdown" title="Test Configuration">
@@ -967,5 +990,10 @@ bulk-routes:
       moveFailed: ${java.io.tmpdir}/error
       readLock: rename
       readLockTimeout: 1000
+
+# Can be overridden via system property or environment variable
+test:
+  resources:
+    path: ${TEST_RESOURCES_PATH:src/test/resources}
 ```
-```
+
