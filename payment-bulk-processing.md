@@ -72,17 +72,17 @@ public class BulkProcessingFlowBuilder extends RouteBuilder {
                 Exception cause = exchange.getProperty(Exchange.EXCEPTION_CAUGHT, Exception.class);
                 String fileName = exchange.getIn().getHeader(Exchange.FILE_NAME, String.class);
                 log.error("Processing failed for file: {}. Error: {}", fileName, cause.getMessage(), cause);
-                updateProcessingStatus(exchange, ProcessingStatus.FAILED);
+                updateProcessingStatus(routeConfig, exchange, ProcessingStatus.FAILED);
             });
             // define the route
             from(buildInboundFromUri(routeConfig)).routeId(routeConfig.getRouteName())
-                    .process(exchange -> prepareInboundContext(exchange, routeConfig))
+                    .process(exchange -> prepareInboundContext(routeConfig, exchange))
                     .process(exchange -> {
                         // Create and run the batch job
-                        Job job = createJob(routeConfig);
-                        JobParameters jobParameters = createInboundJobParameters(exchange, routeConfig);
+                        Job job = createJob(routeConfig, exchange);
+                        JobParameters jobParameters = createInboundJobParameters(routeConfig, exchange);
                         JobExecution jobExecution = jobLauncher.run(job, jobParameters);
-                        handleInboundJobExecution(exchange, jobExecution);
+                        handleInboundJobExecution(routeConfig, exchange, jobExecution);
                     });
         } else {
             // OUTBOUND
@@ -115,14 +115,13 @@ public class BulkProcessingFlowBuilder extends RouteBuilder {
     }
 
     // Inbound Job
-    private void prepareInboundContext(Exchange exchange, RouteConfig routeConfig) {
+    private void prepareInboundContext(RouteConfig routeConfig, Exchange exchange) {
         // Create execution context with necessary data
         log.info("prepare inbound context ...");
         InboundContext routeContext = new InboundContext();
         routeContext.setRouteConfig(routeConfig);
         routeContext.setFileName((String) exchange.getIn().getHeader(Exchange.FILE_NAME));
         routeContext.setFormat("json");
-        routeContext.setContent((String) exchange.getProperty("fileContent"));
         LocalDateTime now = LocalDateTime.now();
         routeContext.setStart(now.atZone(ZoneId.systemDefault()) // timezone
                 .toInstant()
@@ -130,21 +129,21 @@ public class BulkProcessingFlowBuilder extends RouteBuilder {
         exchange.setProperty("routeContext", routeContext);
     }
 
-    private JobParameters createInboundJobParameters(Exchange exchange, RouteConfig routeConfig) {
+    private JobParameters createInboundJobParameters(RouteConfig routeConfig, Exchange exchange) {
         log.info("create inbound job parameters ...");
         try {
             InboundContext routeContext = exchange.getProperty("routeContext", InboundContext.class);
             return new JobParametersBuilder().addString("routeName", routeConfig.getRouteName())
                     .addString("routeConfig", mapper.writeValueAsString(routeConfig))
+                    .addString("sourceFilePath", routeContext.getSourceFilePath())
                     .addString("fileName", routeContext.getFileName())
-                    .addString("content", routeContext.getContent())
                     .toJobParameters();
         } catch (JsonProcessingException e) {
             throw new BulkProcessingException("Error creating job parameters", e);
         }
     }
 
-    private void handleInboundJobExecution(Exchange exchange, JobExecution jobExecution) {
+    private void handleInboundJobExecution(RouteConfig routeConfig, Exchange exchange, JobExecution jobExecution) {
         InboundContext routeContext = exchange.getProperty("routeContext", InboundContext.class);
         ProcessingStatus status = jobExecution.getStatus().equals(BatchStatus.COMPLETED)
                 ? ProcessingStatus.SUCCESS
@@ -162,7 +161,9 @@ public class BulkProcessingFlowBuilder extends RouteBuilder {
         exchange.getIn().setHeader("processingStatus", status);
 
         log.info("routeConfig: {}", routeContext.getRouteConfig());
+        log.info("sourceFilePath: {}", routeContext.getSourceFilePath());
         log.info("fileName: {}", routeContext.getFileName());
+        log.info("format: {}", routeContext.getFormat());
         log.info("start: {}",
                 LocalDateTime.ofInstant(Instant.ofEpochMilli(routeContext.getStart()), ZoneId.systemDefault()));
         log.info("end: {}",
@@ -170,12 +171,12 @@ public class BulkProcessingFlowBuilder extends RouteBuilder {
         log.info("result: {}", routeContext.getPain001InboundProcessingResult());
 
         if (jobExecution.getStatus() == BatchStatus.COMPLETED) {
-            updateProcessingStatus(exchange, ProcessingStatus.SUCCESS);
+            updateProcessingStatus(routeConfig, exchange, ProcessingStatus.SUCCESS);
         } else {
             ExitStatus exitStatus = jobExecution.getExitStatus();
             String errorMessage = exitStatus.getExitDescription();
             exchange.setProperty("errorMessage", errorMessage);
-            updateProcessingStatus(exchange, ProcessingStatus.FAILED);
+            updateProcessingStatus(routeConfig, exchange, ProcessingStatus.FAILED);
         }
     }
     // Outbound Job
@@ -200,20 +201,27 @@ public class BulkProcessingFlowBuilder extends RouteBuilder {
         }
     }
 
-    private void updateProcessingStatus(Exchange exchange, ProcessingStatus status) {
+    private void updateProcessingStatus(RouteConfig routeConfig, Exchange exchange, ProcessingStatus status) {
         // ToDo: update status
         // ToDo: notification
     }
 
-    private Job createJob(RouteConfig routeConfig) {
+    private Job createJob(RouteConfig routeConfig, Exchange exchange) {
         JobBuilder jobBuilder = new JobBuilder(routeConfig.getRouteName() + "Job", jobRepository);
         jobBuilder.listener(new JobExecutionListener() {
             @Override
             public void beforeJob(JobExecution jobExecution) {
                 ExecutionContext executionContext = jobExecution.getExecutionContext();
-                executionContext.put("routeConfig", routeConfig);
-                // ToDo: add any other common metadata here
-                // ToDo: how to pass file content to job
+                if (routeConfig.getProcessingType() == ProcessingType.INBOUND) {
+                    // INBOUND
+                    InboundContext routeContext = exchange.getProperty("routeContext", InboundContext.class);
+                    executionContext.put("routeConfig", routeConfig);
+                    executionContext.put("sourceFilePath", routeContext.getSourceFilePath());
+                    executionContext.put("fileName", routeContext.getFileName());
+                    executionContext.put("result", new Pain001InboundProcessingResult());
+                } else {
+                    // ToDo: OUTBOUND
+                }
                 log.info("Job started successfully");
             }
 
@@ -275,10 +283,14 @@ public class BulkProcessingFlowBuilder extends RouteBuilder {
                     .getJobExecution()
                     .getExecutionContext();
 
-            // convert to business objects for further processing
             pain001Service.beforeStep(chunkContext.getStepContext().getStepExecution());
-            String fileContent = jobContext.getString("fileContent");
-            List<PaymentInformation> paymentInformations = pain001Service.validatePain001(fileContent);
+            String sourceFilePath = jobContext.getString("sourceFilePath");
+            String fileContent = Files.readString(Paths.get(sourceFilePath));
+            if (StringUtils.isBlank(fileContent)) {
+                throw new BulkProcessingException("File content not found", new Throwable("File content not found"));
+            }
+            // convert to business objects for further processing
+            List<PaymentInformation> paymentInformations = pain001Service.validateJson(fileContent);
             jobContext.put("paymentInformations", paymentInformations);
 
             return RepeatStatus.FINISHED;
@@ -365,7 +377,7 @@ public class BulkProcessingFlowBuilder extends RouteBuilder {
         }, platformTransactionManager).build();
     }
 }
-
+ 
 ```
 
 # pain001Service
