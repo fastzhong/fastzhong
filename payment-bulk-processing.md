@@ -424,10 +424,250 @@ public class Pain001ServiceImpl extends StepAwareService implements Pain001Servi
         return null;
     }
 
+    @Value("${batch.size:1000}")
+    private int batchSize;
+
+    @Value("${executor.thread.pool.size:5}")
+    private int threadPoolSize;
+
     @Override
+    @Transactional
     public void save(List<PaymentInformation> paymentInformations) {
-        // ToDo: save payment
+        for (PaymentInformation paymentInfo : paymentInformations) {
+            if (!paymentInfo.isValid()) {
+                log.warn("Skipping invalid payment information");
+                continue;
+            }
+
+            try {
+                processPaymentInformation(paymentInfo);
+            } catch (Exception e) {
+                log.error("Error processing payment information: ", e);
+                paymentInfo.addValidationError("SAVE_ERROR", "Failed to save payment: " + e.getMessage());
+            }
+        }
     }
+
+    private void processPaymentInformation(PaymentInformation paymentInfo) {
+        // Save parent payment first
+        String parentBankRefId = saveParentPayment(paymentInfo);
+
+        // Process credit transfers in batches
+        List<CreditTransferTransaction> allTransactions = paymentInfo.getCreditTransferTransactionList();
+        if (allTransactions == null || allTransactions.isEmpty()) {
+            return;
+        }
+
+        // Calculate total batches
+        int totalTransactions = allTransactions.size();
+        int totalBatches = (totalTransactions + batchSize - 1) / batchSize;
+        log.info("Processing {} transactions in {} batches", totalTransactions, totalBatches);
+
+        // Process each batch sequentially
+        for (int i = 0; i < totalBatches; i++) {
+            int fromIndex = i * batchSize;
+            int toIndex = Math.min(fromIndex + batchSize, totalTransactions);
+            List<CreditTransferTransaction> batch = allTransactions.subList(fromIndex, toIndex);
+            
+            try {
+                processCreditTransferBatch(batch, parentBankRefId, i + 1);
+                log.info("Completed batch {}/{}", i + 1, totalBatches);
+            } catch (Exception e) {
+                log.error("Error processing batch {}: ", i + 1, e);
+                // Continue processing other batches despite errors
+            }
+        }
+    }
+
+    private String saveParentPayment(PaymentInformation paymentInfo) {
+        long bankRefSeqNo = paymentDao.getBankRefSeqNo();
+        String bankReferenceId = generateBankReferenceId(bankRefSeqNo);
+
+        if (paymentInfo.getPwsTransactions() != null) {
+            paymentInfo.getPwsTransactions().setBankReferenceId(bankReferenceId);
+            long txnId = paymentDao.insertPwsTransactions(paymentInfo.getPwsTransactions());
+            paymentInfo.getPwsTransactions().setTxnId(txnId);
+        }
+
+        if (paymentInfo.getPwsBulkTransactions() != null) {
+            paymentInfo.getPwsBulkTransactions().setBankReferenceId(bankReferenceId);
+            long bulkTxnId = paymentDao.insertPwsBulkTransactions(paymentInfo.getPwsBulkTransactions());
+            paymentInfo.getPwsBulkTransactions().setTxnId(bulkTxnId);
+        }
+
+        return bankReferenceId;
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    private void processCreditTransferBatch(
+            List<CreditTransferTransaction> batch, 
+            String parentBankRefId, 
+            int batchNumber) {
+        
+        try {
+            // Pre-generate bank reference IDs for the batch
+            List<String> bankRefIds = generateBankReferenceIds(batch.size());
+
+            // Prepare all batch collections
+            BatchCollections batchCollections = new BatchCollections();
+
+            // Collect all records for batch insert
+            for (int i = 0; i < batch.size(); i++) {
+                CreditTransferTransaction creditTransfer = batch.get(i);
+                if (!creditTransfer.isValid()) {
+                    continue;
+                }
+
+                String childBankRefId = bankRefIds.get(i);
+                collectBatchRecords(creditTransfer, childBankRefId, parentBankRefId, batchCollections);
+            }
+
+            // Execute all batch inserts in optimal order
+            executeBatchInsertsInOrder(batchCollections);
+            
+        } catch (Exception e) {
+            log.error("Error processing batch {}: ", batchNumber, e);
+            throw new PaymentProcessingException("Failed to process payment batch " + batchNumber, e);
+        }
+    }
+
+    private List<String> generateBankReferenceIds(int count) {
+        List<String> bankRefIds = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            long seqNo = paymentDao.getBankRefSeqNo();
+            bankRefIds.add(generateBankReferenceId(seqNo));
+        }
+        return bankRefIds;
+    }
+
+    @Data
+    private static class BatchCollections {
+        private final List<PwsBulkTransactionInstructions> instructions = new ArrayList<>();
+        private final List<PwsParties> parties = new ArrayList<>();
+        private final List<PwsPartyContracts> contacts = new ArrayList<>();
+        private final List<PwsTaxInstruction> taxInstructions = new ArrayList<>();
+        private final List<PwsTransactionAdvices> advices = new ArrayList<>();
+        private final List<PwsTransactionCharges> charges = new ArrayList<>();
+    }
+
+    private void collectBatchRecords(
+            CreditTransferTransaction creditTransfer,
+            String childBankRefId,
+            String parentBankRefId,
+            BatchCollections collections) {
+
+        // Collect transaction instructions
+        if (creditTransfer.getPwsBulkTransactionInstructions() != null) {
+            PwsBulkTransactionInstructions instructions = creditTransfer.getPwsBulkTransactionInstructions();
+            instructions.setBankReferenceId(childBankRefId);
+            instructions.setParentBankReferenceId(parentBankRefId);
+            collections.getInstructions().add(instructions);
+        }
+
+        // Collect parties and contacts
+        if (creditTransfer.getPwsPartiesList() != null) {
+            for (PwsParties party : creditTransfer.getPwsPartiesList()) {
+                party.setBankReferenceId(childBankRefId);
+                collections.getParties().add(party);
+
+                if (creditTransfer.getPwsPartyContactList() != null) {
+                    for (PwsPartyContracts contact : creditTransfer.getPwsPartyContactList()) {
+                        if (contact.getPartyType().equals(party.getPartyType())) {
+                            contact.setBankReferenceId(childBankRefId);
+                            collections.getContacts().add(contact);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Collect other related records
+        collectRelatedRecords(creditTransfer, childBankRefId, collections);
+    }
+
+    private void collectRelatedRecords(
+            CreditTransferTransaction creditTransfer,
+            String childBankRefId,
+            BatchCollections collections) {
+            
+        if (creditTransfer.getPwsTaxInstructionList() != null) {
+            for (PwsTaxInstruction tax : creditTransfer.getPwsTaxInstructionList()) {
+                tax.setBankReferenceId(childBankRefId);
+                collections.getTaxInstructions().add(tax);
+            }
+        }
+
+        if (creditTransfer.getPwsTransactionAdvices() != null) {
+            PwsTransactionAdvices advice = creditTransfer.getPwsTransactionAdvices();
+            advice.setBankReferenceId(childBankRefId);
+            collections.getAdvices().add(advice);
+        }
+
+        if (creditTransfer.getPwsTransactionCharges() != null) {
+            PwsTransactionCharges charges = creditTransfer.getPwsTransactionCharges();
+            charges.setBankReferenceId(childBankRefId);
+            collections.getCharges().add(charges);
+        }
+    }
+
+    private void executeBatchInsertsInOrder(BatchCollections collections) {
+        // Execute batch inserts in order of dependencies
+        if (!collections.getInstructions().isEmpty()) {
+            paymentDao.batchInsertInstructions(collections.getInstructions());
+        }
+
+        if (!collections.getParties().isEmpty()) {
+            paymentDao.batchInsertParties(collections.getParties());
+        }
+
+        if (!collections.getContacts().isEmpty()) {
+            paymentDao.batchInsertContacts(collections.getContacts());
+        }
+
+        if (!collections.getTaxInstructions().isEmpty()) {
+            paymentDao.batchInsertTaxInstructions(collections.getTaxInstructions());
+        }
+
+        if (!collections.getAdvices().isEmpty()) {
+            paymentDao.batchInsertAdvices(collections.getAdvices());
+        }
+
+        if (!collections.getCharges().isEmpty()) {
+            paymentDao.batchInsertCharges(collections.getCharges());
+        }
+    }
+    
+    // Add these methods to PaymentDao
+    private void insertBulkTransactionInstructionsBatch(List<PwsBulkTransactionInstructions> batch) {
+        SqlSession sqlSession = getSqlSession();
+        try {
+            BatchExecutor executor = new BatchExecutor(sqlSession);
+            executor.executeBatch("insertPwsBulkTransactionInstructions", batch, batchSize);
+        } finally {
+            sqlSession.close();
+        }
+    }
+
+    private void insertPartiesBatch(List<PwsParties> batch) {
+        SqlSession sqlSession = getSqlSession();
+        try {
+            BatchExecutor executor = new BatchExecutor(sqlSession);
+            executor.executeBatch("insertPwsParties", batch, batchSize);
+        } finally {
+            sqlSession.close();
+        }
+    }
+
+    // Similar batch insert methods for other entities...
+
+    private String generateBankReferenceId(long seqNo) {
+        LocalDateTime now = LocalDateTime.now();
+        return String.format("%s%s%011d", 
+            bankReferencePrefix,
+            now.format(DateTimeFormatter.ofPattern("yyyyMMdd")),
+            seqNo);
+    }
+
 }
 
 ```
