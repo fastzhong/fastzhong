@@ -427,8 +427,11 @@ public class Pain001ServiceImpl extends StepAwareService implements Pain001Servi
     @Value("${batch.size:1000}")
     private int batchSize;
 
-    @Value("${executor.thread.pool.size:5}")
-    private int threadPoolSize;
+    @Value("${retry.max.attempts:3}")
+    private int maxRetryAttempts;
+
+    @Value("${retry.delay.ms:1000}")
+    private long retryDelayMs;
 
     @Override
     @Transactional
@@ -611,29 +614,108 @@ public class Pain001ServiceImpl extends StepAwareService implements Pain001Servi
     }
 
     private void executeBatchInsertsInOrder(BatchCollections collections) {
-        // Execute batch inserts in order of dependencies
-        if (!collections.getInstructions().isEmpty()) {
-            paymentDao.batchInsertInstructions(collections.getInstructions());
-        }
+        try {
+            // 1. Insert Instructions
+            if (!collections.getInstructions().isEmpty()) {
+                retryTemplate.execute(context -> {
+                    log.info("Attempting to insert bulk transaction instructions. Attempt: {}", context.getRetryCount() + 1);
+                    paymentDao.batchInsertInstructions(collections.getInstructions());
+                    return null;
+                }, context -> {
+                    log.error("Failed to insert bulk transaction instructions after all retries", context.getLastThrowable());
+                    throw new PaymentProcessingException("Failed to insert instructions after retries", context.getLastThrowable());
+                });
+            }
 
-        if (!collections.getParties().isEmpty()) {
-            paymentDao.batchInsertParties(collections.getParties());
-        }
+            // 2. Insert Parties and handle their Contacts
+            Map<String, Long> partyIdsByRef = new HashMap<>();
+            if (!collections.getParties().isEmpty()) {
+                retryTemplate.execute(context -> {
+                    log.info("Attempting to insert parties. Attempt: {}", context.getRetryCount() + 1);
+                    List<PwsParties> insertedParties = paymentDao.batchInsertPartiesWithReturn(collections.getParties());
+                    // Store party IDs for contact processing
+                    for (PwsParties party : insertedParties) {
+                        partyIdsByRef.put(party.getBankReferenceId() + "_" + party.getPartyType(), party.getPartyId());
+                    }
+                    return null;
+                }, context -> {
+                    log.error("Failed to insert parties after all retries", context.getLastThrowable());
+                    throw new PaymentProcessingException("Failed to insert parties after retries", context.getLastThrowable());
+                });
 
-        if (!collections.getContacts().isEmpty()) {
-            paymentDao.batchInsertContacts(collections.getContacts());
-        }
+                // Process contacts for each party type
+                for (Map.Entry<String, List<PwsPartyContracts>> entry : collections.getContactsByPartyType().entrySet()) {
+                    String partyType = entry.getKey();
+                    List<PwsPartyContracts> contacts = entry.getValue();
+                    
+                    // Set party IDs for contacts
+                    for (PwsPartyContracts contact : contacts) {
+                        String partyKey = contact.getBankReferenceId() + "_" + partyType;
+                        Long partyId = partyIdsByRef.get(partyKey);
+                        if (partyId != null) {
+                            contact.setPartyId(partyId);
+                        } else {
+                            log.warn("No party ID found for contact: {}", partyKey);
+                        }
+                    }
 
-        if (!collections.getTaxInstructions().isEmpty()) {
-            paymentDao.batchInsertTaxInstructions(collections.getTaxInstructions());
-        }
+                    // Insert contacts with retry
+                    final String currentPartyType = partyType;
+                    retryTemplate.execute(context -> {
+                        log.info("Attempting to insert contacts for party type {}. Attempt: {}", 
+                            currentPartyType, context.getRetryCount() + 1);
+                        paymentDao.batchInsertContacts(contacts);
+                        return null;
+                    }, context -> {
+                        log.error("Failed to insert contacts for party type {} after all retries", 
+                            currentPartyType, context.getLastThrowable());
+                        throw new PaymentProcessingException(
+                            "Failed to insert contacts for party type " + currentPartyType, 
+                            context.getLastThrowable());
+                    });
+                }
+            }
 
-        if (!collections.getAdvices().isEmpty()) {
-            paymentDao.batchInsertAdvices(collections.getAdvices());
-        }
+            // 3. Insert remaining related records
+            if (!collections.getTaxInstructions().isEmpty()) {
+                retryTemplate.execute(context -> {
+                    log.info("Attempting to insert tax instructions. Attempt: {}", context.getRetryCount() + 1);
+                    paymentDao.batchInsertTaxInstructions(collections.getTaxInstructions());
+                    return null;
+                }, context -> {
+                    log.error("Failed to insert tax instructions after all retries", context.getLastThrowable());
+                    throw new PaymentProcessingException("Failed to insert tax instructions after retries", 
+                        context.getLastThrowable());
+                });
+            }
 
-        if (!collections.getCharges().isEmpty()) {
-            paymentDao.batchInsertCharges(collections.getCharges());
+            if (!collections.getAdvices().isEmpty()) {
+                retryTemplate.execute(context -> {
+                    log.info("Attempting to insert transaction advices. Attempt: {}", context.getRetryCount() + 1);
+                    paymentDao.batchInsertAdvices(collections.getAdvices());
+                    return null;
+                }, context -> {
+                    log.error("Failed to insert transaction advices after all retries", context.getLastThrowable());
+                    throw new PaymentProcessingException("Failed to insert advices after retries", 
+                        context.getLastThrowable());
+                });
+            }
+
+            if (!collections.getCharges().isEmpty()) {
+                retryTemplate.execute(context -> {
+                    log.info("Attempting to insert transaction charges. Attempt: {}", context.getRetryCount() + 1);
+                    paymentDao.batchInsertCharges(collections.getCharges());
+                    return null;
+                }, context -> {
+                    log.error("Failed to insert transaction charges after all retries", context.getLastThrowable());
+                    throw new PaymentProcessingException("Failed to insert charges after retries", 
+                        context.getLastThrowable());
+                });
+            }
+
+        } catch (Exception e) {
+            log.error("Failed to execute batch inserts", e);
+            throw new PaymentProcessingException("Failed to execute batch inserts", e);
         }
     }
     
@@ -1271,6 +1353,48 @@ bulk-routes:
       eagerDeleteTargetFile: false
       delete: true
       chmod: rw-r--r--
+
+retry.max.attempts=3
+retry.backoff.period=1000
+retry.max.backoff=10000
+```
+
+```java
+@Value("${retry.backoff.period:1000}")
+    private long backoffPeriod;
+
+    @Value("${retry.max.backoff:10000}")
+    private long maxBackoff;
+
+    @Bean
+    public RetryTemplate retryTemplate() {
+        RetryTemplate retryTemplate = new RetryTemplate();
+
+        // Exponential backoff policy
+        ExponentialBackOffPolicy backOffPolicy = new ExponentialBackOffPolicy();
+        backOffPolicy.setInitialInterval(backoffPeriod);
+        backOffPolicy.setMultiplier(2.0);
+        backOffPolicy.setMaxInterval(maxBackoff);
+
+        // Simple retry policy
+        SimpleRetryPolicy retryPolicy = new SimpleRetryPolicy();
+        retryPolicy.setMaxAttempts(maxAttempts);
+
+        retryTemplate.setBackOffPolicy(backOffPolicy);
+        retryTemplate.setRetryPolicy(retryPolicy);
+
+        return retryTemplate;
+    }
+
+    // Alternatively, you can use @Retryable annotation
+    @Bean
+    public RetryOperationsInterceptor retryOperationsInterceptor() {
+        return RetryInterceptorBuilder.stateless()
+                .maxAttempts(maxAttempts)
+                .backOffOptions(backoffPeriod, 2.0, maxBackoff)
+                .build();
+    }
+}
 ```
 
 # testing
