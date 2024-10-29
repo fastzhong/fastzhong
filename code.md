@@ -15,9 +15,9 @@ xml: false
 --comment: add PARENT_TASK_ID in AES_USER_ACCOUNT_RESOURCE_FEATURES_REJECT_DELETE
 
 
-
-
 # Rule & RuleTemplate
+
+## Decision Matrix 
 
 ```java
 public interface DecisionMatrixRow {
@@ -136,6 +136,8 @@ public class GenericRuleTemplate implements RuleTemplate {
 }
 ```
 
+## Rule Engine
+
 ```java 
 public class RulesConfig {
 
@@ -244,6 +246,8 @@ public class RuleEngine {
 }
 ```
 
+## Decision Matrix Service
+
 ```java
 public interface DecisionMatrixService<T> {
     void updateRules(List<DecisionMatrixRow> decisionMatrix);
@@ -351,16 +355,6 @@ public class TransactionService {
 ```
 
 ```java
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
-import java.math.BigDecimal;
-import java.util.Arrays;
-import java.util.List;
-
-import static org.mockito.Mockito.*;
-
 class TransactionServiceTest {
 
     @Mock
@@ -474,44 +468,6 @@ class TransactionServiceTest {
 }
 ```
 
-```java
-public class PwsTransactions {
-
-     private long transactionId;
-     private String accountCurrency;
-     private String accountNumber;
-     private String authorizationStatus;
-     private String captureStatus;
-     private Long companyGroupId;
-     private Long companyId;
-     private String companyName;
-     private String wizard;
-     private Timestamp initiationTime;
-     private Timestamp releaseDate;
-     private String processingStatus;
-     private String bankEntityId;
-     private String bankReferenceId;
-     private String resourceId;
-     private long changeToken;
-     private long initiatedBy;
-     private long releasedBy;
-     private BigDecimal maximumAmount;
-     private String featureId;
-     private String applicationType;
-     private String correlationId;
-     private String customerTransactionStatus;
-     private String rejectReason;
-     private String transactionCurrency;
-     private BigDecimal transactionTotalAmount;
-     private boolean terminatedByDebtorFlag;
-     private BigDecimal highestAmount;
-     private String accountPAB;
-     private int totalChild;
-     private BigDecimal totalAmount;
-     private Long originalTransactionId;
-     private String transactionCategory;
-```
-
 
 ```txt
 rule "Compute TotalTransferAmount"
@@ -554,76 +510,83 @@ Key points:
 -   The @Transactional annotation ensures that the entire operation is wrapped in a database transaction.
 -   Error handling is implemented to catch and log any issues during the insert process.
 
-```java
-import org.apache.ibatis.session.ExecutorType;
-import org.apache.ibatis.session.SqlSession;
-import org.apache.ibatis.session.SqlSessionFactory;
-import org.mybatis.spring.SqlSessionTemplate;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
-import java.util.List;
-
-@Service
-public class BulkInsertService {
-
-    @Autowired
-    private SqlSessionTemplate sqlSessionTemplate;
-
-    private static final int BATCH_SIZE = 1000;
-
-    @Transactional
-    public void insertLargeDataset(List<YourDataObject> dataList) {
-        SqlSessionFactory sqlSessionFactory = sqlSessionTemplate.getSqlSessionFactory();
-
-        try (SqlSession session = sqlSessionFactory.openSession(ExecutorType.BATCH)) {
-            // Set session-specific parameters
-            session.update("ALTER SESSION SET SORT_AREA_SIZE = 1048576");
-
-            YourMapper mapper = session.getMapper(YourMapper.class);
-
-            for (int i = 0; i < dataList.size(); i++) {
-                mapper.insert(dataList.get(i));
-
-                if (i > 0 && i % BATCH_SIZE == 0) {
-                    session.flushStatements();
-                    session.clearCache();
-                }
-            }
-
-            session.flushStatements();
-        } catch (Exception e) {
-            // Log the error and potentially implement a retry mechanism
-            throw new RuntimeException("Error during bulk insert", e);
-        }
-    }
-}
-```
-
-```java
-public interface YourMapper {
-    void insert(YourDataObject data);
-}
-```
-
+## Mybatis Mapper XML
 Use the APPEND hint in your INSERT statements:
 
 ```xml
-<insert id="insert" parameterType="YourDataObject">
-    INSERT /*+APPEND*/ INTO your_table (column1, column2, ...)
-    VALUES (#{property1}, #{property2}, ...)
-</insert>
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" 
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.dao.PaymentDao">
+    
+    <insert id="batchInsertInstructions" parameterType="java.util.List">
+        INSERT INTO PWS_BULK_TRANSACTION_INSTRUCTIONS (
+            BANK_REFERENCE_ID,
+            PARENT_BANK_REFERENCE_ID,
+            TRANSACTION_CURRENCY,
+            TRANSACTION_AMOUNT,
+            <!-- Add other columns -->
+        )
+        VALUES
+        <foreach collection="instructions" item="instruction" separator=",">
+            (
+                #{instruction.bankReferenceId},
+                #{instruction.parentBankReferenceId},
+                #{instruction.transactionCurrency},
+                #{instruction.transactionAmount}
+                <!-- Add other values -->
+            )
+        </foreach>
+    </insert>
+
+    <insert id="batchInsertParties" parameterType="java.util.List">
+        INSERT INTO PWS_PARTIES (
+            BANK_REFERENCE_ID,
+            PARTY_TYPE,
+            NAME
+            <!-- Add other columns -->
+        )
+        VALUES
+        <foreach collection="parties" item="party" separator=",">
+            (
+                #{party.bankReferenceId},
+                #{party.partyType},
+                #{party.name}
+                <!-- Add other values -->
+            )
+        </foreach>
+    </insert>
+    
+    <!-- Add similar batch insert statements for other entities -->
+    
+</mapper>
 ```
+
+## Dao
 
 ```java
-@Autowired
-private BulkInsertService bulkInsertService;
-
-public void performLargeInsert(List<YourDataObject> largeDataset) {
-    bulkInsertService.insertLargeDataset(largeDataset);
+@Repository("paymentDao")
+public interface PaymentDao {
+    int getBankRefSeqNo();
+    
+    // Single record operations
+    int insertPwsTransactions(@Param("pwsTransactions") PwsTransactions pwsTransactions);
+    int insertPwsBulkTransactions(@Param("pwsBulkTransactions") PwsBulkTransactions pwsBulkTransactions);
+    
+    // Batch operations
+    void batchInsertInstructions(@Param("instructions") List<PwsBulkTransactionInstructions> instructions);
+    void batchInsertParties(@Param("parties") List<PwsParties> parties);
+    void batchInsertContacts(@Param("contacts") List<PwsPartyContracts> contacts);
+    void batchInsertTaxInstructions(@Param("taxInstructions") List<PwsTaxInstruction> taxInstructions);
+    void batchInsertAdvices(@Param("advices") List<PwsTransactionAdvices> advices);
+    void batchInsertCharges(@Param("charges") List<PwsTransactionCharges> charges);
 }
 ```
+
+
+
+### HikariCP
 
 HikariCP properties:
 maximum-pool-size: 20 is a good starting point for high-load scenarios. Adjust based on your server's capabilities.
