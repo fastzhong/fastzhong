@@ -35,6 +35,42 @@ Use Oracle’s Resource Manager to allocate appropriate resources to the bulk in
 
 Ensure that the temporary tablespaces have sufficient space and are optimized for large sort operations.
 
+## plsql insert 
+
+```sql
+CREATE OR REPLACE TYPE your_table_row_type AS OBJECT (
+    field1 VARCHAR2(100),
+    field2 NUMBER,
+    field3 DATE
+    -- Other fields as necessary
+);
+/
+
+CREATE OR REPLACE TYPE your_table_type AS TABLE OF your_table_row_type;
+/
+
+CREATE OR REPLACE PROCEDURE bulk_insert_your_data (
+    p_data IN your_table_type -- This is a PL/SQL table type of your data objects
+) AS
+BEGIN
+    -- Perform the bulk insert using the FORALL statement
+    FORALL i IN p_data.FIRST .. p_data.LAST
+        INSERT INTO your_table_name (
+            column1, column2, column3 -- List all relevant columns
+        ) VALUES (
+            p_data(i).field1, p_data(i).field2, p_data(i).field3 -- Map to your data object fields
+        );
+
+    -- Optionally, handle exceptions, logging, or other business logic here
+    COMMIT; -- Commit after bulk insert
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK; -- Rollback if any error occurs
+        RAISE;    -- Rethrow the exception to the calling environment
+END;
+/
+```
+
 1. Performance
    PL/SQL Bulk Insert: Oracle's PL/SQL is highly optimized for bulk operations. The FORALL statement and the ability to work directly within the database engine allows for efficient handling of large datasets. It minimizes context switching between the application and the database, which can significantly reduce overhead and improve performance.
    MyBatis Batch Insert: While MyBatis supports batch processing, it operates on the application side, which may involve more overhead due to network round trips and context switching between the application and the database. Although MyBatis can be tuned for batch operations, it generally won't match the efficiency of a well-designed PL/SQL bulk insert, especially with very large datasets.
