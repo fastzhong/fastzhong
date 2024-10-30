@@ -115,6 +115,7 @@ spring.datasource.hikari.data-source-properties.prepStmtCacheSqlLimit=2048
 
 spring.datasource.hikari.data-source-properties.defaultExecuteBatch=100
 spring.datasource.hikari.data-source-properties.defaultBatchValue=100
+```
 
 # Mybatis & JDBC 
 
