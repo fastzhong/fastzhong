@@ -459,3 +459,56 @@ public interface PwsSaveDao {
             BANK_REFERENCE_ID, CHILD_BANK_REFERENCE
 
 ```
+
+# mybatis config 
+```java
+@Configuration
+public class MyBatisConfig {
+
+    @Bean
+    @Primary
+    public SqlSessionFactory defaultSqlSessionFactory(@Qualifier("defaultDataSource") DataSource dataSource)
+            throws Exception {
+        return createSqlSessionFactory(dataSource, "classpath:mappers/default/**/*.xml");
+    }
+
+    @Bean
+    public SqlSessionFactory paymentSaveSqlSessionFactory(@Qualifier("paymentSaveDataSource") DataSource dataSource)
+            throws Exception {
+        return createSqlSessionFactory(dataSource, "classpath:mappers/paymentSave/**/*.xml");
+    }
+
+    @Bean
+    public SqlSessionFactory paymentLoadingSqlSessionFactory(
+            @Qualifier("paymentLoadingDataSource") DataSource dataSource) throws Exception {
+        return createSqlSessionFactory(dataSource, "classpath:mappers/paymentLoading/**/*.xml");
+    }
+
+    private SqlSessionFactory createSqlSessionFactory(DataSource dataSource, String mapperLocation) throws Exception {
+        SqlSessionFactoryBean sessionFactory = new SqlSessionFactoryBean();
+        sessionFactory.setDataSource(dataSource);
+        sessionFactory.setMapperLocations(new PathMatchingResourcePatternResolver().getResources(mapperLocation));
+        return sessionFactory.getObject();
+    }
+
+    @Bean
+    @Primary
+    public SqlSessionTemplate defaultSqlSessionTemplate(
+            @Qualifier("defaultSqlSessionFactory") SqlSessionFactory sqlSessionFactory) {
+        return new SqlSessionTemplate(sqlSessionFactory);
+    }
+
+    @Bean
+    public SqlSessionTemplate paymentSaveSqlSessionTemplate(
+            @Qualifier("paymentSaveSqlSessionFactory") SqlSessionFactory sqlSessionFactory) {
+        return new SqlSessionTemplate(sqlSessionFactory);
+    }
+
+    @Bean
+    public SqlSessionTemplate paymentLoadingSqlSessionTemplate(
+            @Qualifier("paymentLoadingSqlSessionFactory") SqlSessionFactory sqlSessionFactory) {
+        return new SqlSessionTemplate(sqlSessionFactory);
+    }
+}
+
+```
