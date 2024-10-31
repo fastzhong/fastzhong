@@ -299,18 +299,163 @@ public class Pain001ServiceImpl implements Pain001Service {
             }
         });
     }
-
-    private void setPartyIdsForContacts(List<PwsPartyContracts> contacts, 
-            Map<String, Long> partyIdsByRef) {
-        for (PwsPartyContracts contact : contacts) {
-            String partyKey = contact.getBankReferenceId() + "_" + contact.getPartyType();
-            Long partyId = partyIdsByRef.get(partyKey);
-            if (partyId != null) {
-                contact.setPartyId(partyId);
-            } else {
-                log.warn("No party ID found for contact: {}", partyKey);
-            }
-        }
-    }
 }
+```
+
+# DAO 
+```java
+@Repository("pwsSaveDao")
+public interface PwsSaveDao {
+
+    // bank ref
+    int getBankRefSequenceNum();
+    int[] getBatchBankRefSequenceNum(int count);
+
+    // bulk payment
+    long insertPwsTransactions(@Param("pwsTransactions") PwsTransactions pwsTransactions);
+    long insertPwsBulkTransactions(@Param("pwsBulkTransactions") PwsBulkTransactions pwsBulkTransactions);
+
+    // child txn
+    long insertPwsBulkTransactionInstructions(@Param("pwsBulkTransactionInstructions" pwsBulkTransactionInstructions);
+    long insertPwsParties(@Param("pwsParties" pwsParties);
+    void insertPwsPartyContacts(@Param("pwsPartyContacts" pwsPartyContacts);
+    void insertPwsPartyBanks(@Param("pwsPartyBanks" pwsPartyBanks);
+    void insertPwsTransactionAdvices(@Param("pwsTransactionAdvices" pwsTransactionAdvices);
+    void insertPwsTaxInstructions(@Param("pwsTaxInstructions" pwsTaxInstructions);
+
+
+    // batch insert child txns
+    List<Long> batchInsertTxnInstructions(List<PwsBulkTransactionInstructions> txnInstructions);
+    List<Long> batchInsertPwsParties(List<PwsParties> parties);
+    void batchInsertPwsPartyContacts(List<PwsPartyContacts> partyContacts);
+    void batchInsertPwsPartyBanks(List<PwsPartyBanks> partyBanks);
+    void batchInsertPwsTransactionAdvices(List<PwsTransactionAdvices> advices);
+    void batchInsertPwsTaxInstructions(List<PwsTaxInstructions> taxInstructions);
+
+}
+```
+
+# Mapper.xml
+
+```xml
+<!-- PwsSaveMapper.xml -->
+<mapper namespace="com.example.dao.PwsSaveDao">
+
+    <!-- Get Bank Reference Sequence Number -->
+    <select id="getBankRefSequenceNum" resultType="int">
+        SELECT SEQ_BANK_REF.NEXTVAL FROM DUAL
+    </select>
+
+    <select id="getBatchBankRefSequenceNum" resultType="int">
+        SELECT SEQ_BANK_REF.NEXTVAL FROM DUAL CONNECT BY LEVEL &lt;= #{count}
+    </select>
+
+    <!-- Insert PwsTransactions -->
+    <insert id="insertPwsTransactions" parameterType="com.example.model.PwsTransactions" useGeneratedKeys="true" keyProperty="transactionId">
+        INSERT INTO PWS_TRANSACTIONS (
+            ACCOUNT_CURRENCY, ACCOUNT_NUMBER, AUTHORIZATION_STATUS, CAPTURE_STATUS, COMPANY_GROUP_ID,
+            COMPANY_ID, COMPANY_NAME, WIZARD, INITIATION_TIME, RELEASE_DATE, PROCESSING_STATUS, BANK_ENTITY_ID,
+            BANK_REFERENCE_ID, RESOURCE_ID, CHANGE_TOKEN, INITIATED_BY, RELEASED_BY, MAXIMUM_AMOUNT, FEATURE_ID,
+            APPLICATION_TYPE, CORRELATION_ID, CUSTOMER_TRANSACTION_STATUS, REJECT_REASON, TRANSACTION_CURRENCY,
+            TRANSACTION_TOTAL_AMOUNT, TERMINATED_BY_DEBTOR_FLAG, HIGHEST_AMOUNT, ACCOUNT_PAB, TOTAL_CHILD, TOTAL_AMOUNT,
+            ORIGINAL_TRANSACTION_ID, TRANSACTION_CATEGORY
+        ) VALUES (
+            #{accountCurrency}, #{accountNumber}, #{authorizationStatus}, #{captureStatus}, #{companyGroupId},
+            #{companyId}, #{companyName}, #{wizard}, #{initiationTime}, #{releaseDate}, #{processingStatus}, #{bankEntityId},
+            #{bankReferenceId}, #{resourceId}, #{changeToken}, #{initiatedBy}, #{releasedBy}, #{maximumAmount}, #{featureId},
+            #{applicationType}, #{correlationId}, #{customerTransactionStatus}, #{rejectReason}, #{transactionCurrency},
+            #{transactionTotalAmount}, #{terminatedByDebtorFlag}, #{highestAmount}, #{accountPAB}, #{totalChild}, #{totalAmount},
+            #{originalTransactionId}, #{transactionCategory}
+        )
+    </insert>
+
+    <!-- Insert PwsBulkTransactions -->
+    <insert id="insertPwsBulkTransactions" parameterType="com.example.model.PwsBulkTransactions" useGeneratedKeys="true" keyProperty="bkTransactionId">
+        INSERT INTO PWS_BULK_TRANSACTIONS (
+            TRANSACTION_ID, FILE_UPLOAD_ID, RECIPIENTS_REFERENCE, RECIPIENTS_DESCRIPTION, FATE_FILE_NAME,
+            FATE_FILE_PATH, COMBINE_DEBIT, STATUS, CHANGE_TOKEN, ERROR_DETAIL, FINAL_FATE_UPDATED_DATE, ACK_FILE_PATH,
+            ACK_UPDATED_DATE, TRANSFER_DATE, USER_COMMENTS, DMP_BATCH_NUMBER, REJECT_CODE, BATCH_BOOKING,
+            CHARGE_OPTIONS, PAYROLL_OPTIONS
+        ) VALUES (
+            #{transactionId}, #{fileUploadId}, #{recipientsReference}, #{recipientsDescription}, #{fateFileName},
+            #{fateFilePath}, #{combineDebit}, #{status}, #{changeToken}, #{errorDetail}, #{finalFateUpdatedDate}, #{ackFilePath},
+            #{ackUpdatedDate}, #{transferDate}, #{userComments}, #{dmpBatchNumber}, #{rejectCode}, #{batchBooking},
+            #{chargeOptions}, #{payrollOptions}
+        )
+    </insert>
+
+    <!-- Insert PwsBulkTransactionInstructions -->
+    <insert id="insertPwsBulkTransactionInstructions" parameterType="com.example.model.PwsBulkTransactionInstructions" useGeneratedKeys="true" keyProperty="instructionId">
+        INSERT INTO PWS_BULK_TRANSACTION_INSTRUCTIONS (
+            /* Include fields here */
+        ) VALUES (
+            /* Include values here */
+        )
+    </insert>
+
+    <!-- Insert PwsParties -->
+    <insert id="insertPwsParties" parameterType="com.example.model.PwsParties" useGeneratedKeys="true" keyProperty="partyId">
+        INSERT INTO PWS_PARTIES (
+            BANK_ENTITY_ID, TRANSACTION_ID, BANK_REFERENCE_ID, CHILD_BANK_REFERENCE_ID, BANK_CODE, PARTY_ACCOUNT_TYPE,
+            PARTY_ACCOUNT_NUMBER, PARTY_ACCOUNT_NAME, PARTY_ACCOUNT_CURRENCY, PARTY_AGENT_BIC, PARTY_NAME, PARTY_ROLE,
+            RESIDENTIAL_STATUS, PROXY_ID, PROXY_ID_TYPE, ID_ISSUING_COUNTRY, PRODUCT_TYPE, PRIMARY_IDENTIFICATION_TYPE,
+            PRIMARY_IDENTIFICATION_VALUE, SECONDARY_IDENTIFICATION_TYPE, SECONDARY_IDENTIFICATION_VALUE, REGISTRATION_ID,
+            BENEFICIARY_REFERENCE_ID, SWIFT_CODE, PARTY_TYPE, RESIDENCY_STATUS, ACCOUNT_OWNERSHIP, RELATIONSHIP_TYPE,
+            ULTIMATE_PAYEE_COUNTRY_CODE, ULTIMATE_PAYEE_NAME, PARTY_MODIFIED_DATE, BENEFICIARY_CHANGE_TOKEN, IS_NEW,
+            IS_PREAPPROVED, BANK_ID
+        ) VALUES (
+            #{bankEntityId}, #{transactionId}, #{bankReferenceId}, #{childBankReferenceId}, #{bankCode}, #{partyAccountType},
+            #{partyAccountNumber}, #{partyAccountName}, #{partyAccountCurrency}, #{partyAgentBIC}, #{partyName}, #{partyRole},
+            #{residentialStatus}, #{proxyId}, #{proxyIdType}, #{idIssuingCountry}, #{productType}, #{primaryIdentificationType},
+            #{primaryIdentificationValue}, #{secondaryIdentificationType}, #{secondaryIdentificationValue}, #{registrationId},
+            #{beneficiaryReferenceId}, #{swiftCode}, #{partyType}, #{residencyStatus}, #{accountOwnership}, #{relationshipType},
+            #{ultimatePayeeCountryCode}, #{ultimatePayeeName}, #{partyModifiedDate}, #{beneficiaryChangeToken}, #{isNew},
+            #{isPreapproved}, #{bankId}
+        )
+    </insert>
+
+    <!-- Insert PwsPartyContacts -->
+    <insert id="insertPwsPartyContacts" parameterType="com.example.model.PwsPartyContacts" useGeneratedKeys="true" keyProperty="partyContactId">
+        INSERT INTO PWS_PARTY_CONTACTS (
+            PARTY_ID, BANK_ENTITY_ID, TRANSACTION_ID, BANK_REFERENCE_ID, CHILD_BANK_REFERENCE_ID, ADDRESS1, ADDRESS2,
+            ADDRESS3, ADDRESS4, ADDRESS5, PHONE_COUNTRY, PHONE_NO, PHONE_COUNTRY_CODE, COUNTRY, PROVINCE, DISTRICT_NAME,
+            SUB_DISTRICT_NAME, STREET_NAME, TOWN_NAME, POSTAL_CODE, BUILDING_NUMBER, BUILDING_NAME, FLOOR, UNIT_NUMBER,
+            DEPARTMENT, IS_NEW, PARTY_CONTACT_TYPE
+        ) VALUES (
+            #{partyId}, #{bankEntityId}, #{transactionId}, #{bankReferenceId}, #{childBankReferenceId}, #{address1}, #{address2},
+            #{address3}, #{address4}, #{address5}, #{phoneCountry}, #{phoneNo}, #{phoneCountryCode}, #{country}, #{province},
+            #{districtName}, #{subDistrictName}, #{streetName}, #{townName}, #{postalCode}, #{buildingNumber}, #{buildingName},
+            #{floor}, #{unitNumber}, #{department}, #{isNew}, #{partyContactType}
+        )
+    </insert>
+
+    <!-- Insert PwsPartyBanks -->
+    <insert id="insertPwsPartyBanks" parameterType="com.example.model.PwsPartyBanks" useGeneratedKeys="true" keyProperty="bankId">
+        INSERT INTO PWS_PARTY_BANKS (
+            PARTY_ID, TRANSACTION_ID, BANK_TYPE, IS_NEW, CLEARING_CODE_ID, CLEARING_CODE, CLEARING_CODE_DESC, BANK_CODE,
+            BANK_SWIFT_CODE, BANK_NAME, BANK_ADDRESS1, BANK_ADDRESS2, BANK_ADDRESS3, BANK_TOWN, BANK_COUNTRY_CODE,
+            BANK_COUNTRY_NAME, BRANCH_NAME_ADDRESS1, BRANCH_NAME_ADDRESS2, BRANCH_NAME_ADDRESS3, BANK_COUNTRY
+        ) VALUES (
+            #{partyId}, #{transactionId}, #{bankType}, #{isNew}, #{clearingCodeId}, #{clearingCode}, #{clearingCodeDesc}, #{bankCode},
+            #{bankSwiftCode}, #{bankName}, #{bankAddress1}, #{bankAddress2}, #{bankAddress3}, #{bankTown}, #{bankCountryCode},
+            #{bankCountryName}, #{branchNameAddress1}, #{branchNameAddress2}, #{branchNameAddress3}, #{bankCountry}
+        )
+    </insert>
+
+    <!-- Insert PwsTransactionAdvices -->
+    <insert id="insertPwsTransactionAdvices" parameterType="com.example.model.PwsTransactionAdvices" useGeneratedKeys="true" keyProperty="adviceId">
+        INSERT INTO PWS_TRANSACTION_ADVICES (
+            BANK_ENTITY_ID, TRANSACTION_ID, BANK_REFERENCE_ID, CHILD_BANK_REFERENCE_ID, PARTY_ID, ADVICE_ID, PARTY_NAME1,
+            PARTY_NAME2, REFERENCE_NO, ADVISE_MESSAGE, DELIVERY_METHOD, DELIVERY_ADDRESS
+        ) VALUES (
+            #{bankEntityId}, #{transactionId}, #{bankReferenceId}, #{childBankReferenceId}, #{partyId}, #{adviceId},
+            #{partyName1}, #{partyName2}, #{referenceNo}, #{adviseMessage}, #{deliveryMethod}, #{deliveryAddress}
+        )
+    </insert>
+
+    <!-- Insert PwsTaxInstructions -->
+    <insert id="insertPwsTaxInstructions" parameterType="com.example.model.PwsTaxInstructions" useGeneratedKeys="true" keyProperty="instructionId">
+        INSERT INTO PWS_TAX_INSTRUCTIONS (
+            BANK_REFERENCE_ID, CHILD_BANK_REFERENCE
+
 ```
