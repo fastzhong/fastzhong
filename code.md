@@ -1,3 +1,82 @@
+# Srping Retry
+
+```xml
+<dependency>
+    <groupId>org.springframework.retry</groupId>
+    <artifactId>spring-retry</artifactId>
+    <version>1.3.1</version>
+</dependency>
+```
+
+```yml
+app:
+  retry:
+    maxAttempts: 3
+    backoff:
+      initialInterval: 500     # in milliseconds
+      multiplier: 2.0
+      maxInterval: 5000        # in milliseconds
+```
+
+```java
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.context.annotation.Configuration;
+
+@Configuration
+@ConfigurationProperties(prefix = "app.retry")
+public class RetryConfigProperties {
+    private int maxAttempts;
+    private BackoffProperties backoff = new BackoffProperties();
+
+    public int getMaxAttempts() {
+        return maxAttempts;
+    }
+
+    public void setMaxAttempts(int maxAttempts) {
+        this.maxAttempts = maxAttempts;
+    }
+
+    public BackoffProperties getBackoff() {
+        return backoff;
+    }
+
+    public void setBackoff(BackoffProperties backoff) {
+        this.backoff = backoff;
+    }
+
+    public static class BackoffProperties {
+        private long initialInterval;
+        private double multiplier;
+        private long maxInterval;
+
+        public long getInitialInterval() {
+            return initialInterval;
+        }
+
+        public void setInitialInterval(long initialInterval) {
+            this.initialInterval = initialInterval;
+        }
+
+        public double getMultiplier() {
+            return multiplier;
+        }
+
+        public void setMultiplier(double multiplier) {
+            this.multiplier = multiplier;
+        }
+
+        public long getMaxInterval() {
+            return maxInterval;
+        }
+
+        public void setMaxInterval(long maxInterval) {
+            this.maxInterval = maxInterval;
+        }
+    }
+}
+```
+
+
 # WebClient & Resilient4J
 
 ```xml
