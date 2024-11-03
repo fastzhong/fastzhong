@@ -1,3 +1,35 @@
+Wanted but not invoked:
+paymentUtils.updatePaymentSaved(
+    Pain001InboundProcessingResult(paymentReceivedTotal=0, transactionReceivedTotal=0, paymentReceivedAmount=0, paymentDebulkTotal=0, paymentValidTotal=0, paymentValidAmount=0.0, paymentInvalidTotal=0, paymentInvalidAmount=0.0, paymentValid=[], paymentInvalid=[], paymentValidationError=[], paymentEnrichmentError=[], paymentCreatedTotal=0, paymentTxnCreatedTotal=0, paymentSaved=[], paymentSavedError=[]),
+    PwsSaveRecord(txnId=null, DmpTxnRef=null)
+);
+-> at com.uob.gwb.pbp.util.PaymentUtils.updatePaymentSaved(PaymentUtils.java:35)
+
+However, there were exactly 2 interactions with this mock:
+paymentUtils.createPwsSaveRecord(
+    1L,
+    "BATCH001"
+);
+-> at com.uob.gwb.pbp.service.impl.PaymentSaveImpl.savePaymentInformation(PaymentSaveImpl.java:63)
+
+paymentUtils.updatePaymentSavedError(
+    Pain001InboundProcessingResult(paymentReceivedTotal=0, transactionReceivedTotal=0, paymentReceivedAmount=0, paymentDebulkTotal=0, paymentValidTotal=0, paymentValidAmount=0.0, paymentInvalidTotal=0, paymentInvalidAmount=0.0, paymentValid=[], paymentInvalid=[], paymentValidationError=[], paymentEnrichmentError=[], paymentCreatedTotal=0, paymentTxnCreatedTotal=0, paymentSaved=[], paymentSavedError=[]),
+    PwsSaveRecord(txnId=null, DmpTxnRef=null)
+);
+-> at com.uob.gwb.pbp.service.impl.PaymentSaveImpl.savePaymentInformation(PaymentSaveImpl.java:108)
+
+
+Wanted but not invoked:
+sqlSession.rollback();
+-> at com.uob.gwb.pbp.service.impl.PaymentSaveServiceTest.savePaymentInformation_FailedBatchSave(PaymentSaveServiceTest.java:140)
+Actually, there were zero interactions with this mock.
+
+Wanted but not invoked:
+sqlSession.rollback();
+-> at com.uob.gwb.pbp.service.impl.PaymentSaveServiceTest.savePaymentInformation_FailedBatchSave(PaymentSaveServiceTest.java:140)
+Actually, there were zero interactions with this mock.
+
+
 # Component Test
 
 ```java
