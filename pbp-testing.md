@@ -1,4 +1,55 @@
 
+2024-11-04 03:37:47.560 ERROR [main] c.u.g.p.service.impl.PaymentSaveImpl - Failed saving batch 1: 
+
+
+Wanted but not invoked:
+paymentUtils.updatePaymentSaved(
+    Pain001InboundProcessingResult(paymentReceivedTotal=0, transactionReceivedTotal=0, paymentReceivedAmount=0, paymentDebulkTotal=0, paymentValidTotal=0, paymentValidAmount=0.0, paymentInvalidTotal=0, paymentInvalidAmount=0.0, paymentValid=[], paymentInvalid=[], paymentValidationError=[], paymentEnrichmentError=[], paymentCreatedTotal=0, paymentTxnCreatedTotal=0, paymentSaved=[], paymentSavedError=[]),
+    PwsSaveRecord(txnId=123, DmpTxnRef=dmpRef123)
+);
+-> at com.uob.gwb.pbp.util.PaymentUtils.updatePaymentSaved(PaymentUtils.java:35)
+
+However, there were exactly 2 interactions with this mock:
+paymentUtils.createPwsSaveRecord(
+    1L,
+    "BATCH001"
+);
+-> at com.uob.gwb.pbp.service.impl.PaymentSaveImpl.savePaymentInformation(PaymentSaveImpl.java:63)
+
+paymentUtils.updatePaymentSavedError(
+    Pain001InboundProcessingResult(paymentReceivedTotal=0, transactionReceivedTotal=0, paymentReceivedAmount=0, paymentDebulkTotal=0, paymentValidTotal=0, paymentValidAmount=0.0, paymentInvalidTotal=0, paymentInvalidAmount=0.0, paymentValid=[], paymentInvalid=[], paymentValidationError=[], paymentEnrichmentError=[], paymentCreatedTotal=0, paymentTxnCreatedTotal=0, paymentSaved=[], paymentSavedError=[]),
+    PwsSaveRecord(txnId=123, DmpTxnRef=dmpRef123)
+);
+-> at com.uob.gwb.pbp.service.impl.PaymentSaveImpl.savePaymentInformation(PaymentSaveImpl.java:108)
+
+
+Wanted but not invoked:
+paymentUtils.updatePaymentSaved(
+    Pain001InboundProcessingResult(paymentReceivedTotal=0, transactionReceivedTotal=0, paymentReceivedAmount=0, paymentDebulkTotal=0, paymentValidTotal=0, paymentValidAmount=0.0, paymentInvalidTotal=0, paymentInvalidAmount=0.0, paymentValid=[], paymentInvalid=[], paymentValidationError=[], paymentEnrichmentError=[], paymentCreatedTotal=0, paymentTxnCreatedTotal=0, paymentSaved=[], paymentSavedError=[]),
+    PwsSaveRecord(txnId=123, DmpTxnRef=dmpRef123)
+);
+-> at com.uob.gwb.pbp.util.PaymentUtils.updatePaymentSaved(PaymentUtils.java:35)
+
+However, there were exactly 2 interactions with this mock:
+paymentUtils.createPwsSaveRecord(
+    1L,
+    "BATCH001"
+);
+-> at com.uob.gwb.pbp.service.impl.PaymentSaveImpl.savePaymentInformation(PaymentSaveImpl.java:63)
+
+paymentUtils.updatePaymentSavedError(
+    Pain001InboundProcessingResult(paymentReceivedTotal=0, transactionReceivedTotal=0, paymentReceivedAmount=0, paymentDebulkTotal=0, paymentValidTotal=0, paymentValidAmount=0.0, paymentInvalidTotal=0, paymentInvalidAmount=0.0, paymentValid=[], paymentInvalid=[], paymentValidationError=[], paymentEnrichmentError=[], paymentCreatedTotal=0, paymentTxnCreatedTotal=0, paymentSaved=[], paymentSavedError=[]),
+    PwsSaveRecord(txnId=123, DmpTxnRef=dmpRef123)
+);
+-> at com.uob.gwb.pbp.service.impl.PaymentSaveImpl.savePaymentInformation(PaymentSaveImpl.java:108)
+
+
+	at com.uob.gwb.pbp.util.PaymentUtils.updatePaymentSaved(PaymentUtils.java:35)
+	at com.uob.gwb.pbp.service.impl.PaymentSaveServiceTest.savePaymentInformation_SuccessfulSave(PaymentSaveServiceTest.java:109)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:568)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+
 
     
 
