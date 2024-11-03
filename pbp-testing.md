@@ -1,34 +1,111 @@
-Wanted but not invoked:
-paymentUtils.updatePaymentSaved(
-    Pain001InboundProcessingResult(paymentReceivedTotal=0, transactionReceivedTotal=0, paymentReceivedAmount=0, paymentDebulkTotal=0, paymentValidTotal=0, paymentValidAmount=0.0, paymentInvalidTotal=0, paymentInvalidAmount=0.0, paymentValid=[], paymentInvalid=[], paymentValidationError=[], paymentEnrichmentError=[], paymentCreatedTotal=0, paymentTxnCreatedTotal=0, paymentSaved=[], paymentSavedError=[]),
-    PwsSaveRecord(txnId=null, DmpTxnRef=null)
-);
--> at com.uob.gwb.pbp.util.PaymentUtils.updatePaymentSaved(PaymentUtils.java:35)
 
-However, there were exactly 2 interactions with this mock:
-paymentUtils.createPwsSaveRecord(
-    1L,
-    "BATCH001"
-);
--> at com.uob.gwb.pbp.service.impl.PaymentSaveImpl.savePaymentInformation(PaymentSaveImpl.java:63)
+    static {
+        ISO_DATE_FORMAT.setLenient(false); // Disable lenient parsing to enforce strict format checking
+    }
 
-paymentUtils.updatePaymentSavedError(
-    Pain001InboundProcessingResult(paymentReceivedTotal=0, transactionReceivedTotal=0, paymentReceivedAmount=0, paymentDebulkTotal=0, paymentValidTotal=0, paymentValidAmount=0.0, paymentInvalidTotal=0, paymentInvalidAmount=0.0, paymentValid=[], paymentInvalid=[], paymentValidationError=[], paymentEnrichmentError=[], paymentCreatedTotal=0, paymentTxnCreatedTotal=0, paymentSaved=[], paymentSavedError=[]),
-    PwsSaveRecord(txnId=null, DmpTxnRef=null)
-);
--> at com.uob.gwb.pbp.service.impl.PaymentSaveImpl.savePaymentInformation(PaymentSaveImpl.java:108)
+public class Pain001InboundProcessingResult {
+    private List<PwsSaveRecord> paymentSaved = new ArrayList<>();
+    private List<PwsSaveRecord> paymentSavedError = new ArrayList<>();
+    // Other fields and methods...
+}
 
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-Wanted but not invoked:
-sqlSession.rollback();
--> at com.uob.gwb.pbp.service.impl.PaymentSaveServiceTest.savePaymentInformation_FailedBatchSave(PaymentSaveServiceTest.java:140)
-Actually, there were zero interactions with this mock.
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
-Wanted but not invoked:
-sqlSession.rollback();
--> at com.uob.gwb.pbp.service.impl.PaymentSaveServiceTest.savePaymentInformation_FailedBatchSave(PaymentSaveServiceTest.java:140)
-Actually, there were zero interactions with this mock.
+@ExtendWith(MockitoExtension.class)
+class PaymentUtilsTest {
 
+    @Mock
+    private TransactionUtils txnUtils;
+
+    @InjectMocks
+    private PaymentUtils paymentUtils;
+
+    @BeforeEach
+    void setUp() {
+        MockitoAnnotations.openMocks(this);
+    }
+
+    @Test
+    void testCreatePwsSaveRecord_WithValidIdAndDmpTxnRef() {
+        long id = 123L;
+        String dmpTxnRef = "dmpRef123";
+        String decryptedId = "decrypted123";
+        when(txnUtils.getDecrypted(String.valueOf(id))).thenReturn(decryptedId);
+
+        PwsSaveRecord record = paymentUtils.createPwsSaveRecord(id, dmpTxnRef);
+
+        assertEquals(decryptedId, record.getTxnId());
+        assertEquals(dmpTxnRef, record.getDmpTxnRef());
+        verify(txnUtils).getDecrypted(String.valueOf(id));
+    }
+
+    @Test
+    void testCreatePwsSaveRecord_WithZeroId() {
+        long id = 0;
+        String dmpTxnRef = "dmpRef123";
+
+        PwsSaveRecord record = paymentUtils.createPwsSaveRecord(id, dmpTxnRef);
+
+        assertEquals("", record.getTxnId());
+        assertEquals(dmpTxnRef, record.getDmpTxnRef());
+        verifyNoInteractions(txnUtils);
+    }
+
+    @Test
+    void testCreatePwsSaveRecord_WithNullDmpTxnRef() {
+        long id = 123L;
+        String decryptedId = "decrypted123";
+        when(txnUtils.getDecrypted(String.valueOf(id))).thenReturn(decryptedId);
+
+        PwsSaveRecord record = paymentUtils.createPwsSaveRecord(id, null);
+
+        assertEquals(decryptedId, record.getTxnId());
+        assertEquals("", record.getDmpTxnRef());
+    }
+
+    @Test
+    void testUpdatePaymentSaved() {
+        Pain001InboundProcessingResult result = new Pain001InboundProcessingResult();
+        PwsSaveRecord record = new PwsSaveRecord("txn123", "ref123");
+
+        paymentUtils.updatePaymentSaved(result, record);
+
+        assertTrue(result.getPaymentSaved().contains(record));
+    }
+
+    @Test
+    void testUpdatePaymentSavedError_WhenRecordNotPresent() {
+        Pain001InboundProcessingResult result = new Pain001InboundProcessingResult();
+        PwsSaveRecord record = new PwsSaveRecord("txn123", "ref123");
+
+        paymentUtils.updatePaymentSavedError(result, record);
+
+        assertTrue(result.getPaymentSavedError().contains(record));
+    }
+
+    @Test
+    void testUpdatePaymentSavedError_WhenRecordAlreadyPresent() {
+        Pain001InboundProcessingResult result = new Pain001InboundProcessingResult();
+        PwsSaveRecord record = new PwsSaveRecord("txn123", "ref123");
+        result.getPaymentSavedError().add(record); // Pre-add record to simulate already present
+
+        paymentUtils.updatePaymentSavedError(result, record);
+
+        assertEquals(1, result.getPaymentSavedError().size());
+        assertTrue(result.getPaymentSavedError().contains(record));
+    }
+}
+
+    
 
 # Component Test
 
@@ -179,338 +256,6 @@ class Pain001ProcessingE2ETest {
         
         assertThat(taxes).isNotEmpty();
         // Add more specific assertions
-    }
-}
-```
-
-## General Utils
-
-```java
-import static org.junit.jupiter.api.Assertions.*;
-
-import org.junit.jupiter.api.Test;
-
-import java.util.Date;
-import java.text.SimpleDateFormat;
-
-class GeneralUtilsTest {
-
-    private static final SimpleDateFormat ISO_FORMAT = new SimpleDateFormat("yyyy-MM-dd");
-
-    @Test
-    void testStringToDate_WithValidDate() throws Exception {
-        // Arrange
-        String dateString = "2024-11-04";
-        
-        // Act
-        Date result = GeneralUtils.stringToDate(dateString);
-        
-        // Assert
-        assertEquals(ISO_FORMAT.parse(dateString), result);
-    }
-
-    @Test
-    void testStringToDate_WithInvalidDate() {
-        // Arrange
-        String invalidDateString = "04-11-2024";
-        
-        // Act & Assert
-        IllegalArgumentException exception = assertThrows(
-            IllegalArgumentException.class,
-            () -> GeneralUtils.stringToDate(invalidDateString)
-        );
-        assertTrue(exception.getMessage().contains("Invalid date format"));
-    }
-
-    @Test
-    void testStringToDate_WithNullDate() {
-        // Act & Assert
-        IllegalArgumentException exception = assertThrows(
-            IllegalArgumentException.class,
-            () -> GeneralUtils.stringToDate(null)
-        );
-        assertTrue(exception.getMessage().contains("Invalid date format"));
-    }
-}
-
-```
-
-## Payment Utils
-
-```java
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
-
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
-
-class PaymentUtilsTest {
-
-    @Mock
-    private TransactionUtils txnUtils;
-
-    @InjectMocks
-    private PaymentUtils paymentUtils;
-
-    @BeforeEach
-    void setUp() {
-        MockitoAnnotations.openMocks(this);
-    }
-
-    @Test
-    void testCreatePwsSaveRecord_WithValidIdAndDmpTxnRef() {
-        // Arrange
-        long id = 123L;
-        String dmpTxnRef = "testRef";
-        String decryptedId = "decrypted123";
-        when(txnUtils.getDecrypted(String.valueOf(id))).thenReturn(decryptedId);
-
-        // Act
-        PwsSaveRecord record = paymentUtils.createPwsSaveRecord(id, dmpTxnRef);
-
-        // Assert
-        assertEquals(decryptedId, record.getTxnId());
-        assertEquals(dmpTxnRef, record.getDmpTxnRef());
-        verify(txnUtils).getDecrypted(String.valueOf(id));
-    }
-
-    @Test
-    void testCreatePwsSaveRecord_WithZeroId() {
-        // Arrange
-        long id = 0;
-        String dmpTxnRef = "testRef";
-
-        // Act
-        PwsSaveRecord record = paymentUtils.createPwsSaveRecord(id, dmpTxnRef);
-
-        // Assert
-        assertEquals("", record.getTxnId());
-        assertEquals(dmpTxnRef, record.getDmpTxnRef());
-        verifyNoInteractions(txnUtils);
-    }
-
-    @Test
-    void testCreatePwsSaveRecord_WithNullDmpTxnRef() {
-        // Arrange
-        long id = 123L;
-        String decryptedId = "decrypted123";
-        when(txnUtils.getDecrypted(String.valueOf(id))).thenReturn(decryptedId);
-
-        // Act
-        PwsSaveRecord record = paymentUtils.createPwsSaveRecord(id, null);
-
-        // Assert
-        assertEquals(decryptedId, record.getTxnId());
-        assertEquals("", record.getDmpTxnRef());
-    }
-
-    @Test
-    void testUpdatePaymentSaved() {
-        // Arrange
-        Pain001InboundProcessingResult result = new Pain001InboundProcessingResult();
-        PwsSaveRecord record = new PwsSaveRecord("txn123", "ref123");
-
-        // Act
-        paymentUtils.updatePaymentSaved(result, record);
-
-        // Assert
-        assertTrue(result.getPaymentSaved().contains(record));
-    }
-
-    @Test
-    void testUpdatePaymentSavedError_WhenRecordNotPresent() {
-        // Arrange
-        Pain001InboundProcessingResult result = new Pain001InboundProcessingResult();
-        PwsSaveRecord record = new PwsSaveRecord("txn123", "ref123");
-
-        // Act
-        paymentUtils.updatePaymentSavedError(result, record);
-
-        // Assert
-        assertTrue(result.getPaymentSavedError().contains(record));
-    }
-
-    @Test
-    void testUpdatePaymentSavedError_WhenRecordAlreadyPresent() {
-        // Arrange
-        Pain001InboundProcessingResult result = new Pain001InboundProcessingResult();
-        PwsSaveRecord record = new PwsSaveRecord("txn123", "ref123");
-        result.getPaymentSavedError().add(record);
-
-        // Act
-        paymentUtils.updatePaymentSavedError(result, record);
-
-        // Assert
-        assertEquals(1, result.getPaymentSavedError().size());
-        assertTrue(result.getPaymentSavedError().contains(record));
-    }
-}
-```
-
-```java
-public class CommonUtils {
-
-     public static final DateFormat ISO_DATE_FORMAT = new SimpleDateFormat("yyyy-MM-dd");
-
-     public static Date stringToDate(String s)  throws ParseException {
-         if (ObjectUtils.isNotEmpty(s)) {
-             return new Date(ISO_DATE_FORMAT.parse(s).getTime());
-         }
-         // throw new ParseException("Can not convert null string to Date class", -1);
-         return null;
-     }
- }
-@ExtendWith(MockitoExtension.class)
-public class CommonUtilsTest {
-
-    @Test
-    void testStringToDate_WithValidDate() throws Exception {
-        String dateString = "2024-11-01";
-        Date result = CommonUtils.stringToDate(dateString);
-        assertEquals(ISO_DATE_FORMAT.parse(dateString), result);
-    }
-
-    @Test
-    void testStringToDate_WithInvalidDate() throws ParseException {
-        String invalidDateString = "20-24-11";
-        System.out.println(CommonUtils.stringToDate(invalidDateString));
-        assertThrows(
-                ParseException.class,
-                () -> CommonUtils.stringToDate(invalidDateString)
-        );
-
-    }
-
-    @Test
-    void testStringToDate_WithNullDate() throws ParseException {
-        assertNull(CommonUtils.stringToDate(null));
-
-    }
-
-}
-```
-
-0021-12-11
-org.opentest4j.AssertionFailedError: Expected java.text.ParseException to be thrown, but nothing was thrown.
-
-java.lang.NullPointerException: Cannot invoke "java.util.List.contains(Object)" because the return value of "com.uob.gwb.pbp.flow.Pain001InboundProcessingResult.getPaymentSavedError()" is null
-
-java.lang.NullPointerException: Cannot invoke "java.util.List.add(Object)" because the return value of "com.uob.gwb.pbp.flow.Pain001InboundProcessingResult.getPaymentSavedError()" is null
-
-org.opentest4j.AssertionFailedError: 
-Expected :decrypted123
-Actual   :null
-
-
-```java
-@Slf4j
-@AllArgsConstructor
-@Component
-public class PaymentUtils {
-
-    private final TransactionUtils txnUtils;
-    public PwsSaveRecord createPwsSaveRecord(long id, String dmpTxnRef) {
-        String txnId = id == 0 ? "" : txnUtils.getDecrypted(String.valueOf(id));
-        dmpTxnRef = Optional.ofNullable(dmpTxnRef).orElse("");
-        return new PwsSaveRecord(txnId, dmpTxnRef);
-    }
-
-    public void updatePaymentSaved(Pain001InboundProcessingResult result, PwsSaveRecord record) {
-        result.getPaymentSaved().add(record);
-    }
-
-    public void updatePaymentSavedError(Pain001InboundProcessingResult result, PwsSaveRecord record) {
-        // for error, record only once
-        if (!result.getPaymentSavedError().contains(record))
-            result.getPaymentSavedError().add(record);
-    }
-}
-
-@ExtendWith(MockitoExtension.class)
-class PaymentUtilsTest {
-
-    @Mock
-    private TransactionUtils txnUtils;
-
-    @InjectMocks
-    private PaymentUtils paymentUtils;
-
-    @BeforeEach
-    void setUp() {
-        MockitoAnnotations.openMocks(this);
-    }
-
-    @Test
-    void testCreatePwsSaveRecord_WithValidIdAndDmpTxnRef() {
-        long id = 123L;
-        String dmpTxnRef = "dmpRef123";
-        String decryptedId = "decrypted123";
-        when(txnUtils.getDecrypted(String.valueOf(id))).thenReturn(decryptedId);
-        PwsSaveRecord record = paymentUtils.createPwsSaveRecord(id, dmpTxnRef);
-
-        // Assert
-        assertEquals(decryptedId, record.getTxnId());
-        assertEquals(dmpTxnRef, record.getDmpTxnRef());
-        verify(txnUtils).getDecrypted(String.valueOf(id));
-    }
-
-    @Test
-    void testCreatePwsSaveRecord_WithZeroId() {
-        long id = 0;
-        String dmpTxnRef = "dmpRef123";
-        PwsSaveRecord record = paymentUtils.createPwsSaveRecord(id, dmpTxnRef);
-
-        // Assert
-        assertEquals("", record.getTxnId());
-        assertEquals(dmpTxnRef, record.getDmpTxnRef());
-        verifyNoInteractions(txnUtils);
-    }
-
-    @Test
-    void testCreatePwsSaveRecord_WithNullDmpTxnRef() {
-        long id = 123L;
-        String decryptedId = "decrypted123";
-        when(txnUtils.getDecrypted(String.valueOf(id))).thenReturn(decryptedId);
-        PwsSaveRecord record = paymentUtils.createPwsSaveRecord(id, null);
-
-        // Assert
-        assertEquals(decryptedId, record.getTxnId());
-        assertEquals("", record.getDmpTxnRef());
-    }
-
-    @Test
-    void testUpdatePaymentSaved() {
-        Pain001InboundProcessingResult result = new Pain001InboundProcessingResult();
-        PwsSaveRecord record = new PwsSaveRecord("txn123", "ref123");
-        paymentUtils.updatePaymentSaved(result, record);
-
-        // Assert
-        assertTrue(result.getPaymentSaved().contains(record));
-    }
-
-    @Test
-    void testUpdatePaymentSavedError_WhenRecordNotPresent() {
-        Pain001InboundProcessingResult result = new Pain001InboundProcessingResult();
-        PwsSaveRecord record = new PwsSaveRecord("txn123", "ref123");
-        paymentUtils.updatePaymentSavedError(result, record);
-
-        // Assert
-        assertTrue(result.getPaymentSavedError().contains(record));
-    }
-
-    @Test
-    void testUpdatePaymentSavedError_WhenRecordAlreadyPresent() {
-        Pain001InboundProcessingResult result = new Pain001InboundProcessingResult();
-        PwsSaveRecord record = new PwsSaveRecord("txn123", "ref123");
-        result.getPaymentSavedError().add(record);
-        paymentUtils.updatePaymentSavedError(result, record);
-
-        // Assert
-        assertEquals(1, result.getPaymentSavedError().size());
-        assertTrue(result.getPaymentSavedError().contains(record));
     }
 }
 ```
