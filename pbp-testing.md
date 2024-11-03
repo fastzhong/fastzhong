@@ -151,378 +151,169 @@ class Pain001ProcessingE2ETest {
 }
 ```
 
-
-# config
-
-```yml
-spring:
-  profiles:
-    active: test
-  
-  datasource:
-    default:
-      driver-class-name: org.h2.Driver
-      url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false
-      username: sa
-      password: 
-
-    payment-save:
-      driver-class-name: org.h2.Driver
-      url: jdbc:h2:mem:paymentdb;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false
-      username: sa
-      password: 
-
-bulk-routes:
-  - route-name: CUSTOMER_SUBMITTED_TRANSFORMED
-    processing-type: INBOUND
-    source-type: FILE
-    enabled: true
-    steps:
-      - pain001-validation
-      - payment-debulk
-      - payment-validation
-      - payment-enrichment
-      - payment-save
-    file-source:
-      directoryName: target/test-inbound
-      antInclude: "*_Auth.json"
-      antExclude:
-      charset: utf-8
-      doneFileName: "${file:name:noext}.xml.done"
-      delay: 1000
-      sortBy: file:modified
-      maxMessagesPerPoll: 1
-      noop: false
-      recursive: false
-      move: target/test-backup
-      moveFailed: target/test-error
-      readLock: rename
-      readLockTimeout: 10000
-      readLockInterval: 1000
-      readLockLoggingLevel: WARN
-```
+## General Utils
 
 ```java
-@TestConfiguration
-@Profile("test")
-public class TestConfig {
+import static org.junit.jupiter.api.Assertions.*;
 
-    @Bean
-    public DataSource defaultDataSource() {
-        return new EmbeddedDatabaseBuilder()
-            .setType(EmbeddedDatabaseType.H2)
-            .addScript("classpath:schema-batch.sql")
-            .addScript("classpath:schema-payment.sql")
-            .build();
+import org.junit.jupiter.api.Test;
+
+import java.util.Date;
+import java.text.SimpleDateFormat;
+
+class GeneralUtilsTest {
+
+    private static final SimpleDateFormat ISO_FORMAT = new SimpleDateFormat("yyyy-MM-dd");
+
+    @Test
+    void testStringToDate_WithValidDate() throws Exception {
+        // Arrange
+        String dateString = "2024-11-04";
+        
+        // Act
+        Date result = GeneralUtils.stringToDate(dateString);
+        
+        // Assert
+        assertEquals(ISO_FORMAT.parse(dateString), result);
     }
 
-    @Bean
-    public DataSource paymentSaveDataSource() {
-        return new EmbeddedDatabaseBuilder()
-            .setType(EmbeddedDatabaseType.H2)
-            .addScript("classpath:schema-payment.sql")
-            .build();
+    @Test
+    void testStringToDate_WithInvalidDate() {
+        // Arrange
+        String invalidDateString = "04-11-2024";
+        
+        // Act & Assert
+        IllegalArgumentException exception = assertThrows(
+            IllegalArgumentException.class,
+            () -> GeneralUtils.stringToDate(invalidDateString)
+        );
+        assertTrue(exception.getMessage().contains("Invalid date format"));
     }
 
-    @Bean
-    public JdbcTemplate jdbcTemplate(DataSource paymentSaveDataSource) {
-        return new JdbcTemplate(paymentSaveDataSource);
+    @Test
+    void testStringToDate_WithNullDate() {
+        // Act & Assert
+        IllegalArgumentException exception = assertThrows(
+            IllegalArgumentException.class,
+            () -> GeneralUtils.stringToDate(null)
+        );
+        assertTrue(exception.getMessage().contains("Invalid date format"));
     }
 }
+
 ```
 
-# SQL
-
-## spring batch 
-
-```sql
--- Spring Batch tables
-CREATE TABLE BATCH_JOB_INSTANCE (
-    JOB_INSTANCE_ID BIGINT PRIMARY KEY,
-    VERSION BIGINT,
-    JOB_NAME VARCHAR(100) NOT NULL,
-    JOB_KEY VARCHAR(32) NOT NULL
-);
-
-CREATE TABLE BATCH_JOB_EXECUTION (
-    JOB_EXECUTION_ID BIGINT PRIMARY KEY,
-    VERSION BIGINT,
-    JOB_INSTANCE_ID BIGINT NOT NULL,
-    CREATE_TIME TIMESTAMP NOT NULL,
-    START_TIME TIMESTAMP DEFAULT NULL,
-    END_TIME TIMESTAMP DEFAULT NULL,
-    STATUS VARCHAR(10),
-    EXIT_CODE VARCHAR(2500),
-    EXIT_MESSAGE VARCHAR(2500),
-    LAST_UPDATED TIMESTAMP
-);
-```
-
-## pws
-
-```sql
--- PWS tables
-CREATE TABLE PWS_BULK_TRANSACTIONS (
-    BK_TRANSACTION_ID NUMBER(19) PRIMARY KEY,
-    TRANSACTION_ID NUMBER(19),
-    FILE_UPLOAD_ID NUMBER(19),
-    RECIPIENTS_REFERENCE VARCHAR2(255),
-    RECIPIENTS_DESCRIPTION VARCHAR2(255),
-    FATE_FILE_NAME VARCHAR2(255),
-    FATE_FILE_PATH VARCHAR2(255),
-    COMBINE_DEBIT VARCHAR2(255),
-    STATUS VARCHAR2(50),
-    CHANGE_TOKEN NUMBER(19),
-    ERROR_DETAIL VARCHAR2(4000),
-    FINAL_FATE_UPDATED_DATE TIMESTAMP,
-    ACK_FILE_PATH VARCHAR2(255),
-    ACK_UPDATED_DATE TIMESTAMP,
-    TRANSFER_DATE TIMESTAMP,
-    USER_COMMENTS VARCHAR2(255),
-    DMP_BATCH_NUMBER VARCHAR2(255),
-    REJECT_CODE VARCHAR2(50),
-    BATCH_BOOKING VARCHAR2(50),
-    CHARGE_OPTIONS VARCHAR2(50),
-    PAYROLL_OPTIONS VARCHAR2(50),
-    BANK_REFERENCE_ID VARCHAR2(255)
-);
-
-CREATE TABLE PWS_BULK_TRANSACTION_INSTRUCTIONS (
-    TRANSACTION_INSTRUCTIONS_ID NUMBER(19) PRIMARY KEY,
-    BANK_REFERENCE_ID VARCHAR2(255),
-    CHILD_BANK_REFERENCE_ID VARCHAR2(255),
-    TRANSACTION_ID NUMBER(19),
-    CHILD_TRANSACTION_INSTRUCTIONS_ID NUMBER(19),
-    VALUE_DATE TIMESTAMP,
-    SETTLEMENT_DATE TIMESTAMP,
-    PAYMENT_CODE_ID VARCHAR2(50),
-    PAYMENT_DETAILS VARCHAR2(4000),
-    RAIL_CODE VARCHAR2(50),
-    IS_RECURRING VARCHAR2(1),
-    IS_PRE_APPROVED VARCHAR2(1),
-    CUSTOMER_REFERENCE VARCHAR2(255),
-    REMARKS_FOR_APPROVAL VARCHAR2(255),
-    USER_COMMENTS VARCHAR2(255),
-    DUPLICATION_FLAG VARCHAR2(1),
-    REJECT_CODE VARCHAR2(50),
-    TRANSACTION_CURRENCY VARCHAR2(3),
-    TRANSACTION_AMOUNT NUMBER(19,2),
-    EQUIVALENT_CURRENCY VARCHAR2(3),
-    EQUIVALENT_AMOUNT NUMBER(19,2),
-    DESTINATION_COUNTRY VARCHAR2(2),
-    DESTINATION_BANK_NAME VARCHAR2(255),
-    FX_FLAG VARCHAR2(1),
-    CHARGE_OPTIONS VARCHAR2(50),
-    TRANSFER_SPEED NUMBER(19),
-    IS_NEW NUMBER(1),
-    IS_BULK_NEW NUMBER(1),
-    BOP_PURPOSE_CODE VARCHAR2(50),
-    ADDITIONAL_PURPOSE_CODE VARCHAR2(50),
-    APPROVAL_CODE VARCHAR2(50),
-    CUSTOMER_TRANSACTION_STATUS VARCHAR2(50),
-    PROCESSING_STATUS VARCHAR2(50),
-    REJECT_REASON VARCHAR2(255),
-    ORIGINAL_VALUE_DATE TIMESTAMP,
-    DMP_TRANS_REF VARCHAR2(255),
-    CHILD_TEMPLATE_ID NUMBER(19),
-    INITIATION_TIME TIMESTAMP
-);
-
-CREATE TABLE PWS_PARTIES (
-    PARTY_ID NUMBER(19) PRIMARY KEY,
-    BANK_REFERENCE_ID VARCHAR2(255),
-    PARTY_TYPE VARCHAR2(50),
-    NAME VARCHAR2(255)
-);
-
-CREATE TABLE PWS_PARTY_CONTACTS (
-    PARTY_CONTACT_ID NUMBER(19) PRIMARY KEY,
-    PARTY_ID NUMBER(19),
-    BANK_REFERENCE_ID VARCHAR2(255),
-    PARTY_TYPE VARCHAR2(50),
-    CONTACT_TYPE VARCHAR2(50),
-    CONTACT_VALUE VARCHAR2(255)
-);
-
-CREATE TABLE PWS_TAX_INSTRUCTIONS (
-    TAX_INSTRUCTION_ID NUMBER(19) PRIMARY KEY,
-    BANK_REFERENCE_ID VARCHAR2(255),
-    TAX_TYPE VARCHAR2(50),
-    TAX_AMOUNT NUMBER(19,2)
-);
-
-CREATE TABLE PWS_TRANSACTION_CHARGES (
-    CHARGE_ID NUMBER(19) PRIMARY KEY,
-    BANK_REFERENCE_ID VARCHAR2(255),
-    CHARGE_TYPE VARCHAR2(50),
-    CHARGE_AMOUNT NUMBER(19,2)
-);
-
-CREATE TABLE PWS_TRANSACTION_ADVICES (
-    ADVICE_ID NUMBER(19) PRIMARY KEY,
-    BANK_REFERENCE_ID VARCHAR2(255),
-    ADVICE_TYPE VARCHAR2(50),
-    ADVICE_DETAILS VARCHAR2(4000)
-);
-
--- Sequences
-CREATE SEQUENCE SEQ_BANK_REF_NO START WITH 1 INCREMENT BY 1;
-CREATE SEQUENCE SEQ_BULK_TXN_ID START WITH 1 INCREMENT BY 1;
-CREATE SEQUENCE SEQ_TXN_INSTRUCTION_ID START WITH 1 INCREMENT BY 1;
-CREATE SEQUENCE SEQ_PARTY_ID START WITH 1 INCREMENT BY 1;
-CREATE SEQUENCE SEQ_PARTY_CONTACT_ID START WITH 1 INCREMENT BY 1;
-CREATE SEQUENCE SEQ_TAX_INSTRUCTION_ID START WITH 1 INCREMENT BY 1;
-CREATE SEQUENCE SEQ_CHARGE_ID START WITH 1 INCREMENT BY 1;
-CREATE SEQUENCE SEQ_ADVICE_ID START WITH 1 INCREMENT BY 1;
-```
-
-## config
+## Payment Utils
 
 ```java
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.core.env.Environment;
-import com.zaxxer.hikari.HikariDataSource;
-import javax.sql.DataSource;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
-@ExtendWith(MockitoExtension.class)
-class DataSourceConfigTest {
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+
+class PaymentUtilsTest {
 
     @Mock
-    private Environment env;
+    private TransactionUtils txnUtils;
 
-    private DataSourceConfig dataSourceConfig;
+    @InjectMocks
+    private PaymentUtils paymentUtils;
 
     @BeforeEach
     void setUp() {
-        // Setup common properties
-        when(env.getProperty("spring.datasource.common.driver-class-name"))
-            .thenReturn("oracle.jdbc.OracleDriver");
-        when(env.getProperty("spring.datasource.common.hikari.maximum-pool-size", Integer.class))
-            .thenReturn(10);
-        when(env.getProperty("spring.datasource.common.hikari.minimum-idle", Integer.class))
-            .thenReturn(5);
-        when(env.getProperty("spring.datasource.common.hikari.idle-timeout", Long.class))
-            .thenReturn(300000L);
-        when(env.getProperty("spring.datasource.common.hikari.connection-timeout", Long.class))
-            .thenReturn(20000L);
-        when(env.getProperty("spring.datasource.common.hikari.max-lifetime", Long.class))
-            .thenReturn(1200000L);
-
-        dataSourceConfig = new DataSourceConfig(env);
+        MockitoAnnotations.openMocks(this);
     }
 
     @Test
-    void defaultDataSource_StandardConfiguration() {
+    void testCreatePwsSaveRecord_WithValidIdAndDmpTxnRef() {
         // Arrange
-        setupDataSourceProperties("spring.datasource.primary", false);
+        long id = 123L;
+        String dmpTxnRef = "testRef";
+        String decryptedId = "decrypted123";
+        when(txnUtils.getDecrypted(String.valueOf(id))).thenReturn(decryptedId);
 
         // Act
-        DataSource dataSource = dataSourceConfig.defaultDataSource();
+        PwsSaveRecord record = paymentUtils.createPwsSaveRecord(id, dmpTxnRef);
 
         // Assert
-        verifyDataSourceProperties((HikariDataSource) dataSource, "spring.datasource.primary");
-        verifyCommonProperties((HikariDataSource) dataSource);
+        assertEquals(decryptedId, record.getTxnId());
+        assertEquals(dmpTxnRef, record.getDmpTxnRef());
+        verify(txnUtils).getDecrypted(String.valueOf(id));
     }
 
     @Test
-    void paymentSaveDataSource_StandardConfiguration() {
+    void testCreatePwsSaveRecord_WithZeroId() {
         // Arrange
-        setupDataSourceProperties("spring.datasource.payment-insertion", false);
+        long id = 0;
+        String dmpTxnRef = "testRef";
 
         // Act
-        DataSource dataSource = dataSourceConfig.paymentSaveDataSource();
+        PwsSaveRecord record = paymentUtils.createPwsSaveRecord(id, dmpTxnRef);
 
         // Assert
-        verifyDataSourceProperties((HikariDataSource) dataSource, "spring.datasource.payment-insertion");
-        verifyCommonProperties((HikariDataSource) dataSource);
+        assertEquals("", record.getTxnId());
+        assertEquals(dmpTxnRef, record.getDmpTxnRef());
+        verifyNoInteractions(txnUtils);
     }
 
     @Test
-    void paymentLoadingDataSource_StandardConfiguration() {
+    void testCreatePwsSaveRecord_WithNullDmpTxnRef() {
         // Arrange
-        setupDataSourceProperties("spring.datasource.payment-loading", false);
+        long id = 123L;
+        String decryptedId = "decrypted123";
+        when(txnUtils.getDecrypted(String.valueOf(id))).thenReturn(decryptedId);
 
         // Act
-        DataSource dataSource = dataSourceConfig.paymentLoadingDataSource();
+        PwsSaveRecord record = paymentUtils.createPwsSaveRecord(id, null);
 
         // Assert
-        verifyDataSourceProperties((HikariDataSource) dataSource, "spring.datasource.payment-loading");
-        verifyCommonProperties((HikariDataSource) dataSource);
+        assertEquals(decryptedId, record.getTxnId());
+        assertEquals("", record.getDmpTxnRef());
     }
 
     @Test
-    void dataSource_WithOracleVaultConfiguration() {
+    void testUpdatePaymentSaved() {
         // Arrange
-        String prefix = "spring.datasource.primary";
-        setupDataSourceProperties(prefix, true);
-        setupVaultProperties();
+        Pain001InboundProcessingResult result = new Pain001InboundProcessingResult();
+        PwsSaveRecord record = new PwsSaveRecord("txn123", "ref123");
 
         // Act
-        DataSource dataSource = dataSourceConfig.defaultDataSource();
-        HikariDataSource hikariDataSource = (HikariDataSource) dataSource;
+        paymentUtils.updatePaymentSaved(result, record);
 
         // Assert
-        verifyDataSourceProperties(hikariDataSource, prefix);
-        verifyCommonProperties(hikariDataSource);
-        verifyVaultProperties(hikariDataSource);
+        assertTrue(result.getPaymentSaved().contains(record));
     }
 
-    private void setupDataSourceProperties(String prefix, boolean vaultEnabled) {
-        when(env.getProperty(prefix + ".jdbc-url"))
-            .thenReturn("jdbc:oracle:thin:@//localhost:1521/TEST");
-        when(env.getProperty(prefix + ".username"))
-            .thenReturn("testuser");
-        when(env.getProperty(prefix + ".password"))
-            .thenReturn("testpass");
-        when(env.getProperty("spring.datasource.common.vault.enabled"))
-            .thenReturn(String.valueOf(vaultEnabled));
+    @Test
+    void testUpdatePaymentSavedError_WhenRecordNotPresent() {
+        // Arrange
+        Pain001InboundProcessingResult result = new Pain001InboundProcessingResult();
+        PwsSaveRecord record = new PwsSaveRecord("txn123", "ref123");
+
+        // Act
+        paymentUtils.updatePaymentSavedError(result, record);
+
+        // Assert
+        assertTrue(result.getPaymentSavedError().contains(record));
     }
 
-    private void setupVaultProperties() {
-        when(env.getProperty("spring.datasource.common.vault.wallet-location"))
-            .thenReturn("/wallet/path");
-        when(env.getProperty("spring.datasource.common.vault.key-store"))
-            .thenReturn("/keystore/path");
-        when(env.getProperty("spring.datasource.common.vault.key-store-password"))
-            .thenReturn("keystorepass");
-        when(env.getProperty("spring.datasource.common.vault.key-store-type"))
-            .thenReturn("JKS");
-        when(env.getProperty("spring.datasource.common.vault.trust-store"))
-            .thenReturn("/truststore/path");
-        when(env.getProperty("spring.datasource.common.vault.trust-store-password"))
-            .thenReturn("truststorepass");
-    }
+    @Test
+    void testUpdatePaymentSavedError_WhenRecordAlreadyPresent() {
+        // Arrange
+        Pain001InboundProcessingResult result = new Pain001InboundProcessingResult();
+        PwsSaveRecord record = new PwsSaveRecord("txn123", "ref123");
+        result.getPaymentSavedError().add(record);
 
-    private void verifyDataSourceProperties(HikariDataSource dataSource, String prefix) {
-        assertEquals("jdbc:oracle:thin:@//localhost:1521/TEST", dataSource.getJdbcUrl());
-        assertEquals("testuser", dataSource.getUsername());
-        assertEquals("testpass", dataSource.getPassword());
-        assertEquals("oracle.jdbc.OracleDriver", dataSource.getDriverClassName());
-    }
+        // Act
+        paymentUtils.updatePaymentSavedError(result, record);
 
-    private void verifyCommonProperties(HikariDataSource dataSource) {
-        assertEquals(10, dataSource.getMaximumPoolSize());
-        assertEquals(5, dataSource.getMinimumIdle());
-        assertEquals(300000L, dataSource.getIdleTimeout());
-        assertEquals(20000L, dataSource.getConnectionTimeout());
-        assertEquals(1200000L, dataSource.getMaxLifetime());
-    }
-
-    private void verifyVaultProperties(HikariDataSource dataSource) {
-        Properties props = dataSource.getDataSourceProperties();
-        assertNotNull(props);
-        assertEquals("/wallet/path", props.getProperty("oracle.net.wallet_location"));
-        assertEquals("/keystore/path", props.getProperty("javax.net.ssl.keyStore"));
-        assertEquals("keystorepass", props.getProperty("javax.net.ssl.keyStorePassword"));
-        assertEquals("JKS", props.getProperty("javax.net.ssl.keyStoreType"));
-        assertEquals("/truststore/path", props.getProperty("javax.net.ssl.trustStore"));
-        assertEquals("truststorepass", props.getProperty("javax.net.ssl.trustStorePassword"));
+        // Assert
+        assertEquals(1, result.getPaymentSavedError().size());
+        assertTrue(result.getPaymentSavedError().contains(record));
     }
 }
 ```
