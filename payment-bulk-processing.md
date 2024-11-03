@@ -190,7 +190,19 @@ class Pain001ServiceImplTest {
 ## save
 
 PaymentSaveServiceTest.java:191:54
-java: no suitable method found for thenReturn(long)
+java: no suitable method found for thenReturn(lorg.mockito.exceptions.misusing.UnnecessaryStubbingException: 
+Unnecessary stubbings detected.
+Clean & maintainable test code requires zero unnecessary code.
+Following stubbings are unnecessary (click to navigate to relevant line of code):
+  1. -> at com.uob.gwb.pbp.service.impl.PaymentSaveServiceTest.setUp(PaymentSaveServiceTest.java:87)
+  2. -> at com.uob.gwb.pbp.service.impl.PaymentSaveServiceTest.setUp(PaymentSaveServiceTest.java:88)
+  3. -> at com.uob.gwb.pbp.service.impl.PaymentSaveServiceTest.setUp(PaymentSaveServiceTest.java:89)
+  4. -> at com.uob.gwb.pbp.service.impl.PaymentSaveServiceTest.setUp(PaymentSaveServiceTest.java:92)
+  5. -> at com.uob.gwb.pbp.service.impl.PaymentSaveServiceTest.setUp(PaymentSaveServiceTest.java:93)
+  6. -> at com.uob.gwb.pbp.service.impl.PaymentSaveServiceTest.setUp(PaymentSaveServiceTest.java:94)
+
+
+
 
 ```java
 @ExtendWith(MockitoExtension.class)
