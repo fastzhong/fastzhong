@@ -319,5 +319,48 @@ class PaymentUtilsTest {
 ```
 
 ```java
+public class CommonUtils {
+
+     public static final DateFormat ISO_DATE_FORMAT = new SimpleDateFormat("yyyy-MM-dd");
+
+     public static Date stringToDate(String s)  throws ParseException {
+         if (ObjectUtils.isNotEmpty(s)) {
+             return new Date(ISO_DATE_FORMAT.parse(s).getTime());
+         }
+         // throw new ParseException("Can not convert null string to Date class", -1);
+         return null;
+     }
+ }
+@ExtendWith(MockitoExtension.class)
+public class CommonUtilsTest {
+
+    @Test
+    void testStringToDate_WithValidDate() throws Exception {
+        String dateString = "2024-11-01";
+        Date result = CommonUtils.stringToDate(dateString);
+        assertEquals(ISO_DATE_FORMAT.parse(dateString), result);
+    }
+
+    @Test
+    void testStringToDate_WithInvalidDate() throws ParseException {
+        String invalidDateString = "20-24-11";
+        System.out.println(CommonUtils.stringToDate(invalidDateString));
+        assertThrows(
+                ParseException.class,
+                () -> CommonUtils.stringToDate(invalidDateString)
+        );
+
+    }
+
+    @Test
+    void testStringToDate_WithNullDate() throws ParseException {
+        assertNull(CommonUtils.stringToDate(null));
+
+    }
+
+}
+```
+
+```java
 
 ```
