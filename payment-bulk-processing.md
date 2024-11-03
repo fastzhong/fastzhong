@@ -189,6 +189,9 @@ class Pain001ServiceImplTest {
 
 ## save
 
+PaymentSaveServiceTest.java:191:54
+java: no suitable method found for thenReturn(long)
+
 ```java
 @ExtendWith(MockitoExtension.class)
 class PaymentSaveImplTest {
