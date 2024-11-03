@@ -375,3 +375,154 @@ CREATE SEQUENCE SEQ_TAX_INSTRUCTION_ID START WITH 1 INCREMENT BY 1;
 CREATE SEQUENCE SEQ_CHARGE_ID START WITH 1 INCREMENT BY 1;
 CREATE SEQUENCE SEQ_ADVICE_ID START WITH 1 INCREMENT BY 1;
 ```
+
+## config
+
+```java
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.core.env.Environment;
+import com.zaxxer.hikari.HikariDataSource;
+import javax.sql.DataSource;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+class DataSourceConfigTest {
+
+    @Mock
+    private Environment env;
+
+    private DataSourceConfig dataSourceConfig;
+
+    @BeforeEach
+    void setUp() {
+        // Setup common properties
+        when(env.getProperty("spring.datasource.common.driver-class-name"))
+            .thenReturn("oracle.jdbc.OracleDriver");
+        when(env.getProperty("spring.datasource.common.hikari.maximum-pool-size", Integer.class))
+            .thenReturn(10);
+        when(env.getProperty("spring.datasource.common.hikari.minimum-idle", Integer.class))
+            .thenReturn(5);
+        when(env.getProperty("spring.datasource.common.hikari.idle-timeout", Long.class))
+            .thenReturn(300000L);
+        when(env.getProperty("spring.datasource.common.hikari.connection-timeout", Long.class))
+            .thenReturn(20000L);
+        when(env.getProperty("spring.datasource.common.hikari.max-lifetime", Long.class))
+            .thenReturn(1200000L);
+
+        dataSourceConfig = new DataSourceConfig(env);
+    }
+
+    @Test
+    void defaultDataSource_StandardConfiguration() {
+        // Arrange
+        setupDataSourceProperties("spring.datasource.primary", false);
+
+        // Act
+        DataSource dataSource = dataSourceConfig.defaultDataSource();
+
+        // Assert
+        verifyDataSourceProperties((HikariDataSource) dataSource, "spring.datasource.primary");
+        verifyCommonProperties((HikariDataSource) dataSource);
+    }
+
+    @Test
+    void paymentSaveDataSource_StandardConfiguration() {
+        // Arrange
+        setupDataSourceProperties("spring.datasource.payment-insertion", false);
+
+        // Act
+        DataSource dataSource = dataSourceConfig.paymentSaveDataSource();
+
+        // Assert
+        verifyDataSourceProperties((HikariDataSource) dataSource, "spring.datasource.payment-insertion");
+        verifyCommonProperties((HikariDataSource) dataSource);
+    }
+
+    @Test
+    void paymentLoadingDataSource_StandardConfiguration() {
+        // Arrange
+        setupDataSourceProperties("spring.datasource.payment-loading", false);
+
+        // Act
+        DataSource dataSource = dataSourceConfig.paymentLoadingDataSource();
+
+        // Assert
+        verifyDataSourceProperties((HikariDataSource) dataSource, "spring.datasource.payment-loading");
+        verifyCommonProperties((HikariDataSource) dataSource);
+    }
+
+    @Test
+    void dataSource_WithOracleVaultConfiguration() {
+        // Arrange
+        String prefix = "spring.datasource.primary";
+        setupDataSourceProperties(prefix, true);
+        setupVaultProperties();
+
+        // Act
+        DataSource dataSource = dataSourceConfig.defaultDataSource();
+        HikariDataSource hikariDataSource = (HikariDataSource) dataSource;
+
+        // Assert
+        verifyDataSourceProperties(hikariDataSource, prefix);
+        verifyCommonProperties(hikariDataSource);
+        verifyVaultProperties(hikariDataSource);
+    }
+
+    private void setupDataSourceProperties(String prefix, boolean vaultEnabled) {
+        when(env.getProperty(prefix + ".jdbc-url"))
+            .thenReturn("jdbc:oracle:thin:@//localhost:1521/TEST");
+        when(env.getProperty(prefix + ".username"))
+            .thenReturn("testuser");
+        when(env.getProperty(prefix + ".password"))
+            .thenReturn("testpass");
+        when(env.getProperty("spring.datasource.common.vault.enabled"))
+            .thenReturn(String.valueOf(vaultEnabled));
+    }
+
+    private void setupVaultProperties() {
+        when(env.getProperty("spring.datasource.common.vault.wallet-location"))
+            .thenReturn("/wallet/path");
+        when(env.getProperty("spring.datasource.common.vault.key-store"))
+            .thenReturn("/keystore/path");
+        when(env.getProperty("spring.datasource.common.vault.key-store-password"))
+            .thenReturn("keystorepass");
+        when(env.getProperty("spring.datasource.common.vault.key-store-type"))
+            .thenReturn("JKS");
+        when(env.getProperty("spring.datasource.common.vault.trust-store"))
+            .thenReturn("/truststore/path");
+        when(env.getProperty("spring.datasource.common.vault.trust-store-password"))
+            .thenReturn("truststorepass");
+    }
+
+    private void verifyDataSourceProperties(HikariDataSource dataSource, String prefix) {
+        assertEquals("jdbc:oracle:thin:@//localhost:1521/TEST", dataSource.getJdbcUrl());
+        assertEquals("testuser", dataSource.getUsername());
+        assertEquals("testpass", dataSource.getPassword());
+        assertEquals("oracle.jdbc.OracleDriver", dataSource.getDriverClassName());
+    }
+
+    private void verifyCommonProperties(HikariDataSource dataSource) {
+        assertEquals(10, dataSource.getMaximumPoolSize());
+        assertEquals(5, dataSource.getMinimumIdle());
+        assertEquals(300000L, dataSource.getIdleTimeout());
+        assertEquals(20000L, dataSource.getConnectionTimeout());
+        assertEquals(1200000L, dataSource.getMaxLifetime());
+    }
+
+    private void verifyVaultProperties(HikariDataSource dataSource) {
+        Properties props = dataSource.getDataSourceProperties();
+        assertNotNull(props);
+        assertEquals("/wallet/path", props.getProperty("oracle.net.wallet_location"));
+        assertEquals("/keystore/path", props.getProperty("javax.net.ssl.keyStore"));
+        assertEquals("keystorepass", props.getProperty("javax.net.ssl.keyStorePassword"));
+        assertEquals("JKS", props.getProperty("javax.net.ssl.keyStoreType"));
+        assertEquals("/truststore/path", props.getProperty("javax.net.ssl.trustStore"));
+        assertEquals("truststorepass", props.getProperty("javax.net.ssl.trustStorePassword"));
+    }
+}
+```
