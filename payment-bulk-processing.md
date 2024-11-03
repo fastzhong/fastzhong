@@ -187,281 +187,6 @@ class Pain001ServiceImplTest {
 }
 ```
 
-## debulk
-
-```java
-@Service
-public class PaymentDebulkService {
-
-    private static final BigDecimal BAHTNET_THRESHOLD = new BigDecimal("2000000.00");
-    private static final String SMART_RESOURCE_ID = "smart";
-    private static final String BAHTNET_RESOURCE_ID = "bahtnet";
-    private static final String SMART_SAME_DAY_RESOURCE_ID = "smart-same-day";
-
-    public List<PaymentInformation> debulkPaymentInformations(List<PaymentInformation> paymentInfos) {
-        List<PaymentInformation> debulkedPayments = new ArrayList<>();
-        
-        for (PaymentInformation paymentInfo : paymentInfos) {
-            // Skip if payment info is invalid
-            if (!paymentInfo.isValid() || !paymentInfo.isAllChildTxnsValid()) {
-                debulkedPayments.add(paymentInfo);
-                continue;
-            }
-
-            PwsTransactions pwsTransaction = paymentInfo.getPwsTransactions();
-            
-            // Skip if not SMART payment
-            if (!SMART_RESOURCE_ID.equalsIgnoreCase(pwsTransaction.getResourceId())) {
-                debulkedPayments.add(paymentInfo);
-                continue;
-            }
-
-            // Process each child transaction
-            List<CreditTransferTransaction> originalChildTxns = paymentInfo.getCreditTransferTransactionList();
-            if (originalChildTxns != null) {
-                Map<String, List<CreditTransferTransaction>> groupedTxns = new HashMap<>();
-                
-                // Group transactions based on amount threshold
-                for (CreditTransferTransaction childTxn : originalChildTxns) {
-                    BigDecimal txnAmount = pwsTransaction.getTransactionTotalAmount();
-                    String targetResourceId = determineResourceId(txnAmount);
-                    groupedTxns.computeIfAbsent(targetResourceId, k -> new ArrayList<>()).add(childTxn);
-                }
-
-                // Create new payment information for each group
-                for (Map.Entry<String, List<CreditTransferTransaction>> entry : groupedTxns.entrySet()) {
-                    String resourceId = entry.getKey();
-                    List<CreditTransferTransaction> groupTxns = entry.getValue();
-                    
-                    PaymentInformation newPaymentInfo = createNewPaymentInfo(paymentInfo, resourceId, groupTxns);
-                    debulkedPayments.add(newPaymentInfo);
-                }
-            }
-        }
-        
-        return debulkedPayments;
-    }
-
-    private String determineResourceId(BigDecimal amount) {
-        if (amount.compareTo(BAHTNET_THRESHOLD) >= 0) {
-            return BAHTNET_RESOURCE_ID;
-        }
-        return SMART_SAME_DAY_RESOURCE_ID;
-    }
-
-    private PaymentInformation createNewPaymentInfo(
-            PaymentInformation originalPayment,
-            String resourceId,
-            List<CreditTransferTransaction> transactions) {
-        
-        PaymentInformation newPaymentInfo = new PaymentInformation();
-        
-        // Copy bulk transaction details
-        newPaymentInfo.setPwsBulkTransactions(originalPayment.getPwsBulkTransactions());
-        
-        // Create new PwsTransactions with updated details
-        PwsTransactions originalPwsTxn = originalPayment.getPwsTransactions();
-        PwsTransactions newPwsTxn = new PwsTransactions();
-        
-        // Copy all properties from original transaction
-        BeanUtils.copyProperties(originalPwsTxn, newPwsTxn);
-        
-        // Update specific fields
-        newPwsTxn.setResourceId(resourceId);
-        newPwsTxn.setTotalChild(transactions.size());
-        newPwsTxn.setTotalAmount(calculateTotalAmount(transactions));
-        newPwsTxn.setTransactionTotalAmount(calculateTotalAmount(transactions));
-        
-        // Set the new transactions
-        newPaymentInfo.setPwsTransactions(newPwsTxn);
-        newPaymentInfo.setCreditTransferTransactionList(transactions);
-        
-        // Copy validation status
-        newPaymentInfo.setDmpBulkStatus(originalPayment.getDmpBulkStatus());
-        
-        return newPaymentInfo;
-    }
-
-    private BigDecimal calculateTotalAmount(List<CreditTransferTransaction> transactions) {
-        return transactions.stream()
-                .map(txn -> txn.getPwsBulkTransactionInstructions().getAmount())
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-    }
-}
-```
-
-```java
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.junit.jupiter.MockitoExtension;
-import java.math.BigDecimal;
-import java.sql.Timestamp;
-import java.time.Instant;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
-
-import static org.junit.jupiter.api.Assertions.*;
-
-@ExtendWith(MockitoExtension.class)
-class PaymentDebulkServiceTest {
-
-    @InjectMocks
-    private PaymentDebulkService paymentDebulkService;
-
-    private static final BigDecimal AMOUNT_3M = new BigDecimal("3000000.00");
-    private static final BigDecimal AMOUNT_1M = new BigDecimal("1000000.00");
-    private static final String SMART = "smart";
-    private static final String BAHTNET = "bahtnet";
-    private static final String SMART_SAME_DAY = "smart-same-day";
-
-    @Test
-    void whenNoPayments_thenReturnEmptyList() {
-        List<PaymentInformation> result = paymentDebulkService.debulkPaymentInformations(Collections.emptyList());
-        assertTrue(result.isEmpty());
-    }
-
-    @Test
-    void whenPaymentIsInvalid_thenReturnOriginalPayment() {
-        PaymentInformation invalidPayment = createPaymentInfo(SMART, AMOUNT_1M);
-        invalidPayment.addValidationError("ERR001", "Invalid payment");
-
-        List<PaymentInformation> result = paymentDebulkService.debulkPaymentInformations(
-            Collections.singletonList(invalidPayment)
-        );
-
-        assertEquals(1, result.size());
-        assertFalse(result.get(0).isValid());
-        assertEquals("ERR001", result.get(0).getValidationResults().get(0).getErrorCode());
-    }
-
-    @Test
-    void whenNonSmartPayment_thenReturnOriginalPayment() {
-        PaymentInformation nonSmartPayment = createPaymentInfo("other", AMOUNT_1M);
-
-        List<PaymentInformation> result = paymentDebulkService.debulkPaymentInformations(
-            Collections.singletonList(nonSmartPayment)
-        );
-
-        assertEquals(1, result.size());
-        assertEquals("other", result.get(0).getPwsTransactions().getResourceId());
-    }
-
-    @Test
-    void whenAllTransactionsUnder2M_thenAllSmartSameDay() {
-        PaymentInformation payment = createPaymentInfo(SMART, AMOUNT_1M);
-        addChildTransactions(payment, AMOUNT_1M, AMOUNT_1M);
-
-        List<PaymentInformation> result = paymentDebulkService.debulkPaymentInformations(
-            Collections.singletonList(payment)
-        );
-
-        assertEquals(1, result.size());
-        assertEquals(SMART_SAME_DAY, result.get(0).getPwsTransactions().getResourceId());
-        assertEquals(2, result.get(0).getCreditTransferTransactionList().size());
-    }
-
-    @Test
-    void whenAllTransactionsOver2M_thenAllBahtnet() {
-        PaymentInformation payment = createPaymentInfo(SMART, AMOUNT_3M);
-        addChildTransactions(payment, AMOUNT_3M, AMOUNT_3M);
-
-        List<PaymentInformation> result = paymentDebulkService.debulkPaymentInformations(
-            Collections.singletonList(payment)
-        );
-
-        assertEquals(1, result.size());
-        assertEquals(BAHTNET, result.get(0).getPwsTransactions().getResourceId());
-        assertEquals(2, result.get(0).getCreditTransferTransactionList().size());
-    }
-
-    @Test
-    void whenMixedTransactions_thenSplitIntoTwoGroups() {
-        PaymentInformation payment = createPaymentInfo(SMART, AMOUNT_3M.add(AMOUNT_1M));
-        addChildTransactions(payment, AMOUNT_3M, AMOUNT_1M);
-
-        List<PaymentInformation> result = paymentDebulkService.debulkPaymentInformations(
-            Collections.singletonList(payment)
-        );
-
-        assertEquals(2, result.size());
-        
-        PaymentInformation bahtnetPayment = result.stream()
-            .filter(p -> BAHTNET.equals(p.getPwsTransactions().getResourceId()))
-            .findFirst()
-            .orElseThrow();
-        
-        PaymentInformation smartPayment = result.stream()
-            .filter(p -> SMART_SAME_DAY.equals(p.getPwsTransactions().getResourceId()))
-            .findFirst()
-            .orElseThrow();
-
-        assertEquals(1, bahtnetPayment.getCreditTransferTransactionList().size());
-        assertEquals(1, smartPayment.getCreditTransferTransactionList().size());
-        assertEquals(AMOUNT_3M, bahtnetPayment.getPwsTransactions().getTransactionTotalAmount());
-        assertEquals(AMOUNT_1M, smartPayment.getPwsTransactions().getTransactionTotalAmount());
-    }
-
-    @Test
-    void verifyTotalAmountCalculation() {
-        PaymentInformation payment = createPaymentInfo(SMART, AMOUNT_3M.add(AMOUNT_1M));
-        addChildTransactions(payment, AMOUNT_3M, AMOUNT_1M);
-
-        List<PaymentInformation> result = paymentDebulkService.debulkPaymentInformations(
-            Collections.singletonList(payment)
-        );
-
-        BigDecimal totalAmount = result.stream()
-            .map(p -> p.getPwsTransactions().getTransactionTotalAmount())
-            .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-        assertEquals(AMOUNT_3M.add(AMOUNT_1M), totalAmount);
-    }
-
-    // Helper methods to create test data
-    private PaymentInformation createPaymentInfo(String resourceId, BigDecimal amount) {
-        PaymentInformation paymentInfo = new PaymentInformation();
-        
-        PwsTransactions pwsTransactions = new PwsTransactions();
-        pwsTransactions.setTransactionId(1L);
-        pwsTransactions.setResourceId(resourceId);
-        pwsTransactions.setTransactionTotalAmount(amount);
-        pwsTransactions.setInitiationTime(Timestamp.from(Instant.now()));
-        pwsTransactions.setCompanyId(1L);
-        
-        paymentInfo.setPwsTransactions(pwsTransactions);
-        paymentInfo.setPwsBulkTransactions(new PwsBulkTransactions());
-        
-        return paymentInfo;
-    }
-
-    private void addChildTransactions(PaymentInformation paymentInfo, BigDecimal... amounts) {
-        List<CreditTransferTransaction> childTransactions = Arrays.stream(amounts)
-            .map(this::createChildTransaction)
-            .toList();
-        
-        paymentInfo.setCreditTransferTransactionList(childTransactions);
-        paymentInfo.getPwsTransactions().setTotalChild(childTransactions.size());
-    }
-
-    private CreditTransferTransaction createChildTransaction(BigDecimal amount) {
-        CreditTransferTransaction transaction = new CreditTransferTransaction();
-        
-        PwsBulkTransactionInstructions instructions = new PwsBulkTransactionInstructions();
-        instructions.setAmount(amount);
-        transaction.setPwsBulkTransactionInstructions(instructions);
-        
-        PwsPartyBanks partyBank = new PwsPartyBanks();
-        partyBank.setBankId(1L);
-        transaction.setPartyBank(partyBank);
-        
-        return transaction;
-    }
-}
-```
-
 ## save
 
 ```java
@@ -470,24 +195,27 @@ class PaymentSaveImplTest {
 
     @Mock
     private AppConfig config;
-    
+
     @Mock
     private RetryTemplate retryTemplate;
-    
+
     @Mock
     private SqlSessionTemplate paymentSaveSqlSessionTemplate;
-    
-    @Mock
-    private PaymentUtils paymentUtils;
-    
-    @Mock
-    private PwsSaveDao pwsSaveDao;
-    
+
     @Mock
     private SqlSessionFactory sqlSessionFactory;
-    
+
     @Mock
     private SqlSession sqlSession;
+
+    @Mock
+    private PwsSaveDao pwsSaveDao;
+
+    @Mock
+    private PaymentUtils paymentUtils;
+
+    @Mock
+    private TransactionUtils transactionUtils;
 
     @InjectMocks
     private PaymentSaveImpl paymentSave;
@@ -496,20 +224,28 @@ class PaymentSaveImplTest {
     private ExecutionContext stepContext;
     private ExecutionContext jobContext;
     private Pain001InboundProcessingResult result;
+    private PwsSaveRecord mockRecord;
 
     @BeforeEach
     void setUp() {
-        // Setup basic test data
         paymentInfo = new PaymentInformation();
         stepContext = new ExecutionContext();
         jobContext = new ExecutionContext();
         result = new Pain001InboundProcessingResult();
+        result.setPaymentSaved(new ArrayList<>());
+        result.setPaymentSavedError(new ArrayList<>());
         jobContext.put("result", result);
+        mockRecord = new PwsSaveRecord("encrypted_1", "BATCH001");
 
         // Setup SQL Session behavior
         when(paymentSaveSqlSessionTemplate.getSqlSessionFactory()).thenReturn(sqlSessionFactory);
         when(sqlSessionFactory.openSession(ExecutorType.BATCH)).thenReturn(sqlSession);
         when(sqlSession.getMapper(PwsSaveDao.class)).thenReturn(pwsSaveDao);
+        
+        // Setup PaymentUtils behavior
+        when(paymentUtils.createPwsSaveRecord(anyLong(), anyString())).thenReturn(mockRecord);
+        doNothing().when(paymentUtils).updatePaymentSaved(any(), any());
+        doNothing().when(paymentUtils).updatePaymentSavedError(any(), any());
     }
 
     @Test
@@ -517,7 +253,7 @@ class PaymentSaveImplTest {
         // Arrange
         int batchSize = 2;
         when(config.getBatchInsertSize()).thenReturn(batchSize);
-        
+
         setupValidPaymentInfo();
         setupSuccessfulBulkSave();
         setupSuccessfulChildTransactionSave();
@@ -526,10 +262,13 @@ class PaymentSaveImplTest {
         paymentSave.savePaymentInformation(paymentInfo, stepContext, jobContext);
 
         // Assert
-        verify(paymentUtils).createPwsSaveRecord(anyLong(), anyString());
-        verify(paymentUtils).updatePaymentSaved(eq(result), any());
-        verify(pwsSaveDao).insertPwsTransactions(any());
-        verify(pwsSaveDao).insertPwsBulkTransactions(any());
+        verify(paymentUtils).createPwsSaveRecord(
+            eq(paymentInfo.getPwsTransactions().getTransactionId()),
+            eq(paymentInfo.getPwsBulkTransactions().getDmpBatchNumber())
+        );
+        verify(paymentUtils).updatePaymentSaved(eq(result), eq(mockRecord));
+        verify(pwsSaveDao).insertPwsTransactions(any(PwsTransactions.class));
+        verify(pwsSaveDao).insertPwsBulkTransactions(any(PwsBulkTransactions.class));
         verifyBatchInsertsCalled();
     }
 
@@ -538,7 +277,7 @@ class PaymentSaveImplTest {
         // Arrange
         int batchSize = 2;
         when(config.getBatchInsertSize()).thenReturn(batchSize);
-        
+
         setupValidPaymentInfo();
         setupSuccessfulBulkSave();
         setupFailedChildTransactionSave();
@@ -547,8 +286,11 @@ class PaymentSaveImplTest {
         paymentSave.savePaymentInformation(paymentInfo, stepContext, jobContext);
 
         // Assert
-        verify(paymentUtils).createPwsSaveRecord(anyLong(), anyString());
-        verify(paymentUtils).updatePaymentSavedError(eq(result), any());
+        verify(paymentUtils).createPwsSaveRecord(
+            eq(paymentInfo.getPwsTransactions().getTransactionId()),
+            eq(paymentInfo.getPwsBulkTransactions().getDmpBatchNumber())
+        );
+        verify(paymentUtils).updatePaymentSavedError(eq(result), eq(mockRecord));
         verify(sqlSession, times(1)).rollback();
     }
 
@@ -564,21 +306,21 @@ class PaymentSaveImplTest {
         // Assert
         assertEquals(1L, txnId);
         verify(pwsSaveDao).getBankRefSequenceNum();
-        verify(pwsSaveDao).insertPwsTransactions(any());
-        verify(pwsSaveDao).insertPwsBulkTransactions(any());
+        verify(pwsSaveDao).insertPwsTransactions(any(PwsTransactions.class));
+        verify(pwsSaveDao).insertPwsBulkTransactions(any(PwsBulkTransactions.class));
     }
 
     private void setupValidPaymentInfo() {
         PwsTransactions pwsTransactions = new PwsTransactions();
         pwsTransactions.setTransactionId(1L);
-        
+
         PwsBulkTransactions pwsBulkTransactions = new PwsBulkTransactions();
         pwsBulkTransactions.setDmpBatchNumber("BATCH001");
-        
+
         List<CreditTransferTransaction> transactions = new ArrayList<>();
         transactions.add(createValidTransaction());
         transactions.add(createValidTransaction());
-        
+
         paymentInfo.setPwsTransactions(pwsTransactions);
         paymentInfo.setPwsBulkTransactions(pwsBulkTransactions);
         paymentInfo.setCreditTransferTransactionList(transactions);
@@ -587,14 +329,14 @@ class PaymentSaveImplTest {
     private CreditTransferTransaction createValidTransaction() {
         CreditTransferTransaction transaction = new CreditTransferTransaction();
         transaction.setDmpTransactionStatus(DmpTransactionStatus.APPROVED);
-        
+
         PwsBulkTransactionInstructions instructions = new PwsBulkTransactionInstructions();
         Party party = new Party();
         party.setPwsParties(new PwsParties());
-        
+
         transaction.setPwsBulkTransactionInstructions(instructions);
         transaction.setParty(party);
-        
+
         return transaction;
     }
 
