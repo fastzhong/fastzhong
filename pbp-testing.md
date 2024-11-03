@@ -1,1 +1,223 @@
+# config
 
+```yml
+spring:
+  profiles:
+    active: test
+  
+  datasource:
+    default:
+      driver-class-name: org.h2.Driver
+      url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false
+      username: sa
+      password: 
+
+    payment-save:
+      driver-class-name: org.h2.Driver
+      url: jdbc:h2:mem:paymentdb;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false
+      username: sa
+      password: 
+
+bulk-routes:
+  - route-name: CUSTOMER_SUBMITTED_TRANSFORMED
+    processing-type: INBOUND
+    source-type: FILE
+    enabled: true
+    steps:
+      - pain001-validation
+      - payment-debulk
+      - payment-validation
+      - payment-enrichment
+      - payment-save
+    file-source:
+      directoryName: target/test-inbound
+      antInclude: "*_Auth.json"
+      antExclude:
+      charset: utf-8
+      doneFileName: "${file:name:noext}.xml.done"
+      delay: 1000
+      sortBy: file:modified
+      maxMessagesPerPoll: 1
+      noop: false
+      recursive: false
+      move: target/test-backup
+      moveFailed: target/test-error
+      readLock: rename
+      readLockTimeout: 10000
+      readLockInterval: 1000
+      readLockLoggingLevel: WARN
+```
+
+```java
+@TestConfiguration
+@Profile("test")
+public class TestConfig {
+
+    @Bean
+    public DataSource defaultDataSource() {
+        return new EmbeddedDatabaseBuilder()
+            .setType(EmbeddedDatabaseType.H2)
+            .addScript("classpath:schema-batch.sql")
+            .addScript("classpath:schema-payment.sql")
+            .build();
+    }
+
+    @Bean
+    public DataSource paymentSaveDataSource() {
+        return new EmbeddedDatabaseBuilder()
+            .setType(EmbeddedDatabaseType.H2)
+            .addScript("classpath:schema-payment.sql")
+            .build();
+    }
+
+    @Bean
+    public JdbcTemplate jdbcTemplate(DataSource paymentSaveDataSource) {
+        return new JdbcTemplate(paymentSaveDataSource);
+    }
+}
+```
+
+# SQL
+
+## spring batch 
+
+```sql
+-- Spring Batch tables
+CREATE TABLE BATCH_JOB_INSTANCE (
+    JOB_INSTANCE_ID BIGINT PRIMARY KEY,
+    VERSION BIGINT,
+    JOB_NAME VARCHAR(100) NOT NULL,
+    JOB_KEY VARCHAR(32) NOT NULL
+);
+
+CREATE TABLE BATCH_JOB_EXECUTION (
+    JOB_EXECUTION_ID BIGINT PRIMARY KEY,
+    VERSION BIGINT,
+    JOB_INSTANCE_ID BIGINT NOT NULL,
+    CREATE_TIME TIMESTAMP NOT NULL,
+    START_TIME TIMESTAMP DEFAULT NULL,
+    END_TIME TIMESTAMP DEFAULT NULL,
+    STATUS VARCHAR(10),
+    EXIT_CODE VARCHAR(2500),
+    EXIT_MESSAGE VARCHAR(2500),
+    LAST_UPDATED TIMESTAMP
+);
+```
+
+## pws
+
+```sql
+-- PWS tables
+CREATE TABLE PWS_BULK_TRANSACTIONS (
+    BK_TRANSACTION_ID NUMBER(19) PRIMARY KEY,
+    TRANSACTION_ID NUMBER(19),
+    FILE_UPLOAD_ID NUMBER(19),
+    RECIPIENTS_REFERENCE VARCHAR2(255),
+    RECIPIENTS_DESCRIPTION VARCHAR2(255),
+    FATE_FILE_NAME VARCHAR2(255),
+    FATE_FILE_PATH VARCHAR2(255),
+    COMBINE_DEBIT VARCHAR2(255),
+    STATUS VARCHAR2(50),
+    CHANGE_TOKEN NUMBER(19),
+    ERROR_DETAIL VARCHAR2(4000),
+    FINAL_FATE_UPDATED_DATE TIMESTAMP,
+    ACK_FILE_PATH VARCHAR2(255),
+    ACK_UPDATED_DATE TIMESTAMP,
+    TRANSFER_DATE TIMESTAMP,
+    USER_COMMENTS VARCHAR2(255),
+    DMP_BATCH_NUMBER VARCHAR2(255),
+    REJECT_CODE VARCHAR2(50),
+    BATCH_BOOKING VARCHAR2(50),
+    CHARGE_OPTIONS VARCHAR2(50),
+    PAYROLL_OPTIONS VARCHAR2(50),
+    BANK_REFERENCE_ID VARCHAR2(255)
+);
+
+CREATE TABLE PWS_BULK_TRANSACTION_INSTRUCTIONS (
+    TRANSACTION_INSTRUCTIONS_ID NUMBER(19) PRIMARY KEY,
+    BANK_REFERENCE_ID VARCHAR2(255),
+    CHILD_BANK_REFERENCE_ID VARCHAR2(255),
+    TRANSACTION_ID NUMBER(19),
+    CHILD_TRANSACTION_INSTRUCTIONS_ID NUMBER(19),
+    VALUE_DATE TIMESTAMP,
+    SETTLEMENT_DATE TIMESTAMP,
+    PAYMENT_CODE_ID VARCHAR2(50),
+    PAYMENT_DETAILS VARCHAR2(4000),
+    RAIL_CODE VARCHAR2(50),
+    IS_RECURRING VARCHAR2(1),
+    IS_PRE_APPROVED VARCHAR2(1),
+    CUSTOMER_REFERENCE VARCHAR2(255),
+    REMARKS_FOR_APPROVAL VARCHAR2(255),
+    USER_COMMENTS VARCHAR2(255),
+    DUPLICATION_FLAG VARCHAR2(1),
+    REJECT_CODE VARCHAR2(50),
+    TRANSACTION_CURRENCY VARCHAR2(3),
+    TRANSACTION_AMOUNT NUMBER(19,2),
+    EQUIVALENT_CURRENCY VARCHAR2(3),
+    EQUIVALENT_AMOUNT NUMBER(19,2),
+    DESTINATION_COUNTRY VARCHAR2(2),
+    DESTINATION_BANK_NAME VARCHAR2(255),
+    FX_FLAG VARCHAR2(1),
+    CHARGE_OPTIONS VARCHAR2(50),
+    TRANSFER_SPEED NUMBER(19),
+    IS_NEW NUMBER(1),
+    IS_BULK_NEW NUMBER(1),
+    BOP_PURPOSE_CODE VARCHAR2(50),
+    ADDITIONAL_PURPOSE_CODE VARCHAR2(50),
+    APPROVAL_CODE VARCHAR2(50),
+    CUSTOMER_TRANSACTION_STATUS VARCHAR2(50),
+    PROCESSING_STATUS VARCHAR2(50),
+    REJECT_REASON VARCHAR2(255),
+    ORIGINAL_VALUE_DATE TIMESTAMP,
+    DMP_TRANS_REF VARCHAR2(255),
+    CHILD_TEMPLATE_ID NUMBER(19),
+    INITIATION_TIME TIMESTAMP
+);
+
+CREATE TABLE PWS_PARTIES (
+    PARTY_ID NUMBER(19) PRIMARY KEY,
+    BANK_REFERENCE_ID VARCHAR2(255),
+    PARTY_TYPE VARCHAR2(50),
+    NAME VARCHAR2(255)
+);
+
+CREATE TABLE PWS_PARTY_CONTACTS (
+    PARTY_CONTACT_ID NUMBER(19) PRIMARY KEY,
+    PARTY_ID NUMBER(19),
+    BANK_REFERENCE_ID VARCHAR2(255),
+    PARTY_TYPE VARCHAR2(50),
+    CONTACT_TYPE VARCHAR2(50),
+    CONTACT_VALUE VARCHAR2(255)
+);
+
+CREATE TABLE PWS_TAX_INSTRUCTIONS (
+    TAX_INSTRUCTION_ID NUMBER(19) PRIMARY KEY,
+    BANK_REFERENCE_ID VARCHAR2(255),
+    TAX_TYPE VARCHAR2(50),
+    TAX_AMOUNT NUMBER(19,2)
+);
+
+CREATE TABLE PWS_TRANSACTION_CHARGES (
+    CHARGE_ID NUMBER(19) PRIMARY KEY,
+    BANK_REFERENCE_ID VARCHAR2(255),
+    CHARGE_TYPE VARCHAR2(50),
+    CHARGE_AMOUNT NUMBER(19,2)
+);
+
+CREATE TABLE PWS_TRANSACTION_ADVICES (
+    ADVICE_ID NUMBER(19) PRIMARY KEY,
+    BANK_REFERENCE_ID VARCHAR2(255),
+    ADVICE_TYPE VARCHAR2(50),
+    ADVICE_DETAILS VARCHAR2(4000)
+);
+
+-- Sequences
+CREATE SEQUENCE SEQ_BANK_REF_NO START WITH 1 INCREMENT BY 1;
+CREATE SEQUENCE SEQ_BULK_TXN_ID START WITH 1 INCREMENT BY 1;
+CREATE SEQUENCE SEQ_TXN_INSTRUCTION_ID START WITH 1 INCREMENT BY 1;
+CREATE SEQUENCE SEQ_PARTY_ID START WITH 1 INCREMENT BY 1;
+CREATE SEQUENCE SEQ_PARTY_CONTACT_ID START WITH 1 INCREMENT BY 1;
+CREATE SEQUENCE SEQ_TAX_INSTRUCTION_ID START WITH 1 INCREMENT BY 1;
+CREATE SEQUENCE SEQ_CHARGE_ID START WITH 1 INCREMENT BY 1;
+CREATE SEQUENCE SEQ_ADVICE_ID START WITH 1 INCREMENT BY 1;
+```
