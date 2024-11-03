@@ -361,6 +361,18 @@ public class CommonUtilsTest {
 }
 ```
 
+0021-12-11
+org.opentest4j.AssertionFailedError: Expected java.text.ParseException to be thrown, but nothing was thrown.
+
+java.lang.NullPointerException: Cannot invoke "java.util.List.contains(Object)" because the return value of "com.uob.gwb.pbp.flow.Pain001InboundProcessingResult.getPaymentSavedError()" is null
+
+java.lang.NullPointerException: Cannot invoke "java.util.List.add(Object)" because the return value of "com.uob.gwb.pbp.flow.Pain001InboundProcessingResult.getPaymentSavedError()" is null
+
+org.opentest4j.AssertionFailedError: 
+Expected :decrypted123
+Actual   :null
+
+
 ```java
 @Slf4j
 @AllArgsConstructor
