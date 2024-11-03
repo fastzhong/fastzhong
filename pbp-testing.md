@@ -362,5 +362,111 @@ public class CommonUtilsTest {
 ```
 
 ```java
+@Slf4j
+@AllArgsConstructor
+@Component
+public class PaymentUtils {
 
+    private final TransactionUtils txnUtils;
+    public PwsSaveRecord createPwsSaveRecord(long id, String dmpTxnRef) {
+        String txnId = id == 0 ? "" : txnUtils.getDecrypted(String.valueOf(id));
+        dmpTxnRef = Optional.ofNullable(dmpTxnRef).orElse("");
+        return new PwsSaveRecord(txnId, dmpTxnRef);
+    }
+
+    public void updatePaymentSaved(Pain001InboundProcessingResult result, PwsSaveRecord record) {
+        result.getPaymentSaved().add(record);
+    }
+
+    public void updatePaymentSavedError(Pain001InboundProcessingResult result, PwsSaveRecord record) {
+        // for error, record only once
+        if (!result.getPaymentSavedError().contains(record))
+            result.getPaymentSavedError().add(record);
+    }
+}
+
+@ExtendWith(MockitoExtension.class)
+class PaymentUtilsTest {
+
+    @Mock
+    private TransactionUtils txnUtils;
+
+    @InjectMocks
+    private PaymentUtils paymentUtils;
+
+    @BeforeEach
+    void setUp() {
+        MockitoAnnotations.openMocks(this);
+    }
+
+    @Test
+    void testCreatePwsSaveRecord_WithValidIdAndDmpTxnRef() {
+        long id = 123L;
+        String dmpTxnRef = "dmpRef123";
+        String decryptedId = "decrypted123";
+        when(txnUtils.getDecrypted(String.valueOf(id))).thenReturn(decryptedId);
+        PwsSaveRecord record = paymentUtils.createPwsSaveRecord(id, dmpTxnRef);
+
+        // Assert
+        assertEquals(decryptedId, record.getTxnId());
+        assertEquals(dmpTxnRef, record.getDmpTxnRef());
+        verify(txnUtils).getDecrypted(String.valueOf(id));
+    }
+
+    @Test
+    void testCreatePwsSaveRecord_WithZeroId() {
+        long id = 0;
+        String dmpTxnRef = "dmpRef123";
+        PwsSaveRecord record = paymentUtils.createPwsSaveRecord(id, dmpTxnRef);
+
+        // Assert
+        assertEquals("", record.getTxnId());
+        assertEquals(dmpTxnRef, record.getDmpTxnRef());
+        verifyNoInteractions(txnUtils);
+    }
+
+    @Test
+    void testCreatePwsSaveRecord_WithNullDmpTxnRef() {
+        long id = 123L;
+        String decryptedId = "decrypted123";
+        when(txnUtils.getDecrypted(String.valueOf(id))).thenReturn(decryptedId);
+        PwsSaveRecord record = paymentUtils.createPwsSaveRecord(id, null);
+
+        // Assert
+        assertEquals(decryptedId, record.getTxnId());
+        assertEquals("", record.getDmpTxnRef());
+    }
+
+    @Test
+    void testUpdatePaymentSaved() {
+        Pain001InboundProcessingResult result = new Pain001InboundProcessingResult();
+        PwsSaveRecord record = new PwsSaveRecord("txn123", "ref123");
+        paymentUtils.updatePaymentSaved(result, record);
+
+        // Assert
+        assertTrue(result.getPaymentSaved().contains(record));
+    }
+
+    @Test
+    void testUpdatePaymentSavedError_WhenRecordNotPresent() {
+        Pain001InboundProcessingResult result = new Pain001InboundProcessingResult();
+        PwsSaveRecord record = new PwsSaveRecord("txn123", "ref123");
+        paymentUtils.updatePaymentSavedError(result, record);
+
+        // Assert
+        assertTrue(result.getPaymentSavedError().contains(record));
+    }
+
+    @Test
+    void testUpdatePaymentSavedError_WhenRecordAlreadyPresent() {
+        Pain001InboundProcessingResult result = new Pain001InboundProcessingResult();
+        PwsSaveRecord record = new PwsSaveRecord("txn123", "ref123");
+        result.getPaymentSavedError().add(record);
+        paymentUtils.updatePaymentSavedError(result, record);
+
+        // Assert
+        assertEquals(1, result.getPaymentSavedError().size());
+        assertTrue(result.getPaymentSavedError().contains(record));
+    }
+}
 ```
