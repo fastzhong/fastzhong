@@ -1,57 +1,163 @@
+```java
+@ExtendWith(MockitoExtension.class)
+class PaymentSaveImplTest {
 
-2024-11-04 03:37:47.560 ERROR [main] c.u.g.p.service.impl.PaymentSaveImpl - Failed saving batch 1: 
+    @Mock
+    private AppConfig config;
 
+    @Mock
+    private RetryTemplate retryTemplate;
 
-Wanted but not invoked:
-paymentUtils.updatePaymentSaved(
-    Pain001InboundProcessingResult(paymentReceivedTotal=0, transactionReceivedTotal=0, paymentReceivedAmount=0, paymentDebulkTotal=0, paymentValidTotal=0, paymentValidAmount=0.0, paymentInvalidTotal=0, paymentInvalidAmount=0.0, paymentValid=[], paymentInvalid=[], paymentValidationError=[], paymentEnrichmentError=[], paymentCreatedTotal=0, paymentTxnCreatedTotal=0, paymentSaved=[], paymentSavedError=[]),
-    PwsSaveRecord(txnId=123, DmpTxnRef=dmpRef123)
-);
--> at com.uob.gwb.pbp.util.PaymentUtils.updatePaymentSaved(PaymentUtils.java:35)
+    @Mock
+    private SqlSessionTemplate paymentSaveSqlSessionTemplate;
 
-However, there were exactly 2 interactions with this mock:
-paymentUtils.createPwsSaveRecord(
-    1L,
-    "BATCH001"
-);
--> at com.uob.gwb.pbp.service.impl.PaymentSaveImpl.savePaymentInformation(PaymentSaveImpl.java:63)
+    @Mock
+    private SqlSessionFactory sqlSessionFactory;
 
-paymentUtils.updatePaymentSavedError(
-    Pain001InboundProcessingResult(paymentReceivedTotal=0, transactionReceivedTotal=0, paymentReceivedAmount=0, paymentDebulkTotal=0, paymentValidTotal=0, paymentValidAmount=0.0, paymentInvalidTotal=0, paymentInvalidAmount=0.0, paymentValid=[], paymentInvalid=[], paymentValidationError=[], paymentEnrichmentError=[], paymentCreatedTotal=0, paymentTxnCreatedTotal=0, paymentSaved=[], paymentSavedError=[]),
-    PwsSaveRecord(txnId=123, DmpTxnRef=dmpRef123)
-);
--> at com.uob.gwb.pbp.service.impl.PaymentSaveImpl.savePaymentInformation(PaymentSaveImpl.java:108)
+    @Mock
+    private SqlSession sqlSession;
 
+    @Mock
+    private PwsSaveDao pwsSaveDao;
 
-Wanted but not invoked:
-paymentUtils.updatePaymentSaved(
-    Pain001InboundProcessingResult(paymentReceivedTotal=0, transactionReceivedTotal=0, paymentReceivedAmount=0, paymentDebulkTotal=0, paymentValidTotal=0, paymentValidAmount=0.0, paymentInvalidTotal=0, paymentInvalidAmount=0.0, paymentValid=[], paymentInvalid=[], paymentValidationError=[], paymentEnrichmentError=[], paymentCreatedTotal=0, paymentTxnCreatedTotal=0, paymentSaved=[], paymentSavedError=[]),
-    PwsSaveRecord(txnId=123, DmpTxnRef=dmpRef123)
-);
--> at com.uob.gwb.pbp.util.PaymentUtils.updatePaymentSaved(PaymentUtils.java:35)
+    @Mock
+    private PaymentUtils paymentUtils;
 
-However, there were exactly 2 interactions with this mock:
-paymentUtils.createPwsSaveRecord(
-    1L,
-    "BATCH001"
-);
--> at com.uob.gwb.pbp.service.impl.PaymentSaveImpl.savePaymentInformation(PaymentSaveImpl.java:63)
+    @InjectMocks
+    private PaymentSaveImpl paymentSave;
 
-paymentUtils.updatePaymentSavedError(
-    Pain001InboundProcessingResult(paymentReceivedTotal=0, transactionReceivedTotal=0, paymentReceivedAmount=0, paymentDebulkTotal=0, paymentValidTotal=0, paymentValidAmount=0.0, paymentInvalidTotal=0, paymentInvalidAmount=0.0, paymentValid=[], paymentInvalid=[], paymentValidationError=[], paymentEnrichmentError=[], paymentCreatedTotal=0, paymentTxnCreatedTotal=0, paymentSaved=[], paymentSavedError=[]),
-    PwsSaveRecord(txnId=123, DmpTxnRef=dmpRef123)
-);
--> at com.uob.gwb.pbp.service.impl.PaymentSaveImpl.savePaymentInformation(PaymentSaveImpl.java:108)
+    private PaymentInformation paymentInfo;
+    private ExecutionContext stepContext;
+    private ExecutionContext jobContext;
+    private Pain001InboundProcessingResult result;
+    private PwsSaveRecord mockRecord;
 
+    @BeforeEach
+    void setUp() {
+        // Initialize basic test data
+        paymentInfo = new PaymentInformation();
+        stepContext = new ExecutionContext();
+        jobContext = new ExecutionContext();
+        result = new Pain001InboundProcessingResult();
+        result.setPaymentSaved(new ArrayList<>());
+        result.setPaymentSavedError(new ArrayList<>());
+        jobContext.put("result", result);
 
-	at com.uob.gwb.pbp.util.PaymentUtils.updatePaymentSaved(PaymentUtils.java:35)
-	at com.uob.gwb.pbp.service.impl.PaymentSaveServiceTest.savePaymentInformation_SuccessfulSave(PaymentSaveServiceTest.java:109)
-	at java.base/java.lang.reflect.Method.invoke(Method.java:568)
-	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
-	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+        // Create mock record
+        mockRecord = new PwsSaveRecord("encrypted_1", "BATCH001");
 
+        // Setup SQL Session behavior
+        when(paymentSaveSqlSessionTemplate.getSqlSessionFactory()).thenReturn(sqlSessionFactory);
+        when(sqlSessionFactory.openSession(any(ExecutorType.class))).thenReturn(sqlSession);
+        when(sqlSession.getMapper(PwsSaveDao.class)).thenReturn(pwsSaveDao);
 
-    
+        // Setup PaymentUtils default behavior
+        when(paymentUtils.createPwsSaveRecord(anyLong(), anyString())).thenReturn(mockRecord);
+        doNothing().when(paymentUtils).updatePaymentSaved(any(), any());
+        doNothing().when(paymentUtils).updatePaymentSavedError(any(), any());
+    }
+
+    @Test
+    void savePaymentInformation_SuccessfulSave() {
+        // Arrange
+        int batchSize = 2;
+        when(config.getBatchInsertSize()).thenReturn(batchSize);
+        setupValidPaymentInfo();
+        setupSuccessfulBulkSave();
+        setupSuccessfulChildTransactionSave();
+
+        // Mock mapper method existence for batch insert
+        when(pwsSaveDao.getClass().getMethod(anyString(), any(Class.class)))
+            .thenReturn(null); // Just to avoid NoSuchMethodException
+
+        // Act
+        paymentSave.savePaymentInformation(paymentInfo, stepContext, jobContext);
+
+        // Assert
+        verify(paymentUtils).createPwsSaveRecord(anyLong(), anyString());
+        verify(paymentUtils).updatePaymentSaved(eq(result), any(PwsSaveRecord.class));
+        verify(paymentUtils, never()).updatePaymentSavedError(any(), any());
+        verify(pwsSaveDao).insertPwsTransactions(any(PwsTransactions.class));
+        verify(pwsSaveDao).insertPwsBulkTransactions(any(PwsBulkTransactions.class));
+        verify(sqlSession, never()).rollback();
+    }
+
+    @Test
+    void savePaymentInformation_FailedBatchSave() {
+        // Arrange
+        int batchSize = 2;
+        when(config.getBatchInsertSize()).thenReturn(batchSize);
+        setupValidPaymentInfo();
+        setupSuccessfulBulkSave();
+        setupFailedChildTransactionSave();
+
+        // Act
+        paymentSave.savePaymentInformation(paymentInfo, stepContext, jobContext);
+
+        // Assert
+        verify(paymentUtils).createPwsSaveRecord(anyLong(), anyString());
+        verify(paymentUtils, never()).updatePaymentSaved(any(), any());
+        verify(paymentUtils).updatePaymentSavedError(eq(result), any(PwsSaveRecord.class));
+    }
+
+    private void setupValidPaymentInfo() {
+        PwsTransactions pwsTransactions = new PwsTransactions();
+        pwsTransactions.setTransactionId(1L);
+
+        PwsBulkTransactions pwsBulkTransactions = new PwsBulkTransactions();
+        pwsBulkTransactions.setDmpBatchNumber("BATCH001");
+
+        List<CreditTransferTransaction> transactions = new ArrayList<>();
+        transactions.add(createValidTransaction());
+        transactions.add(createValidTransaction());
+
+        paymentInfo.setPwsTransactions(pwsTransactions);
+        paymentInfo.setPwsBulkTransactions(pwsBulkTransactions);
+        paymentInfo.setCreditTransferTransactionList(transactions);
+    }
+
+    private CreditTransferTransaction createValidTransaction() {
+        CreditTransferTransaction transaction = new CreditTransferTransaction();
+        transaction.setDmpTransactionStatus(DmpTransactionStatus.APPROVED);
+        
+        PwsBulkTransactionInstructions instructions = new PwsBulkTransactionInstructions();
+        Party party = new Party();
+        PwsParties pwsParties = new PwsParties();
+        party.setPwsParties(pwsParties);
+
+        transaction.setPwsBulkTransactionInstructions(instructions);
+        transaction.setParty(party);
+
+        return transaction;
+    }
+
+    private void setupSuccessfulBulkSave() {
+        when(pwsSaveDao.getBankRefSequenceNum()).thenReturn(1);
+        when(pwsSaveDao.insertPwsTransactions(any())).thenReturn(1L);
+        when(pwsSaveDao.insertPwsBulkTransactions(any())).thenReturn(1L);
+    }
+
+    private void setupSuccessfulChildTransactionSave() {
+        doAnswer(invocation -> {
+            RetryCallback<Object, RuntimeException> callback = invocation.getArgument(0);
+            return callback.doWithRetry(null);
+        }).when(retryTemplate).execute(any(RetryCallback.class), any(RecoveryCallback.class));
+
+        // Mock successful batch insert
+        doNothing().when(sqlSession).commit();
+        doNothing().when(sqlSession).close();
+    }
+
+    private void setupFailedChildTransactionSave() {
+        doThrow(new BulkProcessingException("Failed to insert", new RuntimeException()))
+            .when(retryTemplate).execute(any(RetryCallback.class), any(RecoveryCallback.class));
+        
+        doNothing().when(sqlSession).rollback();
+        doNothing().when(sqlSession).close();
+    }
+}
+```
+
 
 # Component Test
 
