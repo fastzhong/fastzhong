@@ -35,7 +35,7 @@ public class LinuxFileNameSanitizer {
 
     public static void main(String[] args) {
         String directory = "/home/user/documents";
-        String fileName = "รายงานการเงิน_2023.txt";  // Example with Thai characters
+        String fileName = "รายงาน/การเงิน:2023.txt";  // Example with Thai characters
 
         // Ensure the filename is sanitized if needed
         String sanitizedFileName = sanitizeFileName(fileName);
@@ -43,6 +43,7 @@ public class LinuxFileNameSanitizer {
         // Use Paths.get to construct the full path safely
         Path fullPath = Paths.get(directory).resolve(sanitizedFileName);
 
+        // Expected: Full path: /home/user/documents/รายงาน_การเงิน_2023.txt
         System.out.println("Full path: " + fullPath);
         
 
