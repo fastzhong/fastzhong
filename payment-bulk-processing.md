@@ -1,383 +1,263 @@
-## pain001Service
+## pain001 service
 
 ```java
-@ExtendWith(MockitoExtension.class)
-class Pain001ServiceImplTest {
+ /*
+ * Copyright (c) United Overseas Bank Limited Co.
+ * All rights reserved.
+ *
+ * This software is the confidential and proprietary information of
+ * United Overseas Bank Limited Co. ("Confidential Information").  You shall not
+ * disclose such Confidential Information and shall use it only in accordance
+ * with the terms of the license agreement you entered into with
+ * United Overseas Bank Limited Co.
+ */
+package com.uob.gwb.pbp.service.impl;
 
-    @Mock
-    private ObjectMapper objectMapper;
 
-    @Mock
-    private PaymentUtils paymentUtils;
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Optional;
+import java.util.stream.Collectors;
 
-    @Mock
-    private Pain001ToBoMapper pain001ToBoMapper;
+import org.springframework.stereotype.Service;
 
-    @Mock
-    private Pain001ToBoService pain001ToBo;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.uob.gwb.pbp.bo.BankRefMetaData;
+import com.uob.gwb.pbp.bo.CreditTransferTransaction;
+import com.uob.gwb.pbp.bo.PaymentInformation;
+import com.uob.gwb.pbp.bo.status.DmpFileStatus;
+import com.uob.gwb.pbp.config.AppConfig;
+import com.uob.gwb.pbp.config.BulkRoutesConfig;
+import com.uob.gwb.pbp.flow.BulkProcessingException;
+import com.uob.gwb.pbp.flow.Pain001InboundProcessingResult;
+import com.uob.gwb.pbp.flow.Pain001InboundProcessingStatus;
+import com.uob.gwb.pbp.flow.PwsSaveRecord;
+import com.uob.gwb.pbp.iso.pain001.GroupHeaderDTO;
+import com.uob.gwb.pbp.iso.pain001.Pain001;
+import com.uob.gwb.pbp.po.PwsTransactions;
+import com.uob.gwb.pbp.service.Pain001Service;
+import com.uob.gwb.pbp.service.PaymentDebulkService;
+import com.uob.gwb.pbp.service.PaymentEnrichmentService;
+import com.uob.gwb.pbp.service.PaymentMappingService;
+import com.uob.gwb.pbp.service.PaymentSaveService;
+import com.uob.gwb.pbp.service.PaymentValidationService;
+import com.uob.gwb.pbp.util.Constants;
+import com.uob.gwb.pbp.util.PaymentUtils;
 
-    @Mock
-    private PaymentInformationValidation paymentInfoValidation;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
-    @Mock
-    private PaymentInformationEnrichment paymentInfoEnrichment;
+@RequiredArgsConstructor
+@Slf4j
+@Service
+public class Pain001ServiceImpl extends StepAwareService implements Pain001Service {
 
-    @Mock
-    private PaymentDebulkService paymentDebulkService;
+    private final AppConfig appConfig;
+    private final ObjectMapper objectMapper;
+    private final PaymentUtils paymentUtils;
+    private final PaymentMappingService paymentMappingService;
+    private final PaymentEnrichmentService paymentEnrichmentService;
+    private final PaymentValidationService paymentValidationService;
+    private final PaymentDebulkService paymentDebulkService;
+    private final PaymentSaveService paymentSaveService;
 
-    @Mock
-    private PaymentSave paymentSave;
+    @Override
+    public List<PaymentInformation> validateJson(String json) {
+        Pain001 pain001;
+        try {
+            pain001 = objectMapper.readValue(json, Pain001.class);
+        } catch (JsonProcessingException e) {
+            throw new BulkProcessingException("Error on parsing pain001 json", e);
+        }
+        GroupHeaderDTO groupHeaderDTO = pain001.getBusinessDocument()
+                .getCustomerCreditTransferInitiation()
+                .getGroupHeader();
+        Pain001InboundProcessingResult result = getResult();
+        result.setSourceReference(groupHeaderDTO.getFilereference());
 
-    @Mock
-    private StepExecution stepExecution;
-
-    @Mock
-    private ExecutionContext jobExecutionContext;
-
-    @Mock
-    private ExecutionContext stepExecutionContext;
-
-    @InjectMocks
-    private Pain001ServiceImpl pain001Service;
-
-    @BeforeEach
-    void setUp() {
-        // Setup step execution context
-        when(stepExecution.getExecutionContext()).thenReturn(stepExecutionContext);
-        when(stepExecution.getJobExecution()).thenReturn(mock(JobExecution.class));
-        when(stepExecution.getJobExecution().getExecutionContext()).thenReturn(jobExecutionContext);
-        ReflectionTestUtils.setField(pain001Service, "stepExecution", stepExecution);
-    }
-
-    @Test
-    void debulk_ShouldProcessAndUpdateResult() {
-        // Given
-        List<PaymentInformation> inputPayments = Collections.singletonList(createValidPaymentInfo());
-        List<PaymentInformation> debulkedPayments = Arrays.asList(
-            createValidPaymentInfo(),
-            createValidPaymentInfo()
-        );
-        Pain001InboundProcessingResult result = new Pain001InboundProcessingResult();
-
-        when(paymentDebulkService.debulkPaymentInformations(inputPayments)).thenReturn(debulkedPayments);
-        when(jobExecutionContext.get("result", Pain001InboundProcessingResult.class)).thenReturn(result);
-
-        // When
-        List<PaymentInformation> actualResult = pain001Service.debulk(inputPayments);
-
-        // Then
-        verify(paymentDebulkService).beforeStep(stepExecution);
-        verify(paymentDebulkService).debulkPaymentInformations(inputPayments);
-        assertEquals(debulkedPayments.size(), result.getPaymentDebulkTotal());
-        assertEquals(debulkedPayments, actualResult);
-    }
-
-    @Test
-    void save_WhenValidPayment_ShouldSaveSuccessfully() {
-        // Given
-        PaymentInformation validPayment = createValidPaymentInfo();
-        List<PaymentInformation> payments = Collections.singletonList(validPayment);
-
-        // When
-        pain001Service.save(payments);
-
-        // Then
-        verify(paymentSave).savePaymentInformation(
-            eq(validPayment),
-            eq(stepExecutionContext),
-            eq(jobExecutionContext)
-        );
-        verifyNoMoreInteractions(paymentUtils);
-    }
-
-    @Test
-    void save_WhenInvalidPayment_ShouldSkip() {
-        // Given
-        PaymentInformation invalidPayment = createInvalidPaymentInfo();
-        List<PaymentInformation> payments = Collections.singletonList(invalidPayment);
-
-        // When
-        pain001Service.save(payments);
-
-        // Then
-        verify(paymentSave, never()).savePaymentInformation(
-            any(PaymentInformation.class),
-            any(ExecutionContext.class),
-            any(ExecutionContext.class)
-        );
-    }
-
-    @Test
-    void save_WhenSaveThrowsException_ShouldHandleError() {
-        // Given
-        PaymentInformation validPayment = createValidPaymentInfo();
-        List<PaymentInformation> payments = Collections.singletonList(validPayment);
-        Pain001InboundProcessingResult result = new Pain001InboundProcessingResult();
-        PwsSaveRecord saveRecord = new PwsSaveRecord();
-
-        doThrow(new RuntimeException("Save failed"))
-            .when(paymentSave)
-            .savePaymentInformation(any(), any(), any());
-
-        when(jobExecutionContext.get("result", Pain001InboundProcessingResult.class))
-            .thenReturn(result);
-        when(paymentUtils.createPwsSaveRecord(anyLong(), anyString()))
-            .thenReturn(saveRecord);
-
-        // When
-        pain001Service.save(payments);
-
-        // Then
-        verify(paymentSave).savePaymentInformation(
-            eq(validPayment),
-            eq(stepExecutionContext),
-            eq(jobExecutionContext)
-        );
-        verify(paymentUtils).createPwsSaveRecord(
-            validPayment.getPwsTransactions().getTransactionId(),
-            validPayment.getPwsBulkTransactions().getDmpBatchNumber()
-        );
-        verify(paymentUtils).updatePaymentSavedError(result, saveRecord);
-    }
-
-    @Test
-    void save_WhenRejectedPayment_ShouldSkip() {
-        // Given
-        PaymentInformation rejectedPayment = createRejectedPaymentInfo();
-        List<PaymentInformation> payments = Collections.singletonList(rejectedPayment);
-
-        // When
-        pain001Service.save(payments);
-
-        // Then
-        verify(paymentSave, never()).savePaymentInformation(
-            any(PaymentInformation.class),
-            any(ExecutionContext.class),
-            any(ExecutionContext.class)
-        );
-    }
-
-    // Helper methods
-    private PaymentInformation createValidPaymentInfo() {
-        PaymentInformation payment = new PaymentInformation();
-        payment.setDmpBulkStatus(DmpBulkStatus.ACCEPTED);
+        // stop at fileStatus = 02
+        DmpFileStatus fileStatus = DmpFileStatus.fromValue(
+                pain001.getBusinessDocument().getCustomerCreditTransferInitiation().getGroupHeader().getFilestatus());
+        log.info("auth file status: {}", fileStatus);
+        result.setDmpFileStatus(fileStatus);
+        if (DmpFileStatus.REJECTED.equals(fileStatus)) {
+            result.setProcessingStatus(Pain001InboundProcessingStatus.DmpRejected);
+            // ToDo: create transit message 
+            // ToDo: update pws_file_uploads
+            return null; // stop processing
+        }
+        // ToDo: create transit message 
+        // ToDo: update pws_file_uploads 
         
-        PwsTransactions pwsTransactions = new PwsTransactions();
-        pwsTransactions.setTransactionId(1L);
-        payment.setPwsTransactions(pwsTransactions);
+        // convert to BO
+        Optional.ofNullable(groupHeaderDTO.getControlSum())
+                .ifPresent((v -> result.setPaymentReceivedAmount(Double.valueOf(v))));
+        Optional.ofNullable(groupHeaderDTO.getNumberOfTransactions())
+                .ifPresent(v -> result.setTransactionReceivedTotal(Integer.valueOf(v)));
+        List<PaymentInformation> paymentInfos = pain001.getBusinessDocument()
+                .getCustomerCreditTransferInitiation()
+                .getPaymentInformation()
+                .stream()
+                .map(paymentMappingService::pain001PaymentToBo)
+                .collect(Collectors.toList());
+        paymentInfos = paymentMappingService.postMappingPain001ToBo(pain001, paymentInfos);
+        Optional.ofNullable(paymentInfos).ifPresent(v -> result.setPaymentReceivedTotal(v.size()));
         
-        PwsBulkTransactions pwsBulkTransactions = new PwsBulkTransactions();
-        pwsBulkTransactions.setDmpBatchNumber("BATCH001");
-        payment.setPwsBulkTransactions(pwsBulkTransactions);
+        // data preparation
+        // ToDo: pws_resource_configurations ?
+        // ToDo: REJECT_FILE_ON_ERROR: SELECT REJECT_FILE_ON_ERROR FROM GEB_COMPANY_ATTRIBUTE_MVR WHERE COMPANY_ID = <@p name='companyId'/>
+        // bank ref metadata 
+        BulkRoutesConfig.BulkRoute routeConfig = getRouteConfig();
+        BankRefMetaData bankRefMetaData = new BankRefMetaData(appConfig.getCountry().name(),
+                routeConfig.getChannel().prefix, routeConfig.getRequestType().prefix,
+                LocalDateTime.now().format(Constants.BANK_REF_YY_MM));
+        setBankRefMetaData(bankRefMetaData);
+
+        // ToDo: https://confluencep.sg.uobnet.com/display/GBTCEW/BFU+Mapping+Overview
+        // row 8?
+        // row 9?
+        // row 10?
         
-        return payment;
+        result.setProcessingStatus(Pain001InboundProcessingStatus.Processing);
+        updateProcessingResult(getRouteConfig(), result);
+        
+        return paymentInfos;
     }
 
-    private PaymentInformation createInvalidPaymentInfo() {
-        PaymentInformation payment = createValidPaymentInfo();
-        payment.addValidationError("ERR001", "Invalid payment");
-        return payment;
+    @Override
+    public List<PaymentInformation> debulk(List<PaymentInformation> paymentInfos) {
+        paymentDebulkService.beforeStep(getStepExecution());
+        List<PaymentInformation> debulked = paymentDebulkService.debulk(paymentInfos);
+        Pain001InboundProcessingResult result = getResult();
+        result.setPaymentDebulkTotal(debulked.size());
+        result.setProcessingStatus(Pain001InboundProcessingStatus.DebulkPassed);
+        return debulked;
     }
 
-    private PaymentInformation createRejectedPaymentInfo() {
-        PaymentInformation payment = createValidPaymentInfo();
-        payment.setDmpBulkStatus(DmpBulkStatus.REJECTED);
-        return payment;
+    @Override
+    public List<PaymentInformation> validate(List<PaymentInformation> paymentInfos) {
+        // ToDo: entitlment check
+        paymentEnrichmentService.beforeStep(getStepExecution());
+        List<PaymentInformation> preEntitled = paymentEnrichmentService.enrichPreEntitlement(paymentInfos);
+        paymentValidationService.beforeStep(getStepExecution());
+        List<PaymentInformation> entitled = paymentValidationService.entitlementCheck(preEntitled);
+        updateProcessingResult(getRouteConfig(), getResult());
+        
+        // validations 
+        List<PaymentInformation> preValidated = paymentEnrichmentService.enrichPreValidation(paymentInfos);
+        List<PaymentInformation> validated = paymentValidationService.validate(preValidated);
+        updateAfterValidation(validated);
+        updateProcessingResult(getRouteConfig(), getResult());
+        return validated;
     }
+
+    @Override
+    public List<PaymentInformation> enrich(List<PaymentInformation> paymentInfos) {
+        // ToDo: PWS_TAX_INSTRUCTIONS.TAX_AMOUNT (SUM of all tax records for the txn)
+        paymentEnrichmentService.beforeStep(getStepExecution());
+        List<PaymentInformation> enriched = paymentEnrichmentService.enrichPostValidation(paymentInfos);
+        updateProcessingResult(getRouteConfig(), getResult());
+        return enriched;
+    }
+
+    @Override
+    public void save(List<PaymentInformation> paymentInfos) {
+        paymentSaveService.beforeStep(getStepExecution());
+        boolean noError = true;
+        for (PaymentInformation paymentInfo : paymentInfos) {
+            if (!paymentInfo.isValid()) {
+                try {
+                    paymentSaveService.savePaymentInformation(paymentInfo);
+                } catch (Exception e) {
+                    noError = false;
+                    log.error("Failed saving payment", e);
+                    Pain001InboundProcessingResult result = getResult();
+                    PwsSaveRecord record = paymentUtils.createPwsSaveRecord(
+                            paymentInfo.getPwsTransactions().getTransactionId(),
+                            paymentInfo.getPwsBulkTransactions().getDmpBatchNumber());
+                    paymentUtils.updatePaymentSavedError(result, record);
+                    // ToDo: clean up dirty payment data
+                }
+            } else {
+                log.warn("Skipping invalid payment: {}", paymentInfo.getPwsBulkTransactions().getDmpBatchNumber());
+            }
+        }
+
+        Pain001InboundProcessingResult result = getResult();
+        if (noError) {
+            result.setProcessingStatus(Pain001InboundProcessingStatus.SavePassed);
+        } else {
+            result.setProcessingStatus(Pain001InboundProcessingStatus.SaveWithException);
+        }
+        updateProcessingResult(getRouteConfig(), result);
+    }
+    
+
+    private void updateAfterValidation(List<PaymentInformation> paymentInfos) {
+        int paymentValidTotal = 0;
+        BigDecimal paymentValidAmount = BigDecimal.ZERO;
+        int paymentInvalidTotal = 0;
+        BigDecimal paymentInvalidAmount = BigDecimal.ZERO;
+
+        for (PaymentInformation paymentInfo : paymentInfos) {
+            boolean validPayment = paymentInfo.isValid();
+
+            int childTxnValidTotal = 0;
+            BigDecimal childTxnValidAmount = BigDecimal.ZERO;
+            BigDecimal childTxnMaxAmount = BigDecimal.ZERO;
+            BigDecimal childTxnInvalidAmount = BigDecimal.ZERO;
+
+            for (CreditTransferTransaction txn : paymentInfo.getCreditTransferTransactionList()) {
+                BigDecimal txnAmount = txn.getPwsBulkTransactionInstructions().getTransactionAmount();
+                
+                if (validPayment && txn.isValid()) {
+                    // for valid payment & valid txn
+                    childTxnValidTotal += 1;
+                    childTxnValidAmount = childTxnValidAmount.add(txnAmount);
+                    if (txnAmount.compareTo(childTxnMaxAmount) < 0) {
+                        childTxnMaxAmount = txnAmount;
+                    }
+                }
+
+                // for valid payment & invalid txn
+                // for invalid payment
+                childTxnInvalidAmount = childTxnInvalidAmount.add(txnAmount);
+            }
+
+            if (validPayment && childTxnValidTotal > 0) {
+                PwsTransactions pwsTransactions = paymentInfo.getPwsTransactions();
+                pwsTransactions.setTotalChild(childTxnValidTotal);
+                pwsTransactions.setTotalAmount(childTxnValidAmount);
+                pwsTransactions.setMaximumAmount(childTxnMaxAmount);
+                paymentValidTotal += 1;
+                paymentValidAmount.add(childTxnValidAmount);
+                continue;
+            }
+
+            paymentInvalidTotal += 1;
+            paymentInvalidAmount.add(childTxnInvalidAmount);
+        }
+
+        // update result
+        Pain001InboundProcessingResult result = getResult();
+        result.setPaymentValidTotal(paymentValidTotal);
+        result.setPaymentValidAmount(paymentValidAmount);
+        result.setPaymentInvalidTotal(paymentInvalidTotal);
+        result.setPaymentInvalidAmount(paymentInvalidAmount);
+    }
+
+    private void handleRejectFileOnError(BulkRoutesConfig.BulkRoute routeConfig, Pain001InboundProcessingResult result) {
+        // ToDo 
+    }
+
+    private void updateProcessingResult(BulkRoutesConfig.BulkRoute routeConfig, Pain001InboundProcessingResult result) {
+        // ToDo
+        // update pws_transit_messages
+    }
+
+    
 }
-```
 
-## save
-
-PaymentSaveServiceTest.java:191:54
-java: no suitable method found for thenReturn(lorg.mockito.exceptions.misusing.UnnecessaryStubbingException: 
-Unnecessary stubbings detected.
-Clean & maintainable test code requires zero unnecessary code.
-Following stubbings are unnecessary (click to navigate to relevant line of code):
-  1. -> at com.uob.gwb.pbp.service.impl.PaymentSaveServiceTest.setUp(PaymentSaveServiceTest.java:87)
-  2. -> at com.uob.gwb.pbp.service.impl.PaymentSaveServiceTest.setUp(PaymentSaveServiceTest.java:88)
-  3. -> at com.uob.gwb.pbp.service.impl.PaymentSaveServiceTest.setUp(PaymentSaveServiceTest.java:89)
-  4. -> at com.uob.gwb.pbp.service.impl.PaymentSaveServiceTest.setUp(PaymentSaveServiceTest.java:92)
-  5. -> at com.uob.gwb.pbp.service.impl.PaymentSaveServiceTest.setUp(PaymentSaveServiceTest.java:93)
-  6. -> at com.uob.gwb.pbp.service.impl.PaymentSaveServiceTest.setUp(PaymentSaveServiceTest.java:94)
-
-
-
-
-```java
-@ExtendWith(MockitoExtension.class)
-class PaymentSaveImplTest {
-
-    @Mock
-    private AppConfig config;
-
-    @Mock
-    private RetryTemplate retryTemplate;
-
-    @Mock
-    private SqlSessionTemplate paymentSaveSqlSessionTemplate;
-
-    @Mock
-    private SqlSessionFactory sqlSessionFactory;
-
-    @Mock
-    private SqlSession sqlSession;
-
-    @Mock
-    private PwsSaveDao pwsSaveDao;
-
-    @Mock
-    private PaymentUtils paymentUtils;
-
-    @Mock
-    private TransactionUtils transactionUtils;
-
-    @InjectMocks
-    private PaymentSaveImpl paymentSave;
-
-    private PaymentInformation paymentInfo;
-    private ExecutionContext stepContext;
-    private ExecutionContext jobContext;
-    private Pain001InboundProcessingResult result;
-    private PwsSaveRecord mockRecord;
-
-    @BeforeEach
-    void setUp() {
-        paymentInfo = new PaymentInformation();
-        stepContext = new ExecutionContext();
-        jobContext = new ExecutionContext();
-        result = new Pain001InboundProcessingResult();
-        result.setPaymentSaved(new ArrayList<>());
-        result.setPaymentSavedError(new ArrayList<>());
-        jobContext.put("result", result);
-        mockRecord = new PwsSaveRecord("encrypted_1", "BATCH001");
-
-        // Setup SQL Session behavior
-        when(paymentSaveSqlSessionTemplate.getSqlSessionFactory()).thenReturn(sqlSessionFactory);
-        when(sqlSessionFactory.openSession(ExecutorType.BATCH)).thenReturn(sqlSession);
-        when(sqlSession.getMapper(PwsSaveDao.class)).thenReturn(pwsSaveDao);
-        
-        // Setup PaymentUtils behavior
-        when(paymentUtils.createPwsSaveRecord(anyLong(), anyString())).thenReturn(mockRecord);
-        doNothing().when(paymentUtils).updatePaymentSaved(any(), any());
-        doNothing().when(paymentUtils).updatePaymentSavedError(any(), any());
-    }
-
-    @Test
-    void savePaymentInformation_SuccessfulSave() {
-        // Arrange
-        int batchSize = 2;
-        when(config.getBatchInsertSize()).thenReturn(batchSize);
-
-        setupValidPaymentInfo();
-        setupSuccessfulBulkSave();
-        setupSuccessfulChildTransactionSave();
-
-        // Act
-        paymentSave.savePaymentInformation(paymentInfo, stepContext, jobContext);
-
-        // Assert
-        verify(paymentUtils).createPwsSaveRecord(
-            eq(paymentInfo.getPwsTransactions().getTransactionId()),
-            eq(paymentInfo.getPwsBulkTransactions().getDmpBatchNumber())
-        );
-        verify(paymentUtils).updatePaymentSaved(eq(result), eq(mockRecord));
-        verify(pwsSaveDao).insertPwsTransactions(any(PwsTransactions.class));
-        verify(pwsSaveDao).insertPwsBulkTransactions(any(PwsBulkTransactions.class));
-        verifyBatchInsertsCalled();
-    }
-
-    @Test
-    void savePaymentInformation_FailedBatchSave() {
-        // Arrange
-        int batchSize = 2;
-        when(config.getBatchInsertSize()).thenReturn(batchSize);
-
-        setupValidPaymentInfo();
-        setupSuccessfulBulkSave();
-        setupFailedChildTransactionSave();
-
-        // Act
-        paymentSave.savePaymentInformation(paymentInfo, stepContext, jobContext);
-
-        // Assert
-        verify(paymentUtils).createPwsSaveRecord(
-            eq(paymentInfo.getPwsTransactions().getTransactionId()),
-            eq(paymentInfo.getPwsBulkTransactions().getDmpBatchNumber())
-        );
-        verify(paymentUtils).updatePaymentSavedError(eq(result), eq(mockRecord));
-        verify(sqlSession, times(1)).rollback();
-    }
-
-    @Test
-    void saveBulkPayment_Success() {
-        // Arrange
-        setupValidPaymentInfo();
-        setupSuccessfulBulkSave();
-
-        // Act
-        long txnId = paymentSave.saveBulkPayment(paymentInfo);
-
-        // Assert
-        assertEquals(1L, txnId);
-        verify(pwsSaveDao).getBankRefSequenceNum();
-        verify(pwsSaveDao).insertPwsTransactions(any(PwsTransactions.class));
-        verify(pwsSaveDao).insertPwsBulkTransactions(any(PwsBulkTransactions.class));
-    }
-
-    private void setupValidPaymentInfo() {
-        PwsTransactions pwsTransactions = new PwsTransactions();
-        pwsTransactions.setTransactionId(1L);
-
-        PwsBulkTransactions pwsBulkTransactions = new PwsBulkTransactions();
-        pwsBulkTransactions.setDmpBatchNumber("BATCH001");
-
-        List<CreditTransferTransaction> transactions = new ArrayList<>();
-        transactions.add(createValidTransaction());
-        transactions.add(createValidTransaction());
-
-        paymentInfo.setPwsTransactions(pwsTransactions);
-        paymentInfo.setPwsBulkTransactions(pwsBulkTransactions);
-        paymentInfo.setCreditTransferTransactionList(transactions);
-    }
-
-    private CreditTransferTransaction createValidTransaction() {
-        CreditTransferTransaction transaction = new CreditTransferTransaction();
-        transaction.setDmpTransactionStatus(DmpTransactionStatus.APPROVED);
-
-        PwsBulkTransactionInstructions instructions = new PwsBulkTransactionInstructions();
-        Party party = new Party();
-        party.setPwsParties(new PwsParties());
-
-        transaction.setPwsBulkTransactionInstructions(instructions);
-        transaction.setParty(party);
-
-        return transaction;
-    }
-
-    private void setupSuccessfulBulkSave() {
-        when(pwsSaveDao.getBankRefSequenceNum()).thenReturn(1);
-        when(pwsSaveDao.insertPwsTransactions(any())).thenReturn(1L);
-        when(pwsSaveDao.insertPwsBulkTransactions(any())).thenReturn(1L);
-    }
-
-    private void setupSuccessfulChildTransactionSave() {
-        doAnswer(invocation -> {
-            RetryCallback<Object, RuntimeException> callback = invocation.getArgument(0);
-            return callback.doWithRetry(null);
-        }).when(retryTemplate).execute(any(RetryCallback.class), any(RecoveryCallback.class));
-    }
-
-    private void setupFailedChildTransactionSave() {
-        doAnswer(invocation -> {
-            throw new BulkProcessingException("Failed to insert", new RuntimeException());
-        }).when(retryTemplate).execute(any(RetryCallback.class), any(RecoveryCallback.class));
-    }
-
-    private void verifyBatchInsertsCalled() {
-        verify(sqlSession, atLeastOnce()).commit();
-        verify(sqlSession, never()).rollback();
-        verify(sqlSession, atLeastOnce()).close();
-    }
-}
 ```
