@@ -1,3 +1,57 @@
+# utils
+
+## LinuxFileNameSanitizer
+```java
+import java.text.Normalizer;
+import java.util.regex.Pattern;
+
+public class LinuxFileNameSanitizer {
+
+    // Define a regex pattern to match illegal or unsafe characters
+    // For Linux, '/' and null bytes are typically problematic
+    private static final Pattern ILLEGAL_CHARACTERS = Pattern.compile("[\\x00/]+");
+
+    public static String sanitizeFileName(String originalFileName) {
+        if (originalFileName == null || originalFileName.isEmpty()) {
+            throw new IllegalArgumentException("File name cannot be null or empty");
+        }
+
+        // Normalize to NFKC form for consistency and to handle certain special characters
+        String normalizedFileName = Normalizer.normalize(originalFileName, Normalizer.Form.NFKC);
+
+        // Remove any unsafe characters using the regex pattern
+        String sanitizedFileName = ILLEGAL_CHARACTERS.matcher(normalizedFileName).replaceAll("_");
+
+        // Trim leading and trailing whitespace for neatness
+        sanitizedFileName = sanitizedFileName.trim();
+
+        // Ensure the filename is not empty after sanitization
+        if (sanitizedFileName.isEmpty()) {
+            throw new IllegalArgumentException("File name cannot be empty after sanitization");
+        }
+
+        return sanitizedFileName;
+    }
+
+    public static void main(String[] args) {
+        String directory = "/home/user/documents";
+        String fileName = "รายงานการเงิน_2023.txt";  // Example with Thai characters
+
+        // Ensure the filename is sanitized if needed
+        String sanitizedFileName = sanitizeFileName(fileName);
+        
+        // Use Paths.get to construct the full path safely
+        Path fullPath = Paths.get(directory).resolve(sanitizedFileName);
+
+        System.out.println("Full path: " + fullPath);
+        
+
+    }
+
+}
+```
+
+
 # WebClient & Resilient4J
 
 ```xml
