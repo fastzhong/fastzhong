@@ -1,263 +1,366 @@
-## pain001 service
+## Validation 
 
-```java
- /*
- * Copyright (c) United Overseas Bank Limited Co.
- * All rights reserved.
- *
- * This software is the confidential and proprietary information of
- * United Overseas Bank Limited Co. ("Confidential Information").  You shall not
- * disclose such Confidential Information and shall use it only in accordance
- * with the terms of the license agreement you entered into with
- * United Overseas Bank Limited Co.
- */
-package com.uob.gwb.pbp.service.impl;
-
-
-import java.math.BigDecimal;
-import java.time.LocalDateTime;
-import java.util.List;
-import java.util.Optional;
-import java.util.stream.Collectors;
-
-import org.springframework.stereotype.Service;
-
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.uob.gwb.pbp.bo.BankRefMetaData;
-import com.uob.gwb.pbp.bo.CreditTransferTransaction;
-import com.uob.gwb.pbp.bo.PaymentInformation;
-import com.uob.gwb.pbp.bo.status.DmpFileStatus;
-import com.uob.gwb.pbp.config.AppConfig;
-import com.uob.gwb.pbp.config.BulkRoutesConfig;
-import com.uob.gwb.pbp.flow.BulkProcessingException;
-import com.uob.gwb.pbp.flow.Pain001InboundProcessingResult;
-import com.uob.gwb.pbp.flow.Pain001InboundProcessingStatus;
-import com.uob.gwb.pbp.flow.PwsSaveRecord;
-import com.uob.gwb.pbp.iso.pain001.GroupHeaderDTO;
-import com.uob.gwb.pbp.iso.pain001.Pain001;
-import com.uob.gwb.pbp.po.PwsTransactions;
-import com.uob.gwb.pbp.service.Pain001Service;
-import com.uob.gwb.pbp.service.PaymentDebulkService;
-import com.uob.gwb.pbp.service.PaymentEnrichmentService;
-import com.uob.gwb.pbp.service.PaymentMappingService;
-import com.uob.gwb.pbp.service.PaymentSaveService;
-import com.uob.gwb.pbp.service.PaymentValidationService;
-import com.uob.gwb.pbp.util.Constants;
-import com.uob.gwb.pbp.util.PaymentUtils;
-
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-
-@RequiredArgsConstructor
-@Slf4j
-@Service
-public class Pain001ServiceImpl extends StepAwareService implements Pain001Service {
-
-    private final AppConfig appConfig;
-    private final ObjectMapper objectMapper;
-    private final PaymentUtils paymentUtils;
-    private final PaymentMappingService paymentMappingService;
-    private final PaymentEnrichmentService paymentEnrichmentService;
-    private final PaymentValidationService paymentValidationService;
-    private final PaymentDebulkService paymentDebulkService;
-    private final PaymentSaveService paymentSaveService;
-
-    @Override
-    public List<PaymentInformation> validateJson(String json) {
-        Pain001 pain001;
-        try {
-            pain001 = objectMapper.readValue(json, Pain001.class);
-        } catch (JsonProcessingException e) {
-            throw new BulkProcessingException("Error on parsing pain001 json", e);
-        }
-        GroupHeaderDTO groupHeaderDTO = pain001.getBusinessDocument()
-                .getCustomerCreditTransferInitiation()
-                .getGroupHeader();
-        Pain001InboundProcessingResult result = getResult();
-        result.setSourceReference(groupHeaderDTO.getFilereference());
-
-        // stop at fileStatus = 02
-        DmpFileStatus fileStatus = DmpFileStatus.fromValue(
-                pain001.getBusinessDocument().getCustomerCreditTransferInitiation().getGroupHeader().getFilestatus());
-        log.info("auth file status: {}", fileStatus);
-        result.setDmpFileStatus(fileStatus);
-        if (DmpFileStatus.REJECTED.equals(fileStatus)) {
-            result.setProcessingStatus(Pain001InboundProcessingStatus.DmpRejected);
-            // ToDo: create transit message 
-            // ToDo: update pws_file_uploads
-            return null; // stop processing
-        }
-        // ToDo: create transit message 
-        // ToDo: update pws_file_uploads 
-        
-        // convert to BO
-        Optional.ofNullable(groupHeaderDTO.getControlSum())
-                .ifPresent((v -> result.setPaymentReceivedAmount(Double.valueOf(v))));
-        Optional.ofNullable(groupHeaderDTO.getNumberOfTransactions())
-                .ifPresent(v -> result.setTransactionReceivedTotal(Integer.valueOf(v)));
-        List<PaymentInformation> paymentInfos = pain001.getBusinessDocument()
-                .getCustomerCreditTransferInitiation()
-                .getPaymentInformation()
-                .stream()
-                .map(paymentMappingService::pain001PaymentToBo)
-                .collect(Collectors.toList());
-        paymentInfos = paymentMappingService.postMappingPain001ToBo(pain001, paymentInfos);
-        Optional.ofNullable(paymentInfos).ifPresent(v -> result.setPaymentReceivedTotal(v.size()));
-        
-        // data preparation
-        // ToDo: pws_resource_configurations ?
-        // ToDo: REJECT_FILE_ON_ERROR: SELECT REJECT_FILE_ON_ERROR FROM GEB_COMPANY_ATTRIBUTE_MVR WHERE COMPANY_ID = <@p name='companyId'/>
-        // bank ref metadata 
-        BulkRoutesConfig.BulkRoute routeConfig = getRouteConfig();
-        BankRefMetaData bankRefMetaData = new BankRefMetaData(appConfig.getCountry().name(),
-                routeConfig.getChannel().prefix, routeConfig.getRequestType().prefix,
-                LocalDateTime.now().format(Constants.BANK_REF_YY_MM));
-        setBankRefMetaData(bankRefMetaData);
-
-        // ToDo: https://confluencep.sg.uobnet.com/display/GBTCEW/BFU+Mapping+Overview
-        // row 8?
-        // row 9?
-        // row 10?
-        
-        result.setProcessingStatus(Pain001InboundProcessingStatus.Processing);
-        updateProcessingResult(getRouteConfig(), result);
-        
-        return paymentInfos;
-    }
-
-    @Override
-    public List<PaymentInformation> debulk(List<PaymentInformation> paymentInfos) {
-        paymentDebulkService.beforeStep(getStepExecution());
-        List<PaymentInformation> debulked = paymentDebulkService.debulk(paymentInfos);
-        Pain001InboundProcessingResult result = getResult();
-        result.setPaymentDebulkTotal(debulked.size());
-        result.setProcessingStatus(Pain001InboundProcessingStatus.DebulkPassed);
-        return debulked;
-    }
-
-    @Override
-    public List<PaymentInformation> validate(List<PaymentInformation> paymentInfos) {
-        // ToDo: entitlment check
-        paymentEnrichmentService.beforeStep(getStepExecution());
-        List<PaymentInformation> preEntitled = paymentEnrichmentService.enrichPreEntitlement(paymentInfos);
-        paymentValidationService.beforeStep(getStepExecution());
-        List<PaymentInformation> entitled = paymentValidationService.entitlementCheck(preEntitled);
-        updateProcessingResult(getRouteConfig(), getResult());
-        
-        // validations 
-        List<PaymentInformation> preValidated = paymentEnrichmentService.enrichPreValidation(paymentInfos);
-        List<PaymentInformation> validated = paymentValidationService.validate(preValidated);
-        updateAfterValidation(validated);
-        updateProcessingResult(getRouteConfig(), getResult());
-        return validated;
-    }
-
-    @Override
-    public List<PaymentInformation> enrich(List<PaymentInformation> paymentInfos) {
-        // ToDo: PWS_TAX_INSTRUCTIONS.TAX_AMOUNT (SUM of all tax records for the txn)
-        paymentEnrichmentService.beforeStep(getStepExecution());
-        List<PaymentInformation> enriched = paymentEnrichmentService.enrichPostValidation(paymentInfos);
-        updateProcessingResult(getRouteConfig(), getResult());
-        return enriched;
-    }
-
-    @Override
-    public void save(List<PaymentInformation> paymentInfos) {
-        paymentSaveService.beforeStep(getStepExecution());
-        boolean noError = true;
-        for (PaymentInformation paymentInfo : paymentInfos) {
-            if (!paymentInfo.isValid()) {
-                try {
-                    paymentSaveService.savePaymentInformation(paymentInfo);
-                } catch (Exception e) {
-                    noError = false;
-                    log.error("Failed saving payment", e);
-                    Pain001InboundProcessingResult result = getResult();
-                    PwsSaveRecord record = paymentUtils.createPwsSaveRecord(
-                            paymentInfo.getPwsTransactions().getTransactionId(),
-                            paymentInfo.getPwsBulkTransactions().getDmpBatchNumber());
-                    paymentUtils.updatePaymentSavedError(result, record);
-                    // ToDo: clean up dirty payment data
-                }
-            } else {
-                log.warn("Skipping invalid payment: {}", paymentInfo.getPwsBulkTransactions().getDmpBatchNumber());
-            }
-        }
-
-        Pain001InboundProcessingResult result = getResult();
-        if (noError) {
-            result.setProcessingStatus(Pain001InboundProcessingStatus.SavePassed);
-        } else {
-            result.setProcessingStatus(Pain001InboundProcessingStatus.SaveWithException);
-        }
-        updateProcessingResult(getRouteConfig(), result);
-    }
-    
-
-    private void updateAfterValidation(List<PaymentInformation> paymentInfos) {
-        int paymentValidTotal = 0;
-        BigDecimal paymentValidAmount = BigDecimal.ZERO;
-        int paymentInvalidTotal = 0;
-        BigDecimal paymentInvalidAmount = BigDecimal.ZERO;
-
-        for (PaymentInformation paymentInfo : paymentInfos) {
-            boolean validPayment = paymentInfo.isValid();
-
-            int childTxnValidTotal = 0;
-            BigDecimal childTxnValidAmount = BigDecimal.ZERO;
-            BigDecimal childTxnMaxAmount = BigDecimal.ZERO;
-            BigDecimal childTxnInvalidAmount = BigDecimal.ZERO;
-
-            for (CreditTransferTransaction txn : paymentInfo.getCreditTransferTransactionList()) {
-                BigDecimal txnAmount = txn.getPwsBulkTransactionInstructions().getTransactionAmount();
-                
-                if (validPayment && txn.isValid()) {
-                    // for valid payment & valid txn
-                    childTxnValidTotal += 1;
-                    childTxnValidAmount = childTxnValidAmount.add(txnAmount);
-                    if (txnAmount.compareTo(childTxnMaxAmount) < 0) {
-                        childTxnMaxAmount = txnAmount;
-                    }
-                }
-
-                // for valid payment & invalid txn
-                // for invalid payment
-                childTxnInvalidAmount = childTxnInvalidAmount.add(txnAmount);
-            }
-
-            if (validPayment && childTxnValidTotal > 0) {
-                PwsTransactions pwsTransactions = paymentInfo.getPwsTransactions();
-                pwsTransactions.setTotalChild(childTxnValidTotal);
-                pwsTransactions.setTotalAmount(childTxnValidAmount);
-                pwsTransactions.setMaximumAmount(childTxnMaxAmount);
-                paymentValidTotal += 1;
-                paymentValidAmount.add(childTxnValidAmount);
-                continue;
-            }
-
-            paymentInvalidTotal += 1;
-            paymentInvalidAmount.add(childTxnInvalidAmount);
-        }
-
-        // update result
-        Pain001InboundProcessingResult result = getResult();
-        result.setPaymentValidTotal(paymentValidTotal);
-        result.setPaymentValidAmount(paymentValidAmount);
-        result.setPaymentInvalidTotal(paymentInvalidTotal);
-        result.setPaymentInvalidAmount(paymentInvalidAmount);
-    }
-
-    private void handleRejectFileOnError(BulkRoutesConfig.BulkRoute routeConfig, Pain001InboundProcessingResult result) {
-        // ToDo 
-    }
-
-    private void updateProcessingResult(BulkRoutesConfig.BulkRoute routeConfig, Pain001InboundProcessingResult result) {
-        // ToDo
-        // update pws_transit_messages
-    }
-
-    
-}
+### Initial User & Resource Feature Validation
 
 ```
+validateUserResourceFeatureActions():
+- Validates user permissions
+- Checks resource (e.g., CROSS_BORDER_UOBSEND) access
+- Validates feature permissions
+- Verifies CREATE action permission
+```
+
+```java
+private void validateUserResourceFeatureActions(
+    PwsFileUpload fileUpload,
+    PaymentInformation paymentInformation,
+    List<String> validationFieldErrorList,
+    Map<String, Object> headers,
+    String encryptedUserId) {
+
+    // 1. Call Resource Features API
+    UserResourceFeaturesActionsData resourceFeaturesActionsData = commonUtil
+        .getResourcesAndFeaturesByUserId(encryptedUserId, headers);
+    log.info("Resource Features ActionsData: {} ", resourceFeaturesActionsData);
+
+    // 2. Check if Resources/Features exist
+    if (ObjectUtils.isEmpty(resourceFeaturesActionsData)) {
+        // Handle no resource features found
+        paymentInformation.setBulkstatus(ZERO_TWO);  // Set rejection status
+        validationFieldErrorList.add("Given user there is no Resource Features Actions found");
+    } else {
+        // 3. Validate Resource, Feature and Action permissions
+        Optional<Resource> resourceFeaturesActions = resourceFeaturesActionsData
+            .getUserResourceAndFeatureAccess()
+            .getResources()
+            .stream()
+            // Check Resource ID matches
+            .filter(resourceId -> fileUpload.getResourceId().equals(resourceId.getResourceId()))
+            // Check Feature ID matches
+            .filter(resourceId -> resourceId.getFeatures().stream()
+                .anyMatch(feature -> fileUpload.getFeatureId().equals(feature.getFeatureId())))
+            // Check CREATE action exists
+            .filter(resourceId -> resourceId.getActions().contains(CREATE))
+            .findAny();
+
+        // 4. Handle validation failure
+        if (resourceFeaturesActions.isEmpty()) {
+            paymentInformation.setBulkstatus(ZERO_TWO);
+            validationFieldErrorList.add("Given user Resource Features Actions not matched");
+        }
+    }
+}
+```
+
+### Company & Account Entitlement Validation
+
+```
+validateCompanyAccounts():
+- Validates company exists and is authorized
+- Checks account belongs to company
+- Verifies account permissions
+- Validates account-resource-feature combination
+- Returns AccountResource for further processing
+```
+
+```java
+private AccountResource validateCompanyAccounts(
+    PwsFileUpload fileUpload, 
+    PaymentInformation paymentInformation,
+    List<String> validationFieldErrorList, 
+    Map<String, Object> headers, 
+    String encryptedUserId,
+    String accountNumber) {
+
+    // 1. Call v3 Entitlement Service
+    CompanyAndAccountsForResourceFeaturesResp v3EntitlementServiceResponse = 
+        commonUtil.v3EntitlementEndPointCall(
+            encryptedUserId,                 // Encrypted user ID
+            fileUpload.getResourceId(),      // Resource ID (e.g., CROSS_BORDER_UOBSEND)
+            fileUpload.getFeatureId(),       // Feature ID
+            headers                          // API headers
+        );
+    log.info("EntitlementServiceResponse: {} ", v3EntitlementServiceResponse);
+
+    AccountResource accountResource = null;
+
+    // 2. Check if Entitlement Response is Empty
+    if (ObjectUtils.isEmpty(v3EntitlementServiceResponse)) {
+        paymentInformation.setBulkstatus(ZERO_TWO);  // Set status as rejected
+        validationFieldErrorList.add("Resource and Features is not matched with company accounts");
+        return null;
+    }
+
+    // 3. Extract Company Accounts
+    List<CompanyAccountforUser> companyAccountforUsers = v3EntitlementServiceResponse
+        .getCompaniesAccountResourceFeature()
+        .stream()
+        .map(CompanyAndAccountsForUser::getCompanies)
+        .findAny()
+        .orElse(null);
+
+    // 4. Validate Company Accounts
+    if (CollectionUtils.isNotEmpty(companyAccountforUsers)) {
+        // Find accounts matching the company ID
+        List<AccountResource> accountResources = companyAccountforUsers.stream()
+            .filter(company -> validateComapnyId(company, fileUpload))  // Check company ID match
+            .map(CompanyAccountforUser::getAccounts)
+            .findAny()
+            .orElse(null);
+
+        // 5. Find Matching Account
+        if (CollectionUtils.isNotEmpty(accountResources)) {
+            // Find the specific account matching the account number
+            accountResource = accountResources.stream()
+                .filter(resource -> resource.getAccountNumber().equals(accountNumber))
+                .findAny()
+                .orElse(null);
+        }
+    }
+
+    // 6. Handle Invalid Account
+    if (Objects.isNull(accountResource)) {
+        paymentInformation.setBulkstatus(ZERO_TWO);
+        validationFieldErrorList.add("Given Account Number is not match with company accounts");
+    }
+
+    return accountResource;
+}
+
+// Helper method to validate company ID
+private boolean validateComapnyId(CompanyAccountforUser company, PwsFileUpload fileUpload) {
+    String companyId = transactionUtils.getDecrypted(company.getCompanyId());
+    return fileUpload.getCompanyId().equals(Long.parseLong(companyId));
+}
+```
+
+The entitlement checking process follows this sequence:
+
+1. Initial API Call:
+
+Makes a call to the v3 Entitlement Service with:
+```
+- Encrypted user ID
+- Resource ID (e.g., CROSS_BORDER_UOBSEND)
+- Feature ID
+- Required headers
+```
+
+2. First Level Validation:
+
+```
+- Checks if the entitlement response exists
+- If no response, marks transaction as rejected (ZERO_TWO)
+- Adds error message to validation list
+```
+
+3. Company Level Validation:
+
+```
+- Extracts company accounts from response
+- Validates company ID matches the file upload company ID
+- Uses decryption for company ID comparison
+```
+
+4. Account Level Validation:
+```
+- For matching company, gets list of entitled accounts
+- Checks if provided account number exists in entitled accounts
+- Validates account permissions
+```
+
+5. Response Handling:
+
+```
+- Returns AccountResource if valid
+- Returns null if invalid (with appropriate error messages)
+- Updates payment information status if validation fails
+```
+
+6. Error Cases:
+
+```java
+if (Objects.isNull(accountResource)) {
+    // Case 1: No matching account found
+    paymentInformation.setBulkstatus(ZERO_TWO);
+    validationFieldErrorList.add("Given Account Number is not match with company accounts");
+}
+
+if (ObjectUtils.isEmpty(v3EntitlementServiceResponse)) {
+    // Case 2: No entitlements found
+    paymentInformation.setBulkstatus(ZERO_TWO);
+    validationFieldErrorList.add("Resource and Features is not matched with company accounts");
+}
+```
+
+## Transaction Level Validations
+
+```
+validateTransactionDetails():
+
+a) IBAN and Batch Booking:
+- IBAN validation for account
+- Batch booking settings validation
+- Payment code validation for specific currencies
+- Transaction amount validation
+
+b) Bank and Contact Details:
+- Bank code validation
+- SWIFT code validation
+- Phone number validation for specific currencies
+- Creditor name validation
+- Address line validation
+
+c) Currency and Country:
+- Currency code validation
+- Country code validation
+- Purpose code validation for specific currencies
+- Transaction currency validation
+- Contract ID validation for FX transactions
+```
+
+### Validates IBAN and batch booking setting
+
+```java
+private boolean ibanValidation(PwsFileUpload fileUpload, 
+                             LazyBatchSqlSessionTemplate lazyBatch,
+                             List<String> validationFieldErrorList, 
+                             String rejectFileOnError, 
+                             CountriesResp countriesResp,
+                             CreditTransferTransactionInformation creditTransferTransaction) {
+    // Get destination country and account number
+    String destinationCountry = creditTransferTransaction.getCreditorAgent()
+            .getFinancialInstitutionIdentification()
+            .getPostalAddress()
+            .getCountry();
+            
+    String ibanAccount = creditTransferTransaction.getCreditorAccount()
+            .getIdentification()
+            .getOther()
+            .getIdentification();
+
+    // Create validation request
+    IBanValidationReqSchema reqSchema = new IBanValidationReqSchema();
+    reqSchema.setAccountNo(ibanAccount);
+    reqSchema.setDestinationCountry(destinationCountry);
+    reqSchema.setResourceId(fileUpload.getResourceId());
+
+    // Validate IBAN
+    boolean isIbanValidation = commonUtil.getIbanValidation(reqSchema, countriesResp);
+    
+    // Handle validation failure
+    if (!isIbanValidation) {
+        handleIbanValidationFailure(fileUpload, lazyBatch, validationFieldErrorList, 
+                                  rejectFileOnError, creditTransferTransaction);
+        return false;
+    }
+
+    return true;
+}
+```
+
+## Validates bank code
+
+```java
+private boolean bankCodeAndSwiftCodeValidation(PwsFileUpload fileUpload, 
+                                             LazyBatchSqlSessionTemplate lazyBatch,
+                                             List<String> validationFieldErrorList, 
+                                             String rejectFileOnError, 
+                                             BankListLookUpResp bankListLookUpResp,
+                                             CreditTransferTransactionInformation creditTransferTransaction) {
+    // Get country code
+    String countryCode = creditTransferTransaction.getCreditorAgent()
+            .getFinancialInstitutionIdentification()
+            .getPostalAddress()
+            .getCountry();
+
+    // Find matching bank details
+    BankListSchema bankListSchema = findMatchingBankDetails(bankListLookUpResp, 
+                                                          fileUpload, countryCode);
+
+    // Get bank code or SWIFT code based on currency
+    String bankCodeAndSwiftCode = getBankcodeAndSwiftcode(creditTransferTransaction);
+
+    // Validate bank details
+    if (ObjectUtils.isEmpty(bankListSchema)) {
+        handleBankCodeValidationError(fileUpload, lazyBatch, validationFieldErrorList, 
+                                    rejectFileOnError, creditTransferTransaction, 
+                                    bankCodeAndSwiftCode);
+        return false;
+    }
+
+    return true;
+}
+```
+
+###  Validates country codes
+
+```java
+private boolean countryCodeValidation(PwsFileUpload fileUpload, 
+                                    LazyBatchSqlSessionTemplate lazyBatch,
+                                    List<String> validationFieldErrorList, 
+                                    String rejectFileOnError,
+                                    CreditTransferTransactionInformation creditTransferTransaction, 
+                                    CountriesResp countriesResp,
+                                    String residencyStatus) {
+    // Get country and currency codes
+    String countryCode = creditTransferTransaction.getCreditorAgent()
+            .getFinancialInstitutionIdentification()
+            .getPostalAddress()
+            .getCountry();
+            
+    String currencyCode = creditTransferTransaction.getAmount()
+            .getInstructedAmount()
+            .getCurrency();
+
+    // Validate country exists in allowed list
+    Optional<CountryLists> countryList = countriesResp.getCountryList()
+            .stream()
+            .filter(country -> country.getCountryAlpha2Code()
+            .equalsIgnoreCase(countryCode))
+            .findAny();
+
+    if (countryList.isEmpty()) {
+        handleCountryCodeValidationError(fileUpload, lazyBatch, validationFieldErrorList, 
+                                       rejectFileOnError, creditTransferTransaction, 
+                                       countryCode);
+        return false;
+    }
+
+    // Special validation for Ireland and Indonesian Rupiah
+    if (COUNTRY_CODE_IE.equals(countryCode) && 
+        COUNTRY_CURRENCY_IDR.equals(currencyCode) && 
+        ObjectUtils.allNull(residencyStatus)) {
+        
+        handleResidencyValidationError(fileUpload, lazyBatch, validationFieldErrorList, 
+                                     rejectFileOnError, creditTransferTransaction, 
+                                     countryCode);
+        return false;
+    }
+
+    return true;
+}
+```
+
+## Duplicate Check Validation
+
+```
+getDuplicateCheckValidation():
+- File level duplicate check
+- Transaction level duplicate check
+- Handles partial and full rejections
+- Updates transaction statuses
+```
+
+## Enrichment
+
+```
+- Total Amount: Sum of all child transactions
+- Highest Amount: Maximum amount among child transactions
+- Transaction Currency: From instruction
+- Transaction Status: ACCEPTED, DELETED, PENDING 
+- Account Currency: From account resource
+- Equivalent Amount: Computed from FX rates if applicable
+```
+
+
