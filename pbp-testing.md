@@ -1,313 +1,421 @@
 ```java
+package com.uob.gwb.pbp.rule;
+
+import com.uob.gwb.pbp.dao.PwsQueryDao;
+import com.uob.gwb.pbp.po.PwsTransactionValidationRules;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import java.util.Arrays;
+import java.util.List;
+import static org.mockito.Mockito.*;
+import static org.assertj.core.api.Assertions.*;
+
 @ExtendWith(MockitoExtension.class)
-class PaymentSaveImplTest {
+class TransactionValidationDecisionMatrixTest {
 
     @Mock
-    private AppConfig config;
+    private PwsQueryDao pwsQueryDao;
 
-    @Mock
-    private RetryTemplate retryTemplate;
-
-    @Mock
-    private SqlSessionTemplate paymentSaveSqlSessionTemplate;
-
-    @Mock
-    private SqlSessionFactory sqlSessionFactory;
-
-    @Mock
-    private SqlSession sqlSession;
-
-    @Mock
-    private PwsSaveDao pwsSaveDao;
-
-    @Mock
-    private PaymentUtils paymentUtils;
-
-    @InjectMocks
-    private PaymentSaveImpl paymentSave;
-
-    private PaymentInformation paymentInfo;
-    private ExecutionContext stepContext;
-    private ExecutionContext jobContext;
-    private Pain001InboundProcessingResult result;
-    private PwsSaveRecord mockRecord;
+    private TransactionValidationDecisionMatrix matrix;
 
     @BeforeEach
     void setUp() {
-        // Initialize basic test data
-        paymentInfo = new PaymentInformation();
-        stepContext = new ExecutionContext();
-        jobContext = new ExecutionContext();
-        result = new Pain001InboundProcessingResult();
-        result.setPaymentSaved(new ArrayList<>());
-        result.setPaymentSavedError(new ArrayList<>());
-        jobContext.put("result", result);
-
-        // Create mock record
-        mockRecord = new PwsSaveRecord("encrypted_1", "BATCH001");
-
-        // Setup SQL Session behavior
-        when(paymentSaveSqlSessionTemplate.getSqlSessionFactory()).thenReturn(sqlSessionFactory);
-        when(sqlSessionFactory.openSession(any(ExecutorType.class))).thenReturn(sqlSession);
-        when(sqlSession.getMapper(PwsSaveDao.class)).thenReturn(pwsSaveDao);
-
-        // Setup PaymentUtils default behavior
-        when(paymentUtils.createPwsSaveRecord(anyLong(), anyString())).thenReturn(mockRecord);
-        doNothing().when(paymentUtils).updatePaymentSaved(any(), any());
-        doNothing().when(paymentUtils).updatePaymentSavedError(any(), any());
+        matrix = new TransactionValidationDecisionMatrix(pwsQueryDao);
     }
 
     @Test
-    void savePaymentInformation_SuccessfulSave() {
-        // Arrange
-        int batchSize = 2;
-        when(config.getBatchInsertSize()).thenReturn(batchSize);
-        setupValidPaymentInfo();
-        setupSuccessfulBulkSave();
-        setupSuccessfulChildTransactionSave();
+    void shouldGenerateSimpleValidationRule() {
+        // Given
+        PwsTransactionValidationRules rule = new PwsTransactionValidationRules();
+        rule.setId(1L);
+        rule.setCountryCode("countryCode == \"SG\"");
+        rule.setChannel("channel == \"MOBILE\"");
+        rule.setCondition_flag("1");
+        rule.setErrorCode("ERR001");
+        rule.setErrorMessage("Test Error");
+        rule.setAction("STOP");
 
-        // Mock mapper method existence for batch insert
-        when(pwsSaveDao.getClass().getMethod(anyString(), any(Class.class)))
-            .thenReturn(null); // Just to avoid NoSuchMethodException
+        when(pwsQueryDao.getAllTransactionValidationRules()).thenReturn(Arrays.asList(rule));
 
-        // Act
-        paymentSave.savePaymentInformation(paymentInfo, stepContext, jobContext);
+        // When
+        matrix.refresh();
+        String generatedRules = matrix.generateRules();
 
-        // Assert
-        verify(paymentUtils).createPwsSaveRecord(anyLong(), anyString());
-        verify(paymentUtils).updatePaymentSaved(eq(result), any(PwsSaveRecord.class));
-        verify(paymentUtils, never()).updatePaymentSavedError(any(), any());
-        verify(pwsSaveDao).insertPwsTransactions(any(PwsTransactions.class));
-        verify(pwsSaveDao).insertPwsBulkTransactions(any(PwsBulkTransactions.class));
-        verify(sqlSession, never()).rollback();
+        // Then
+        assertThat(generatedRules)
+            .contains("rule \"Rule_1\"")
+            .contains("countryCode == \"SG\"")
+            .contains("channel == \"MOBILE\"")
+            .contains("ERR001")
+            .contains("Test Error")
+            .contains("shouldStop.set(true)");
     }
 
     @Test
-    void savePaymentInformation_FailedBatchSave() {
-        // Arrange
-        int batchSize = 2;
-        when(config.getBatchInsertSize()).thenReturn(batchSize);
-        setupValidPaymentInfo();
-        setupSuccessfulBulkSave();
-        setupFailedChildTransactionSave();
+    void shouldGenerateNegativeMatchingRule() {
+        // Given
+        PwsTransactionValidationRules rule = new PwsTransactionValidationRules();
+        rule.setId(2L);
+        rule.setField("amount");
+        rule.setFieldValue(">= 1000");
+        rule.setCondition_flag("-1");
+        rule.setErrorCode("ERR002");
+        rule.setErrorMessage("Amount validation failed");
 
-        // Act
-        paymentSave.savePaymentInformation(paymentInfo, stepContext, jobContext);
+        when(pwsQueryDao.getAllTransactionValidationRules()).thenReturn(Arrays.asList(rule));
 
-        // Assert
-        verify(paymentUtils).createPwsSaveRecord(anyLong(), anyString());
-        verify(paymentUtils, never()).updatePaymentSaved(any(), any());
-        verify(paymentUtils).updatePaymentSavedError(eq(result), any(PwsSaveRecord.class));
+        // When
+        matrix.refresh();
+        String generatedRules = matrix.generateRules();
+
+        // Then
+        assertThat(generatedRules)
+            .contains("rule \"Rule_2\"")
+            .contains("not (")
+            .contains("transaction.amount >= 1000")
+            .contains("ERR002")
+            .contains("Amount validation failed");
     }
 
-    private void setupValidPaymentInfo() {
-        PwsTransactions pwsTransactions = new PwsTransactions();
-        pwsTransactions.setTransactionId(1L);
+    @Test
+    void shouldGenerateBusinessRuleValidation() {
+        // Given
+        PwsTransactionValidationRules rule = new PwsTransactionValidationRules();
+        rule.setId(3L);
+        rule.setBusinessRule("validationHelper.checkDailyLimit(context, transaction.getCustomerId())");
+        rule.setCondition_flag("1");
+        rule.setErrorCode("ERR003");
+        rule.setErrorMessage("Daily limit exceeded");
+        rule.setAction("STOP");
 
-        PwsBulkTransactions pwsBulkTransactions = new PwsBulkTransactions();
-        pwsBulkTransactions.setDmpBatchNumber("BATCH001");
+        when(pwsQueryDao.getAllTransactionValidationRules()).thenReturn(Arrays.asList(rule));
 
-        List<CreditTransferTransaction> transactions = new ArrayList<>();
-        transactions.add(createValidTransaction());
-        transactions.add(createValidTransaction());
+        // When
+        matrix.refresh();
+        String generatedRules = matrix.generateRules();
 
-        paymentInfo.setPwsTransactions(pwsTransactions);
-        paymentInfo.setPwsBulkTransactions(pwsBulkTransactions);
-        paymentInfo.setCreditTransferTransactionList(transactions);
+        // Then
+        assertThat(generatedRules)
+            .contains("rule \"Rule_3\"")
+            .contains("eval(validationHelper.checkDailyLimit")
+            .contains("ERR003")
+            .contains("Daily limit exceeded");
     }
 
-    private CreditTransferTransaction createValidTransaction() {
-        CreditTransferTransaction transaction = new CreditTransferTransaction();
-        transaction.setDmpTransactionStatus(DmpTransactionStatus.APPROVED);
-        
-        PwsBulkTransactionInstructions instructions = new PwsBulkTransactionInstructions();
-        Party party = new Party();
-        PwsParties pwsParties = new PwsParties();
-        party.setPwsParties(pwsParties);
+    @Test
+    void shouldSkipDisabledRules() {
+        // Given
+        PwsTransactionValidationRules rule = new PwsTransactionValidationRules();
+        rule.setId(4L);
+        rule.setCondition_flag("0");
+        rule.setErrorCode("ERR004");
 
-        transaction.setPwsBulkTransactionInstructions(instructions);
-        transaction.setParty(party);
+        when(pwsQueryDao.getAllTransactionValidationRules()).thenReturn(Arrays.asList(rule));
 
-        return transaction;
+        // When
+        matrix.refresh();
+        String generatedRules = matrix.generateRules();
+
+        // Then
+        assertThat(generatedRules).doesNotContain("ERR004");
     }
 
-    private void setupSuccessfulBulkSave() {
-        when(pwsSaveDao.getBankRefSequenceNum()).thenReturn(1);
-        when(pwsSaveDao.insertPwsTransactions(any())).thenReturn(1L);
-        when(pwsSaveDao.insertPwsBulkTransactions(any())).thenReturn(1L);
-    }
+    @Test
+    void shouldThrowExceptionWhenNoRulesFound() {
+        // Given
+        when(pwsQueryDao.getAllTransactionValidationRules()).thenReturn(Arrays.asList());
 
-    private void setupSuccessfulChildTransactionSave() {
-        doAnswer(invocation -> {
-            RetryCallback<Object, RuntimeException> callback = invocation.getArgument(0);
-            return callback.doWithRetry(null);
-        }).when(retryTemplate).execute(any(RetryCallback.class), any(RecoveryCallback.class));
-
-        // Mock successful batch insert
-        doNothing().when(sqlSession).commit();
-        doNothing().when(sqlSession).close();
-    }
-
-    private void setupFailedChildTransactionSave() {
-        doThrow(new BulkProcessingException("Failed to insert", new RuntimeException()))
-            .when(retryTemplate).execute(any(RetryCallback.class), any(RecoveryCallback.class));
-        
-        doNothing().when(sqlSession).rollback();
-        doNothing().when(sqlSession).close();
+        // When/Then
+        assertThatThrownBy(() -> matrix.refresh())
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("No validation rules found");
     }
 }
 ```
 
-
-# Component Test
-
 ```java
-package com.uob.gwb.pbp.test;
+package com.uob.gwb.pbp.rule;
 
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.batch.core.JobExecution;
-import org.springframework.batch.test.JobLauncherTestUtils;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.util.FileSystemUtils;
-
-import javax.sql.DataSource;
-import java.io.File;
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.batch.item.ExecutionContext;
+import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
+import static org.mockito.Mockito.*;
+import static org.assertj.core.api.Assertions.*;
 
-import static org.assertj.core.api.Assertions.assertThat;
+@ExtendWith(MockitoExtension.class)
+class ValidationRuleEngineTest {
 
-@SpringBootTest
-@ActiveProfiles("test")
-class Pain001ProcessingE2ETest {
+    @Mock
+    private TransactionValidationHelper validationHelper;
 
-    @Autowired
-    private DataSource paymentSaveDataSource;
+    @Mock
+    private ExecutionContext executionContext;
 
-    @Autowired
-    private JdbcTemplate jdbcTemplate;
-
-    private static final String TEST_FILE_PATH = "src/test/resources/pain001-test.json";
-    private static final String INBOUND_DIR = "target/test-inbound";
-    private static final String BACKUP_DIR = "target/test-backup";
-    private static final String ERROR_DIR = "target/test-error";
-
-    @BeforeAll
-    static void setupDirectories() throws IOException {
-        // Create test directories
-        createDirectories();
-    }
+    private ValidationRuleEngine engine;
 
     @BeforeEach
-    void setup() throws IOException {
-        // Clean up directories
-        cleanupDirectories();
-        
-        // Copy test file to inbound directory
-        copyTestFile();
-        
-        // Clean and initialize database
-        cleanDatabase();
-        initializeDatabase();
+    void setUp() {
+        engine = new ValidationRuleEngine();
     }
 
     @Test
-    void shouldProcessPain001FileSuccessfully() throws Exception {
-        // Wait for file processing
-        Thread.sleep(2000); // Adjust based on your processing time
+    void shouldRefreshAndFireRules() {
+        // Given
+        String engineName = "test-engine";
+        String rules = """
+            package rules;
+            import com.uob.gwb.pbp.bo.validation.TransactionValidationRecord;
+            global ExecutionContext context;
+            global TransactionValidationHelper validationHelper;
+            
+            rule "Test Rule"
+            when
+                $record: TransactionValidationRecord(countryCode == "SG")
+            then
+                $record.getTransaction().addValidationError("TEST001", "Test Error");
+            end
+            """;
 
-        // Verify database state
-        verifyBulkTransactions();
-        verifyTransactionInstructions();
-        verifyParties();
-        verifyContacts();
-        verifyCharges();
-        verifyTaxInstructions();
+        TransactionValidationRecord record = new TransactionValidationRecord();
+        record.setCountryCode("SG");
+        record.setTransaction(new CreditTransferTransaction());
+
+        // When
+        engine.refreshRules(engineName, rules);
+        engine.fireRules(engineName, Arrays.asList(record), executionContext, validationHelper);
+
+        // Then
+        assertThat(record.getTransaction().getPaymentValidationResults())
+            .hasSize(1)
+            .extracting("errorCode")
+            .containsExactly("TEST001");
     }
 
-    private static void createDirectories() throws IOException {
-        Files.createDirectories(Paths.get(INBOUND_DIR));
-        Files.createDirectories(Paths.get(BACKUP_DIR));
-        Files.createDirectories(Paths.get(ERROR_DIR));
+    @Test
+    void shouldHandleStopCondition() {
+        // Given
+        String engineName = "test-engine";
+        String rules = """
+            package rules;
+            import com.uob.gwb.pbp.bo.validation.TransactionValidationRecord;
+            global ExecutionContext context;
+            global TransactionValidationHelper validationHelper;
+            global AtomicBoolean shouldStop;
+            
+            rule "Stop Rule"
+            when
+                $record: TransactionValidationRecord(countryCode == "SG")
+            then
+                $record.getTransaction().addValidationError("STOP001", "Stop Error");
+                shouldStop.set(true);
+            end
+            """;
+
+        TransactionValidationRecord record = new TransactionValidationRecord();
+        record.setCountryCode("SG");
+        record.setTransaction(new CreditTransferTransaction());
+
+        // When
+        engine.refreshRules(engineName, rules);
+        boolean stopped = engine.fireRulesShouldStop(engineName, Arrays.asList(record), 
+            executionContext, validationHelper, true);
+
+        // Then
+        assertThat(stopped).isTrue();
+        assertThat(record.getTransaction().getPaymentValidationResults())
+            .hasSize(1)
+            .extracting("errorCode")
+            .containsExactly("STOP001");
     }
 
-    private static void cleanupDirectories() throws IOException {
-        FileSystemUtils.deleteRecursively(Paths.get(INBOUND_DIR));
-        FileSystemUtils.deleteRecursively(Paths.get(BACKUP_DIR));
-        FileSystemUtils.deleteRecursively(Paths.get(ERROR_DIR));
-        createDirectories();
+    @Test
+    void shouldHandleInvalidRules() {
+        // Given
+        String engineName = "test-engine";
+        String invalidRules = "invalid drools syntax";
+
+        // When/Then
+        assertThatThrownBy(() -> engine.refreshRules(engineName, invalidRules))
+            .isInstanceOf(RuntimeException.class)
+            .hasMessageContaining("Error compiling rules");
     }
 
-    private void copyTestFile() throws IOException {
-        Path source = Paths.get(TEST_FILE_PATH);
-        Path target = Paths.get(INBOUND_DIR).resolve("payment_Auth.json");
-        Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
-        
-        // Create done file
-        Files.createFile(Paths.get(INBOUND_DIR).resolve("payment_Auth.xml.done"));
+    @Test
+    void shouldHandleMultipleEngineInstances() {
+        // Given
+        String engine1 = "engine1";
+        String engine2 = "engine2";
+        String rules1 = """
+            package rules;
+            rule "Rule1" when then end
+            """;
+        String rules2 = """
+            package rules;
+            rule "Rule2" when then end
+            """;
+
+        // When
+        engine.refreshRules(engine1, rules1);
+        engine.refreshRules(engine2, rules2);
+
+        // Then
+        assertThat(engine.hasEngine(engine1)).isTrue();
+        assertThat(engine.hasEngine(engine2)).isTrue();
+        assertThat(engine.getEngineNames()).containsExactlyInAnyOrder(engine1, engine2);
     }
 
-    private void verifyBulkTransactions() {
-        List<Map<String, Object>> bulkTxns = jdbcTemplate.queryForList(
-            "SELECT * FROM PWS_BULK_TRANSACTIONS");
-        
-        assertThat(bulkTxns).isNotEmpty();
-        // Add more specific assertions based on your test data
-        Map<String, Object> firstTxn = bulkTxns.get(0);
-        assertThat(firstTxn.get("STATUS")).isEqualTo("PENDING");
-        // Add more assertions
+    @Test
+    void shouldCleanupEngineInstance() {
+        // Given
+        String engineName = "test-engine";
+        String rules = "package rules;\nrule \"Test\" when then end";
+        engine.refreshRules(engineName, rules);
+
+        // When
+        engine.removeEngine(engineName);
+
+        // Then
+        assertThat(engine.hasEngine(engineName)).isFalse();
+    }
+}
+```
+
+```java
+package com.uob.gwb.pbp.service.impl;
+
+import com.uob.gwb.pbp.rule.*;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.batch.item.ExecutionContext;
+import java.util.Arrays;
+import java.util.List;
+import static org.mockito.Mockito.*;
+import static org.assertj.core.api.Assertions.*;
+
+@ExtendWith(MockitoExtension.class)
+class TransactionDecisionMatrixServiceImplTest {
+
+    @Mock
+    private TransactionValidationDecisionMatrix txnValidationMatrix;
+
+    @Mock
+    private TransactionValidationHelper txnValidationHelper;
+
+    @Mock
+    private ValidationRuleEngine validationRuleEngine;
+
+    @Mock
+    private ExecutionContext executionContext;
+
+    private TransactionDecisionMatrixServiceImpl service;
+
+    @BeforeEach
+    void setUp() {
+        service = new TransactionDecisionMatrixServiceImpl(
+            txnValidationMatrix, 
+            txnValidationHelper, 
+            validationRuleEngine
+        );
     }
 
-    private void verifyTransactionInstructions() {
-        List<Map<String, Object>> instructions = jdbcTemplate.queryForList(
-            "SELECT * FROM PWS_BULK_TRANSACTION_INSTRUCTIONS");
-        
-        assertThat(instructions).isNotEmpty();
-        // Add more specific assertions
+    @Test
+    void shouldRefreshRulesSuccessfully() {
+        // Given
+        String generatedRules = "package rules;\nrule \"Test\" when then end";
+        when(txnValidationMatrix.generateRules()).thenReturn(generatedRules);
+
+        // When
+        service.refreshRules();
+
+        // Then
+        verify(txnValidationMatrix).refresh();
+        verify(validationRuleEngine).refreshRules(
+            eq("transaction-validation"), 
+            eq(generatedRules)
+        );
     }
 
-    private void verifyParties() {
-        List<Map<String, Object>> parties = jdbcTemplate.queryForList(
-            "SELECT * FROM PWS_PARTIES");
-        
-        assertThat(parties).isNotEmpty();
-        // Add more specific assertions
+    @Test
+    void shouldHandleRefreshRulesFailure() {
+        // Given
+        doThrow(new RuntimeException("Database error"))
+            .when(txnValidationMatrix).refresh();
+
+        // When/Then
+        assertThatThrownBy(() -> service.refreshRules())
+            .isInstanceOf(RuntimeException.class)
+            .hasMessageContaining("Failed to refresh validation rules");
     }
 
-    private void verifyContacts() {
-        List<Map<String, Object>> contacts = jdbcTemplate.queryForList(
-            "SELECT * FROM PWS_PARTY_CONTACTS");
-        
-        assertThat(contacts).isNotEmpty();
-        // Add more specific assertions
+    @Test
+    void shouldApplyRulesSuccessfully() {
+        // Given
+        List<TransactionValidationRecord> records = Arrays.asList(
+            new TransactionValidationRecord()
+        );
+
+        // When
+        service.applyRules(records, executionContext);
+
+        // Then
+        verify(validationRuleEngine).fireRules(
+            eq("transaction-validation"),
+            eq(records),
+            eq(executionContext),
+            eq(txnValidationHelper)
+        );
     }
 
-    private void verifyCharges() {
-        List<Map<String, Object>> charges = jdbcTemplate.queryForList(
-            "SELECT * FROM PWS_TRANSACTION_CHARGES");
-        
-        assertThat(charges).isNotEmpty();
-        // Add more specific assertions
+    @Test
+    void shouldHandleStopCondition() {
+        // Given
+        List<TransactionValidationRecord> records = Arrays.asList(
+            new TransactionValidationRecord()
+        );
+        when(validationRuleEngine.fireRulesShouldStop(
+            any(), any(), any(), any(), anyBoolean()
+        )).thenReturn(true);
+
+        // When
+        boolean stopped = service.applyRulesShouldStop(records, executionContext, true);
+
+        // Then
+        assertThat(stopped).isTrue();
+        verify(validationRuleEngine).fireRulesShouldStop(
+            eq("transaction-validation"),
+            eq(records),
+            eq(executionContext),
+            eq(txnValidationHelper),
+            eq(true)
+        );
     }
 
-    private void verifyTaxInstructions() {
-        List<Map<String, Object>> taxes = jdbcTemplate.queryForList(
-            "SELECT * FROM PWS_TAX_INSTRUCTIONS");
-        
-        assertThat(taxes).isNotEmpty();
-        // Add more specific assertions
+    @Test
+    void shouldInitializeOnStartup() {
+        // Given
+        String generatedRules = "package rules;\nrule \"Test\" when then end";
+        when(txnValidationMatrix.generateRules()).thenReturn(generatedRules);
+
+        // When
+        service.init();
+
+        // Then
+        verify(txnValidationMatrix).refresh();
+        verify(validationRuleEngine).refreshRules(
+            eq("transaction-validation"), 
+            eq(generatedRules)
+        );
     }
 }
 ```
