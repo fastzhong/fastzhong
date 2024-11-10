@@ -237,6 +237,8 @@ public class TransactionValidationDecisionMatrix {
 ```java
 package com.uob.gwb.pbp.rule;
 
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -250,92 +252,154 @@ import org.kie.api.builder.model.KieModuleModel;
 import org.kie.api.runtime.KieContainer;
 import org.kie.api.runtime.KieSession;
 import org.springframework.batch.item.ExecutionContext;
+import org.springframework.stereotype.Component;
+import javax.annotation.PreDestroy;
 
 @Slf4j
+@Component
 public class ValidationRuleEngine {
+
     public final static String SHOULD_STOP = "shouldStop";
     public final static String EXECUTION_CONTEXT = "context";
-    public final static String VALIDATION_HELPER = "validationHelper";
+    public final static String VALIDATION_HELPER = "helper";
 
-    private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
     private final KieServices kieServices;
-    private KieContainer kieContainer;
+    
+    // Map to store different rule engines by name
+    private final Map<String, EngineInstance> engineInstances = new ConcurrentHashMap<>();
 
     public ValidationRuleEngine() {
         this.kieServices = KieServices.Factory.get();
     }
 
-    public void updateRules(List<String> rules) {
-        lock.writeLock().lock();
+    @PreDestroy
+    public void cleanup() {
+        engineInstances.values().forEach(EngineInstance::dispose);
+        engineInstances.clear();
+    }
+
+    /**
+     * Inner class to encapsulate engine instance with its lock
+     */
+    private static class EngineInstance {
+        final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
+        KieContainer kieContainer;
+
+        void dispose() {
+            lock.writeLock().lock();
+            try {
+                if (kieContainer != null) {
+                    kieContainer.dispose();
+                    kieContainer = null;
+                }
+            } finally {
+                lock.writeLock().unlock();
+            }
+        }
+    }
+
+    /**
+     * Refreshes rules for a specific engine instance
+     */
+    public void refreshRules(String engineName, String rules) {
+        if (engineName == null || engineName.trim().isEmpty()) {
+            throw new IllegalArgumentException("Engine name cannot be null or empty");
+        }
+
+        EngineInstance instance = engineInstances.computeIfAbsent(engineName, k -> new EngineInstance());
+        instance.lock.writeLock().lock();
         try {
+            // Dispose existing container if any
+            if (instance.kieContainer != null) {
+                instance.kieContainer.dispose();
+            }
+
             KieModuleModel kieModuleModel = kieServices.newKieModuleModel();
-            KieBaseModel kieBaseModel = kieModuleModel.newKieBaseModel("KBase")
+            KieBaseModel kieBaseModel = kieModuleModel.newKieBaseModel(engineName + "KBase")
                     .setDefault(true)
                     .setEventProcessingMode(org.kie.api.conf.EventProcessingOption.STREAM);
 
-            kieBaseModel.newKieSessionModel("KSession")
+            kieBaseModel.newKieSessionModel(engineName + "KSession")
                     .setDefault(true);
 
             KieFileSystem kieFileSystem = kieServices.newKieFileSystem();
             kieFileSystem.writeKModuleXML(kieModuleModel.toXML());
 
-            for (int i = 0; i < rules.size(); i++) {
-                String ruleName = "Rule_" + i;
-                String ruleContent = rules.get(i);
-                String path = "src/main/resources/rules/" + ruleName + ".drl";
-                kieFileSystem.write(path, ruleContent);
-            }
+            // Write rules into the in-memory KieFileSystem
+            String path = "src/main/resources/rules/" + engineName + ".drl";
+            kieFileSystem.write(path, rules);
 
             KieBuilder kieBuilder = kieServices.newKieBuilder(kieFileSystem);
             kieBuilder.buildAll();
 
+            // Check for errors in rule compilation
             if (kieBuilder.getResults().hasMessages(Message.Level.ERROR)) {
-                log.error("Errors during rule compilation: {}", kieBuilder.getResults().getMessages());
-                throw new RuntimeException("Error compiling rules: " + kieBuilder.getResults().getMessages());
+                log.error("Errors during rule compilation for engine {}: {}", 
+                    engineName, kieBuilder.getResults().getMessages());
+                throw new RuntimeException("Error compiling rules for engine " + engineName + ": " 
+                    + kieBuilder.getResults().getMessages());
             }
 
-            kieContainer = kieServices.newKieContainer(kieServices.getRepository().getDefaultReleaseId());
+            // Create a new KieContainer
+            instance.kieContainer = kieServices.newKieContainer(
+                kieServices.getRepository().getDefaultReleaseId());
+            
+            log.info("Successfully refreshed rules for engine: {}", engineName);
+        } catch (Exception e) {
+            log.error("Failed to refresh rules for engine {}", engineName, e);
+            throw new RuntimeException("Failed to refresh rules for engine " + engineName, e);
         } finally {
-            lock.writeLock().unlock();
+            instance.lock.writeLock().unlock();
         }
     }
 
-    public void fireRules(List<?> facts, ExecutionContext context, TransactionValidationHelper helper) {
-        lock.readLock().lock();
+    /**
+     * Fires rules for a specific engine instance
+     */
+    public void fireRules(String engineName, List<?> facts, 
+            ExecutionContext context, TransactionValidationHelper helper) {
+        EngineInstance instance = getEngineInstance(engineName);
+        instance.lock.readLock().lock();
         try {
-            if (kieContainer == null) {
-                throw new IllegalStateException("Rules have not been initialized. Call updateRules() first.");
+            if (instance.kieContainer == null) {
+                throw new IllegalStateException("Rules have not been initialized for engine " + engineName 
+                    + ". Call refreshRules() first.");
             }
 
-            KieSession kieSession = kieContainer.newKieSession();
+            KieSession kieSession = instance.kieContainer.newKieSession();
             try {
                 // Set globals
                 kieSession.setGlobal(EXECUTION_CONTEXT, context);
                 kieSession.setGlobal(VALIDATION_HELPER, helper);
-                
-                // Insert facts
-                for (Object fact : facts) {
-                    kieSession.insert(fact);
-                }
-                kieSession.fireAllRules();
+
+                // Insert facts and fire rules
+                facts.forEach(kieSession::insert);
+                int firedRules = kieSession.fireAllRules();
+                log.debug("Fired {} rules for engine {}", firedRules, engineName);
+
             } finally {
                 kieSession.dispose();
             }
         } finally {
-            lock.readLock().unlock();
+            instance.lock.readLock().unlock();
         }
     }
 
-    public boolean fireRulesShouldStop(List<?> facts, ExecutionContext context, 
-            TransactionValidationHelper helper, boolean stopOnError) {
-        lock.readLock().lock();
+    /**
+     * Fires rules with stop condition for a specific engine instance
+     */
+    public boolean fireRulesShouldStop(String engineName, List<?> facts, 
+            ExecutionContext context, TransactionValidationHelper helper, boolean stopOnError) {
+        EngineInstance instance = getEngineInstance(engineName);
+        instance.lock.readLock().lock();
         boolean stop = false;
         try {
-            if (kieContainer == null) {
-                throw new IllegalStateException("Rules have not been initialized. Call updateRules() first.");
+            if (instance.kieContainer == null) {
+                throw new IllegalStateException("Rules have not been initialized for engine " + engineName 
+                    + ". Call refreshRules() first.");
             }
 
-            KieSession kieSession = kieContainer.newKieSession();
+            KieSession kieSession = instance.kieContainer.newKieSession();
             try {
                 // Set globals
                 AtomicBoolean shouldStop = new AtomicBoolean(false);
@@ -343,11 +407,15 @@ public class ValidationRuleEngine {
                 kieSession.setGlobal(EXECUTION_CONTEXT, context);
                 kieSession.setGlobal(VALIDATION_HELPER, helper);
 
+                // Insert facts and fire rules
                 for (Object fact : facts) {
                     kieSession.insert(fact);
-                    kieSession.fireAllRules();
+                    int firedRules = kieSession.fireAllRules();
+                    log.debug("Fired {} rules for fact in engine {}", firedRules, engineName);
+                    
                     if (stopOnError && shouldStop.get()) {
                         stop = true;
+                        log.debug("Stopping rule execution for engine {} due to stop condition", engineName);
                         break;
                     }
                 }
@@ -355,9 +423,50 @@ public class ValidationRuleEngine {
                 kieSession.dispose();
             }
         } finally {
-            lock.readLock().unlock();
+            instance.lock.readLock().unlock();
         }
+
         return stop;
+    }
+
+    /**
+     * Gets the engine instance, throwing if it doesn't exist
+     */
+    private EngineInstance getEngineInstance(String engineName) {
+        if (engineName == null || engineName.trim().isEmpty()) {
+            throw new IllegalArgumentException("Engine name cannot be null or empty");
+        }
+        
+        EngineInstance instance = engineInstances.get(engineName);
+        if (instance == null) {
+            throw new IllegalStateException("No rule engine instance found for name: " + engineName);
+        }
+        return instance;
+    }
+
+    /**
+     * Removes a specific engine instance
+     */
+    public void removeEngine(String engineName) {
+        EngineInstance instance = engineInstances.remove(engineName);
+        if (instance != null) {
+            instance.dispose();
+            log.info("Removed rule engine instance: {}", engineName);
+        }
+    }
+
+    /**
+     * Checks if an engine instance exists
+     */
+    public boolean hasEngine(String engineName) {
+        return engineInstances.containsKey(engineName);
+    }
+
+    /**
+     * Gets all active engine names
+     */
+    public Set<String> getEngineNames() {
+        return new HashSet<>(engineInstances.keySet());
     }
 }
 ```
@@ -370,6 +479,8 @@ public class ValidationRuleEngine {
 @Service("transactionDecisionMatrixService")
 public class TransactionDecisionMatrixServiceImpl implements DecisionMatrixService<TransactionValidationRecord> {
 
+    private static final String ENGINE_NAME = "transaction-validation";
+    
     private final TransactionValidationDecisionMatrix txnValidationMatrix;
     private final TransactionValidationHelper txnValidationHelper;
     private final ValidationRuleEngine validationRuleEngine;
@@ -382,16 +493,9 @@ public class TransactionDecisionMatrixServiceImpl implements DecisionMatrixServi
     @Override
     public void refreshRules() {
         try {
-            // Reload rules from database
             txnValidationMatrix.refresh();
-            
-            // Generate Drools rules
             String rules = txnValidationMatrix.generateRules();
-            
-            // Update rule engine
-            validationRuleEngine.refreshRules(rules);
-            
-            log.info("Successfully refreshed validation rules");
+            validationRuleEngine.refreshRules(ENGINE_NAME, rules);
         } catch (Exception e) {
             log.error("Failed to refresh validation rules", e);
             throw new RuntimeException("Failed to refresh validation rules", e);
@@ -399,14 +503,15 @@ public class TransactionDecisionMatrixServiceImpl implements DecisionMatrixServi
     }
 
     @Override
-    public void applyRules(List<TransactionValidationRecord> txnValidationRecords, ExecutionContext context) {
-        validationRuleEngine.fireRules(txnValidationRecords, context, txnValidationHelper);
+    public void applyRules(List<TransactionValidationRecord> records, ExecutionContext context) {
+        validationRuleEngine.fireRules(ENGINE_NAME, records, context, txnValidationHelper);
     }
 
     @Override
-    public boolean applyRulesShouldStop(List<TransactionValidationRecord> txnValidationRecords,
+    public boolean applyRulesShouldStop(List<TransactionValidationRecord> records,
             ExecutionContext context, boolean stopOnError) {
-        return validationRuleEngine.fireRulesShouldStop(txnValidationRecords, context, txnValidationHelper, stopOnError);
+        return validationRuleEngine.fireRulesShouldStop(
+            ENGINE_NAME, records, context, txnValidationHelper, stopOnError);
     }
 }
 ```
