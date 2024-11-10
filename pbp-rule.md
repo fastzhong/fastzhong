@@ -142,30 +142,43 @@ public class TransactionValidationDecisionMatrix {
             // Rule header
             rule.append("rule \"Rule_").append(row.getId()).append("\"\n");
             rule.append("when\n");
-            rule.append("    $record: TransactionValidationRecord(\n");
 
+            // For condFlag = -1, we need to negate the entire condition
+            boolean isNegative = "-1".equals(condFlag);
+            
+            // Always bind the record first
+            rule.append("    $record: TransactionValidationRecord()\n");
+            
+            if (isNegative) {
+                rule.append("    not (\n");
+            }
+            
+            // Build conditions
+            List<String> allConditions = new ArrayList<>();
+            
             // Add static conditions
             String staticConds = buildStaticConditions(row);
             if (StringUtils.isNotBlank(staticConds)) {
-                rule.append("        ").append(staticConds).append(",\n");
+                allConditions.add(String.format("$record: TransactionValidationRecord(\n        %s,\n        transaction != null\n    )", staticConds));
+            } else {
+                allConditions.add("$record: TransactionValidationRecord(transaction != null)");
             }
-
-            // Ensure transaction is not null
-            rule.append("        transaction != null\n    )\n");
 
             // Add dynamic conditions
             String dynamicConds = buildDynamicConditions(row);
             if (StringUtils.isNotBlank(dynamicConds)) {
-                rule.append("    and ").append(dynamicConds).append("\n");
+                allConditions.add(dynamicConds);
+            }
+
+            // Join all conditions
+            rule.append("    ").append(String.join(" and\n    ", allConditions)).append("\n");
+
+            if (isNegative) {
+                rule.append("    )\n");
             }
 
             // Rule actions
             rule.append("then\n");
-            
-            // Handle condition flag (-1 for NOT matching)
-            if ("-1".equals(condFlag)) {
-                rule.append("    // Fire when NOT matching\n");
-            }
 
             // Add validation error
             rule.append("    $record.getTransaction().addValidationError(")
@@ -173,11 +186,10 @@ public class TransactionValidationDecisionMatrix {
                 .append("\"").append(row.getValidationResult(ValidationResultColumn.ErrorMessage)).append("\"")
                 .append(");\n");
 
-            // Add stop logic if action is STOP
+            // Handle STOP action
             if ("STOP".equalsIgnoreCase(row.getValidationResult(ValidationResultColumn.Action))) {
-                rule.append("    if (shouldStop != null) {\n");
-                rule.append("        shouldStop.set(true);\n");
-                rule.append("    }\n");
+                rule.append("    context.putBoolean(\"").append(SHOULD_STOP).append("\", true);\n");
+                rule.append("    shouldStop.set(true);\n");
             }
 
             rule.append("end\n\n");
