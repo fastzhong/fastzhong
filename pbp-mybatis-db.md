@@ -338,126 +338,440 @@ public interface PwsSaveDao {
 # Mapper.xml
 
 ```xml
-<!-- PwsSaveMapper.xml -->
-<mapper namespace="com.example.dao.PwsSaveDao">
-
-    <!-- Get Bank Reference Sequence Number -->
-    <select id="getBankRefSequenceNum" resultType="int">
-        SELECT SEQ_BANK_REF.NEXTVAL FROM DUAL
-    </select>
-
-    <select id="getBatchBankRefSequenceNum" resultType="int">
-        SELECT SEQ_BANK_REF.NEXTVAL FROM DUAL CONNECT BY LEVEL &lt;= #{count}
-    </select>
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.uob.gwb.pbp.dao.pws.PwsSaveDao">
 
     <!-- Insert PwsTransactions -->
-    <insert id="insertPwsTransactions" parameterType="com.example.model.PwsTransactions" useGeneratedKeys="true" keyProperty="transactionId">
-        INSERT INTO PWS_TRANSACTIONS (
-            ACCOUNT_CURRENCY, ACCOUNT_NUMBER, AUTHORIZATION_STATUS, CAPTURE_STATUS, COMPANY_GROUP_ID,
-            COMPANY_ID, COMPANY_NAME, WIZARD, INITIATION_TIME, RELEASE_DATE, PROCESSING_STATUS, BANK_ENTITY_ID,
-            BANK_REFERENCE_ID, RESOURCE_ID, CHANGE_TOKEN, INITIATED_BY, RELEASED_BY, MAXIMUM_AMOUNT, FEATURE_ID,
-            APPLICATION_TYPE, CORRELATION_ID, CUSTOMER_TRANSACTION_STATUS, REJECT_REASON, TRANSACTION_CURRENCY,
-            TRANSACTION_TOTAL_AMOUNT, TERMINATED_BY_DEBTOR_FLAG, HIGHEST_AMOUNT, ACCOUNT_PAB, TOTAL_CHILD, TOTAL_AMOUNT,
-            ORIGINAL_TRANSACTION_ID, TRANSACTION_CATEGORY
+    <insert id="insertPwsTransactions" parameterType="com.uob.gwb.pbp.po.PwsTransactions"
+            statementType="PREPARED" useGeneratedKeys="true" keyProperty="transactionId" keyColumn="transaction_id">
+        <![CDATA[
+        INSERT INTO pws_transactions (
+            bank_entity_id,
+            resource_id,
+            feature_id,
+            correlation_id,
+            bank_reference_id,
+            application_type,
+            account_currency,
+            account_number,
+            company_group_id,
+            company_id,
+            company_name,
+            transaction_currency,
+            total_amount,
+            total_child,
+            highest_amount,
+            authorization_status,
+            capture_status,
+            customer_transaction_status,
+            processing_status,
+            reject_reason,
+            initiated_by,
+            initiation_time,
+            released_by,
+            release_date,
+            change_token
         ) VALUES (
-            #{accountCurrency}, #{accountNumber}, #{authorizationStatus}, #{captureStatus}, #{companyGroupId},
-            #{companyId}, #{companyName}, #{wizard}, #{initiationTime}, #{releaseDate}, #{processingStatus}, #{bankEntityId},
-            #{bankReferenceId}, #{resourceId}, #{changeToken}, #{initiatedBy}, #{releasedBy}, #{maximumAmount}, #{featureId},
-            #{applicationType}, #{correlationId}, #{customerTransactionStatus}, #{rejectReason}, #{transactionCurrency},
-            #{transactionTotalAmount}, #{terminatedByDebtorFlag}, #{highestAmount}, #{accountPAB}, #{totalChild}, #{totalAmount},
-            #{originalTransactionId}, #{transactionCategory}
+            #{bankEntityId},
+            #{resourceId},
+            #{featureId},
+            #{correlationId},
+            #{bankReferenceId},
+            #{applicationType},
+            #{accountCurrency},
+            #{accountNumber},
+            #{companyGroupId},
+            #{companyId},
+            #{companyName},
+            #{transactionCurrency},
+            #{totalAmount},
+            #{totalChild},
+            #{highestAmount},
+            #{authorizationStatus},
+            #{captureStatus},
+            #{customerTransactionStatus},
+            #{processingStatus},
+            #{rejectReason},
+            #{initiatedBy},
+            #{initiationTime},
+            #{releasedBy},
+            #{releaseDate},
+            #{changeToken}
         )
+        ]]>
     </insert>
 
     <!-- Insert PwsBulkTransactions -->
-    <insert id="insertPwsBulkTransactions" parameterType="com.example.model.PwsBulkTransactions" useGeneratedKeys="true" keyProperty="bkTransactionId">
-        INSERT INTO PWS_BULK_TRANSACTIONS (
-            TRANSACTION_ID, FILE_UPLOAD_ID, RECIPIENTS_REFERENCE, RECIPIENTS_DESCRIPTION, FATE_FILE_NAME,
-            FATE_FILE_PATH, COMBINE_DEBIT, STATUS, CHANGE_TOKEN, ERROR_DETAIL, FINAL_FATE_UPDATED_DATE, ACK_FILE_PATH,
-            ACK_UPDATED_DATE, TRANSFER_DATE, USER_COMMENTS, DMP_BATCH_NUMBER, REJECT_CODE, BATCH_BOOKING,
-            CHARGE_OPTIONS, PAYROLL_OPTIONS
+    <insert id="insertPwsBulkTransactions" parameterType="com.uob.gwb.pbp.po.PwsBulkTransactions"
+            statementType="PREPARED" useGeneratedKeys="true" keyProperty="bkTransactionId" keyColumn="bk_transaction_id">
+        <![CDATA[
+        INSERT INTO pws_bulk_transactions (
+            transaction_id,
+            file_upload_id,
+            recipients_reference,
+            recipients_description,
+            fate_file_name,
+            fate_file_path,
+            combine_debit,
+            status,
+            change_token,
+            error_detail,
+            final_fate_updated_date,
+            ack_file_path,
+            ack_updated_date,
+            transfer_date,
+            user_comments,
+            dmp_batch_number,
+            reject_code,
+            batch_booking,
+            charge_options,
+            payroll_options
         ) VALUES (
-            #{transactionId}, #{fileUploadId}, #{recipientsReference}, #{recipientsDescription}, #{fateFileName},
-            #{fateFilePath}, #{combineDebit}, #{status}, #{changeToken}, #{errorDetail}, #{finalFateUpdatedDate}, #{ackFilePath},
-            #{ackUpdatedDate}, #{transferDate}, #{userComments}, #{dmpBatchNumber}, #{rejectCode}, #{batchBooking},
-            #{chargeOptions}, #{payrollOptions}
+            #{transactionId},
+            #{fileUploadId},
+            #{recipientsReference},
+            #{recipientsDescription},
+            #{fateFileName},
+            #{fateFilePath},
+            #{combineDebit},
+            #{status},
+            #{changeToken},
+            #{errorDetail},
+            #{finalFateUpdatedDate},
+            #{ackFilePath},
+            #{ackUpdatedDate},
+            #{transferDate},
+            #{userComments},
+            #{dmpBatchNumber},
+            #{rejectCode},
+            #{batchBooking},
+            #{chargeOptions},
+            #{payrollOptions}
         )
+        ]]>
     </insert>
 
     <!-- Insert PwsBulkTransactionInstructions -->
-    <insert id="insertPwsBulkTransactionInstructions" parameterType="com.example.model.PwsBulkTransactionInstructions" useGeneratedKeys="true" keyProperty="instructionId">
-        INSERT INTO PWS_BULK_TRANSACTION_INSTRUCTIONS (
-            /* Include fields here */
+    <insert id="insertPwsBulkTransactionInstructions" parameterType="com.uob.gwb.pbp.po.PwsBulkTransactionInstructions"
+            statementType="PREPARED" useGeneratedKeys="true" keyProperty="childTransactionInstructionsId" keyColumn="child_transaction_instructions_id">
+        <![CDATA[
+        INSERT INTO pws_bulk_transaction_instructions (
+            child_bank_reference_id,
+            transaction_id,
+            bank_reference_id,
+            transaction_currency,
+            transaction_amount,
+            equivalent_currency,
+            equivalent_amount,
+            destination_country,
+            destination_bank_name,
+            fx_flag,
+            charge_options,
+            original_value_date,
+            value_date,
+            settlement_date,
+            payment_code_id,
+            payment_details,
+            rail_code,
+            is_recurring,
+            is_pre_approved,
+            customer_reference,
+            customer_transaction_status,
+            processing_status,
+            reject_reason,
+            remarks_for_approval,
+            user_comments,
+            duplication_flag,
+            reject_code,
+            transfer_speed,
+            dmp_trans_ref,
+            child_template_id,
+            initiation_time
         ) VALUES (
-            /* Include values here */
+            #{childBankReferenceId},
+            #{transactionId},
+            #{bankReferenceId},
+            #{transactionCurrency},
+            #{transactionAmount},
+            #{equivalentCurrency},
+            #{equivalentAmount},
+            #{destinationCountry},
+            #{destinationBankName},
+            #{fxFlag},
+            #{chargeOptions},
+            #{originalValueDate},
+            #{valueDate},
+            #{settlementDate},
+            #{paymentCodeId},
+            #{paymentDetails},
+            #{railCode},
+            #{isRecurring},
+            #{isPreApproved},
+            #{customerReference},
+            #{customerTransactionStatus},
+            #{processingStatus},
+            #{rejectReason},
+            #{remarksForApproval},
+            #{userComments},
+            #{duplicationFlag},
+            #{rejectCode},
+            #{transferSpeed},
+            #{dmpTransRef},
+            #{childTemplateId},
+            #{initiationTime}
         )
+        ]]>
     </insert>
 
     <!-- Insert PwsParties -->
-    <insert id="insertPwsParties" parameterType="com.example.model.PwsParties" useGeneratedKeys="true" keyProperty="partyId">
-        INSERT INTO PWS_PARTIES (
-            BANK_ENTITY_ID, TRANSACTION_ID, BANK_REFERENCE_ID, CHILD_BANK_REFERENCE_ID, BANK_CODE, PARTY_ACCOUNT_TYPE,
-            PARTY_ACCOUNT_NUMBER, PARTY_ACCOUNT_NAME, PARTY_ACCOUNT_CURRENCY, PARTY_AGENT_BIC, PARTY_NAME, PARTY_ROLE,
-            RESIDENTIAL_STATUS, PROXY_ID, PROXY_ID_TYPE, ID_ISSUING_COUNTRY, PRODUCT_TYPE, PRIMARY_IDENTIFICATION_TYPE,
-            PRIMARY_IDENTIFICATION_VALUE, SECONDARY_IDENTIFICATION_TYPE, SECONDARY_IDENTIFICATION_VALUE, REGISTRATION_ID,
-            BENEFICIARY_REFERENCE_ID, SWIFT_CODE, PARTY_TYPE, RESIDENCY_STATUS, ACCOUNT_OWNERSHIP, RELATIONSHIP_TYPE,
-            ULTIMATE_PAYEE_COUNTRY_CODE, ULTIMATE_PAYEE_NAME, PARTY_MODIFIED_DATE, BENEFICIARY_CHANGE_TOKEN, IS_NEW,
-            IS_PREAPPROVED, BANK_ID
+    <insert id="insertPwsParties" parameterType="com.uob.gwb.pbp.po.PwsParties"
+            statementType="PREPARED" useGeneratedKeys="true" keyProperty="partyId" keyColumn="party_id">
+        <![CDATA[
+        INSERT INTO pws_parties (
+            bank_entity_id,
+            transaction_id,
+            bank_reference_id,
+            child_bank_reference_id,
+            bank_code,
+            bank_id,
+            party_account_type,
+            party_account_number,
+            party_account_name,
+            party_nick_name,
+            party_masked_nick_name,
+            party_account_currency,
+            party_agent_bic,
+            party_name,
+            party_role,
+            residential_status,
+            proxy_id,
+            proxy_id_type,
+            id_issuing_country,
+            product_type,
+            primary_identification_type,
+            primary_identification_value,
+            secondary_identification_type,
+            secondary_identification_value,
+            registration_id,
+            beneficiary_reference_id,
+            swift_code,
+            party_type,
+            residency_status,
+            account_ownership,
+            relationship_type,
+            ultimate_payee_country_code,
+            ultimate_payee_name,
+            ultimate_payer_name,
+            is_preapproved,
+            party_modified_date,
+            beneficiary_change_token
         ) VALUES (
-            #{bankEntityId}, #{transactionId}, #{bankReferenceId}, #{childBankReferenceId}, #{bankCode}, #{partyAccountType},
-            #{partyAccountNumber}, #{partyAccountName}, #{partyAccountCurrency}, #{partyAgentBIC}, #{partyName}, #{partyRole},
-            #{residentialStatus}, #{proxyId}, #{proxyIdType}, #{idIssuingCountry}, #{productType}, #{primaryIdentificationType},
-            #{primaryIdentificationValue}, #{secondaryIdentificationType}, #{secondaryIdentificationValue}, #{registrationId},
-            #{beneficiaryReferenceId}, #{swiftCode}, #{partyType}, #{residencyStatus}, #{accountOwnership}, #{relationshipType},
-            #{ultimatePayeeCountryCode}, #{ultimatePayeeName}, #{partyModifiedDate}, #{beneficiaryChangeToken}, #{isNew},
-            #{isPreapproved}, #{bankId}
+            #{bankEntityId},
+            #{transactionId},
+            #{bankReferenceId},
+            #{childBankReferenceId},
+            #{bankCode},
+            #{bankId},
+            #{partyAccountType},
+            #{partyAccountNumber},
+            #{partyAccountName},
+            #{partyNickName},
+            #{partyMaskedNickName},
+            #{partyAccountCurrency},
+            #{partyAgentBIC},
+            #{partyName},
+            #{partyRole},
+            #{residentialStatus},
+            #{proxyId},
+            #{proxyIdType},
+            #{idIssuingCountry},
+            #{productType},
+            #{primaryIdentificationType},
+            #{primaryIdentificationValue},
+            #{secondaryIdentificationType},
+            #{secondaryIdentificationValue},
+            #{registrationId},
+            #{beneficiaryReferenceId},
+            #{swiftCode},
+            #{partyType},
+            #{residencyStatus},
+            #{accountOwnership},
+            #{relationshipType},
+            #{ultimatePayeeCountryCode},
+            #{ultimatePayeeName},
+            #{ultimatePayerName},
+            #{isPreapproved},
+            #{partyModifiedDate},
+            #{beneficiaryChangeToken}
         )
+        ]]>
     </insert>
 
     <!-- Insert PwsPartyContacts -->
-    <insert id="insertPwsPartyContacts" parameterType="com.example.model.PwsPartyContacts" useGeneratedKeys="true" keyProperty="partyContactId">
-        INSERT INTO PWS_PARTY_CONTACTS (
-            PARTY_ID, BANK_ENTITY_ID, TRANSACTION_ID, BANK_REFERENCE_ID, CHILD_BANK_REFERENCE_ID, ADDRESS1, ADDRESS2,
-            ADDRESS3, ADDRESS4, ADDRESS5, PHONE_COUNTRY, PHONE_NO, PHONE_COUNTRY_CODE, COUNTRY, PROVINCE, DISTRICT_NAME,
-            SUB_DISTRICT_NAME, STREET_NAME, TOWN_NAME, POSTAL_CODE, BUILDING_NUMBER, BUILDING_NAME, FLOOR, UNIT_NUMBER,
-            DEPARTMENT, IS_NEW, PARTY_CONTACT_TYPE
+    <insert id="insertPwsPartyContacts" parameterType="com.uob.gwb.pbp.po.PwsPartyContacts" statementType="PREPARED">
+        <![CDATA[
+        INSERT INTO pws_party_contacts (
+            party_id,
+            transaction_id,
+            bank_entity_id,
+            bank_reference_id,
+            child_bank_reference_id,
+            address1,
+            address2,
+            address3,
+            address4,
+            address5,
+            phone_country,
+            phone_no,
+            phone_country_code,
+            address_category,
+            country,
+            province,
+            district_name,
+            sub_district_name,
+            street_name,
+            town_name,
+            postal_code,
+            building_number,
+            building_name,
+            floor,
+            unit_number,
+            department,
+            sub_department,
+            party_contact_type
         ) VALUES (
-            #{partyId}, #{bankEntityId}, #{transactionId}, #{bankReferenceId}, #{childBankReferenceId}, #{address1}, #{address2},
-            #{address3}, #{address4}, #{address5}, #{phoneCountry}, #{phoneNo}, #{phoneCountryCode}, #{country}, #{province},
-            #{districtName}, #{subDistrictName}, #{streetName}, #{townName}, #{postalCode}, #{buildingNumber}, #{buildingName},
-            #{floor}, #{unitNumber}, #{department}, #{isNew}, #{partyContactType}
+            #{partyId},
+            #{transactionId},
+            #{bankEntityId},
+            #{bankReferenceId},
+            #{childBankReferenceId},
+            #{address1},
+            #{address2},
+            #{address3},
+            #{address4},
+            #{address5},
+            #{phoneCountry},
+            #{phoneNo},
+            #{phoneCountryCode},
+            #{addressCategory},
+            #{country},
+            #{province},
+            #{districtName},
+            #{subDistrictName},
+            #{streetName},
+            #{townName},
+            #{postalCode},
+            #{buildingNumber},
+            #{buildingName},
+            #{floor},
+            #{unitNumber},
+            #{department},
+            #{subDepartment},
+            #{partyContactType}
         )
-    </insert>
-
-    <!-- Insert PwsPartyBanks -->
-    <insert id="insertPwsPartyBanks" parameterType="com.example.model.PwsPartyBanks" useGeneratedKeys="true" keyProperty="bankId">
-        INSERT INTO PWS_PARTY_BANKS (
-            PARTY_ID, TRANSACTION_ID, BANK_TYPE, IS_NEW, CLEARING_CODE_ID, CLEARING_CODE, CLEARING_CODE_DESC, BANK_CODE,
-            BANK_SWIFT_CODE, BANK_NAME, BANK_ADDRESS1, BANK_ADDRESS2, BANK_ADDRESS3, BANK_TOWN, BANK_COUNTRY_CODE,
-            BANK_COUNTRY_NAME, BRANCH_NAME_ADDRESS1, BRANCH_NAME_ADDRESS2, BRANCH_NAME_ADDRESS3, BANK_COUNTRY
-        ) VALUES (
-            #{partyId}, #{transactionId}, #{bankType}, #{isNew}, #{clearingCodeId}, #{clearingCode}, #{clearingCodeDesc}, #{bankCode},
-            #{bankSwiftCode}, #{bankName}, #{bankAddress1}, #{bankAddress2}, #{bankAddress3}, #{bankTown}, #{bankCountryCode},
-            #{bankCountryName}, #{branchNameAddress1}, #{branchNameAddress2}, #{branchNameAddress3}, #{bankCountry}
-        )
+        ]]>
     </insert>
 
     <!-- Insert PwsTransactionAdvices -->
-    <insert id="insertPwsTransactionAdvices" parameterType="com.example.model.PwsTransactionAdvices" useGeneratedKeys="true" keyProperty="adviceId">
-        INSERT INTO PWS_TRANSACTION_ADVICES (
-            BANK_ENTITY_ID, TRANSACTION_ID, BANK_REFERENCE_ID, CHILD_BANK_REFERENCE_ID, PARTY_ID, ADVICE_ID, PARTY_NAME1,
-            PARTY_NAME2, REFERENCE_NO, ADVISE_MESSAGE, DELIVERY_METHOD, DELIVERY_ADDRESS
+    <insert id="insertPwsTransactionAdvices" parameterType="com.uob.gwb.pbp.po.PwsTransactionAdvices" statementType="PREPARED">
+        <![CDATA[
+        INSERT INTO pws_transaction_advices (
+            party_id,
+            bank_entity_id,
+            transaction_id,
+            bank_reference_id,
+            child_bank_reference_id,
+            advice_id,
+            party_name1,
+            party_name2,
+            party_fax_number,
+            party_contact_number,
+            reference_no,
+            advise_message,
+            delivery_method,
+            delivery_address
         ) VALUES (
-            #{bankEntityId}, #{transactionId}, #{bankReferenceId}, #{childBankReferenceId}, #{partyId}, #{adviceId},
-            #{partyName1}, #{partyName2}, #{referenceNo}, #{adviseMessage}, #{deliveryMethod}, #{deliveryAddress}
+            #{partyId},
+            #{bankEntityId},
+            #{transactionId},
+            #{bankReferenceId},
+            #{childBankReferenceId},
+            #{adviceId},
+            #{partyName1},
+            #{partyName2},
+            #{partyFaxNumber},
+            #{partyContactNumber},
+            #{referenceNo},
+            #{adviseMessage},
+            #{deliveryMethod},
+            #{deliveryAddress}
         )
+        ]]>
     </insert>
 
     <!-- Insert PwsTaxInstructions -->
-    <insert id="insertPwsTaxInstructions" parameterType="com.example.model.PwsTaxInstructions" useGeneratedKeys="true" keyProperty="instructionId">
-        INSERT INTO PWS_TAX_INSTRUCTIONS (
-            BANK_REFERENCE_ID, CHILD_BANK_REFERENCE
+    <insert id="insertPwsTaxInstructions" parameterType="com.uob.gwb.pbp.po.PwsTaxInstructions" statementType="PREPARED">
+        <![CDATA[
+        INSERT INTO pws_tax_instructions (
+            transaction_id,
+            bank_reference_id,
+            child_bank_reference_id,
+            tax_payer_name,
+            tax_payer_id,
+            tax_payee_name,
+            tax_payee_id,
+            tax_name,
+            tax_type,
+            tax_payment_condition,
+            tax_document_number,
+            tax_sequence_number,
+            taxable_amount,
+            tax_amount,
+            vat_amount,
+            type_of_income,
+            tax_rate_in_percentage,
+            tax_description,
+            tax_period_year,
+            tax_period_month,
+            tax_period_day,
+            tax_subscription,
+            tax_return_type,
+            payer_vat_branch_code,
+            payee_vat_branch_code,
+            vat_branch_code
+        ) VALUES (
+            #{transactionId},
+            #{bankReferenceId},
+            #{childBankReferenceId},
+            #{taxPayerName},
+            #{taxPayerId},
+            #{taxPayeeName},
+            #{taxPayeeId},
+            #{taxName},
+            #{taxType},
+            #{taxPaymentCondition},
+            #{taxDocumentNumber},
+            #{taxSequenceNumber},
+            #{taxableAmount},
+            #{taxAmount},
+            #{vatAmount},
+            #{typeOfIncome},
+            #{taxRateInPercentage},
+            #{taxDescription},
+            #{taxPeriodYear},
+            #{taxPeriodMonth},
+            #{taxPeriodDay},
+            #{taxSubscription},
+            #{taxReturnType},
+            #{payerVatBranchCode},
+            #{payeeVatBranchCode},
+            #{vatBranchCode}
+        )
+        ]]>
+    </insert>
 
+</mapper>
 ```
 
 # mybatis config 
