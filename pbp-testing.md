@@ -326,6 +326,318 @@ class BulkProcessingFlowBuilderTest {
 }
 ```
 
+# rule 
+```java
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import java.util.List;
+
+@ExtendWith(MockitoExtension.class)
+class ValidationRuleEngineTest {
+
+    @Mock
+    private PaymentValidationHelper validationHelper;
+
+    @Mock
+    private ExecutionContext executionContext;
+
+    private ValidationRuleEngine engine;
+
+    @BeforeEach
+    void setUp() {
+        engine = new ValidationRuleEngine();
+    }
+
+    @Test
+    void shouldRefreshAndFireRules() {
+        // Arrange
+        String engineName = "test-engine";
+        String rules = """
+                package rules;
+                import com.uob.gwb.pbp.bo.validation.TransactionValidationRecord;
+                import com.uob.gwb.pbp.bo.CreditTransferTransaction;
+                import org.springframework.batch.item.ExecutionContext;
+                import com.uob.gwb.pbp.service.TransactionValidationHelper;
+
+                global ExecutionContext context;
+                global TransactionValidationHelper validationHelper;
+
+                rule "Test Rule"
+                when
+                    $record: TransactionValidationRecord(countryCode == "TH")
+                then
+                    $record.getTransaction().addValidationError("TEST001", "Test Error");
+                end
+                """;
+
+        TransactionValidationRecord record = new TransactionValidationRecord();
+        record.setCountryCode("TH");
+        record.setTransaction(new CreditTransferTransaction());
+
+        // Act
+        engine.refreshRules(engineName, rules);
+        engine.fireRules(engineName, List.of(record), executionContext, validationHelper);
+
+        // Assert
+        assertThat(record.getTransaction().getPaymentValidationResults())
+                .hasSize(1)
+                .extracting("errorCode")
+                .containsExactly("TEST001");
+    }
+
+    @Test
+    void shouldFireComplicatedRules() {
+        // Arrange
+        String engineName = "test-engine";
+        String rules = """
+                package rules;
+                import com.uob.gwb.pbp.bo.validation.TransactionValidationRecord;
+                import com.uob.gwb.pbp.bo.CreditTransferTransaction;
+                import org.springframework.batch.item.ExecutionContext;
+                import com.uob.gwb.pbp.service.TransactionValidationHelper;
+
+                global ExecutionContext context;
+                global TransactionValidationHelper validationHelper;
+
+                rule "Complicated Rule"
+                when
+                    $record: TransactionValidationRecord(countryCode == "TH")
+                then
+                    $record.getTransaction().addValidationError("TEST001", "Test Error");
+                end
+                """;
+
+        TransactionValidationRecord record = new TransactionValidationRecord();
+        record.setCountryCode("TH");
+        record.setTransaction(new CreditTransferTransaction());
+
+        // Act
+        engine.refreshRules(engineName, rules);
+        engine.fireRules(engineName, List.of(record), executionContext, validationHelper);
+
+        // Assert
+        assertThat(record.getTransaction().getPaymentValidationResults())
+                .hasSize(1)
+                .extracting("errorCode")
+                .containsExactly("TEST001");
+    }
+
+    @Test
+    void shouldHandleStopCondition() {
+        // Arrange
+        String engineName = "test-engine";
+        String rules = """
+                package rules;
+                import com.uob.gwb.pbp.bo.validation.TransactionValidationRecord;
+                import com.uob.gwb.pbp.bo.CreditTransferTransaction;
+                import org.springframework.batch.item.ExecutionContext;
+                import com.uob.gwb.pbp.service.TransactionValidationHelper;
+                global ExecutionContext context;
+                global TransactionValidationHelper validationHelper;
+                global java.lang.Boolean shouldStop;
+
+                rule "Stop Rule"
+                when
+                    $record: TransactionValidationRecord(countryCode == "TH")
+                then
+                    $record.getTransaction().addValidationError("STOP001", "Stop Error");
+                    drools.getKnowledgeRuntime().setGlobal("shouldStop", java.lang.Boolean.TRUE);
+                end
+                """;
+
+        TransactionValidationRecord record = new TransactionValidationRecord();
+        record.setCountryCode("TH");
+        record.setTransaction(new CreditTransferTransaction());
+
+        // Act
+        engine.refreshRules(engineName, rules);
+        boolean stopped = engine.fireRulesShouldStop(engineName, List.of(record), executionContext, validationHelper, true);
+
+        // Assert
+        assertThat(stopped).isTrue();
+        assertThat(record.getTransaction().getPaymentValidationResults())
+                .hasSize(1)
+                .extracting("errorCode")
+                .containsExactly("STOP001");
+    }
+
+    @Test
+    void shouldHandleInvalidRules() {
+        // Arrange
+        String engineName = "test-engine";
+        String invalidRules = "invalid drools syntax";
+
+        // Act & Assert
+        assertThatThrownBy(() -> engine.refreshRules(engineName, invalidRules))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("Failed to refresh rules for engine");
+    }
+
+    @Test
+    void shouldHandleMultipleEngineInstances() {
+        // Arrange
+        String engine1 = "engine1";
+        String engine2 = "engine2";
+        String rules1 = "package rules;\nrule \"Rule1\" when then end\n";
+        String rules2 = "package rules;\nrule \"Rule2\" when then end\n";
+
+        // Act
+        engine.refreshRules(engine1, rules1);
+        engine.refreshRules(engine2, rules2);
+
+        // Assert
+        assertThat(engine.hasEngine(engine1)).isTrue();
+        assertThat(engine.hasEngine(engine2)).isTrue();
+    }
+
+    @Test
+    void shouldCleanupEngineInstance() {
+        // Arrange
+        String engineName = "test-engine";
+        String rules = "package rules;\nrule \"Test\" when then end";
+        engine.refreshRules(engineName, rules);
+
+        // Act
+        engine.removeEngine(engineName);
+
+        // Assert
+        assertThat(engine.hasEngine(engineName)).isFalse();
+    }
+}
+
+```
+
+```java
+@ExtendWith(MockitoExtension.class)
+class TransactionValidationDecisionMatrixTest {
+
+    @Mock
+    private PwsQueryDao pwsQueryDao;
+
+    private TransactionValidationDecisionMatrix matrix;
+
+    private static final String ENGINE_NAME = "validationTest";
+
+    @BeforeEach
+    void setUp() {
+        matrix = new TransactionValidationDecisionMatrix(pwsQueryDao);
+    }
+
+    @Test
+    void shouldGenerateSimpleValidationRule() {
+        // Given
+        PwsTransactionValidationRules rule = new PwsTransactionValidationRules();
+        rule.setId(1L);
+        rule.setCountryCode("countryCode == \"TH\"");
+        rule.setChannel("channel == \"IDB\"");
+        rule.setConditionFlag("1");
+        rule.setErrorCode("ERR001");
+        rule.setErrorMessage("Test Error");
+
+        when(pwsQueryDao.getAllTransactionValidationRules()).thenReturn(List.of(rule));
+
+        // When
+        matrix.refresh();
+        String generatedRules = matrix.generateRules(ENGINE_NAME.toLowerCase());
+
+        // Then
+        assertThat(generatedRules)
+                .contains("rule \"Rule_1\"")
+                .contains("countryCode == \"TH\"")
+                .contains("channel == \"IDB\"")
+                .contains("ERR001")
+                .contains("Test Error");
+    }
+
+    @Test
+    void shouldGenerateNegativeMatchingRule() {
+        // Given
+        PwsTransactionValidationRules rule = new PwsTransactionValidationRules();
+        rule.setId(2L);
+        rule.setField("amount");
+        rule.setFieldValue(">= 1000");
+        rule.setConditionFlag("-1");
+        rule.setErrorCode("ERR002");
+        rule.setErrorMessage("Amount validation failed");
+
+        when(pwsQueryDao.getAllTransactionValidationRules()).thenReturn(List.of(rule));
+
+        // When
+        matrix.refresh();
+        String generatedRules = matrix.generateRules(ENGINE_NAME.toLowerCase());
+
+        // Then
+        assertThat(generatedRules)
+                .contains("rule \"Rule_2\"")
+                .contains("not (")
+                .contains("transaction.amount >= 1000")
+                .contains("ERR002")
+                .contains("Amount validation failed");
+    }
+
+    @Test
+    void shouldGenerateBusinessRuleValidation() {
+        // Given
+        PwsTransactionValidationRules rule = new PwsTransactionValidationRules();
+        rule.setId(3L);
+        rule.setBusinessRule("validationHelper.checkDailyLimit(context, transaction.getCustomerId())");
+        rule.setConditionFlag("1");
+        rule.setErrorCode("ERR003");
+        rule.setErrorMessage("Daily limit exceeded");
+        rule.setAction("STOP");
+
+        when(pwsQueryDao.getAllTransactionValidationRules()).thenReturn(List.of(rule));
+
+        // When
+        matrix.refresh();
+        String generatedRules = matrix.generateRules(ENGINE_NAME.toLowerCase());
+
+        // Then
+        assertThat(generatedRules)
+                .contains("rule \"Rule_3\"")
+                .contains("eval(validationHelper.checkDailyLimit")
+                .contains("ERR003")
+                .contains("Daily limit exceeded")
+                .contains("STOP");
+    }
+
+    @Test
+    void shouldSkipDisabledRules() {
+        // Given
+        PwsTransactionValidationRules rule = new PwsTransactionValidationRules();
+        rule.setId(4L);
+        rule.setConditionFlag("0");  // Disabled rule
+        rule.setErrorCode("ERR004");
+
+        when(pwsQueryDao.getAllTransactionValidationRules()).thenReturn(List.of(rule));
+
+        // When
+        matrix.refresh();
+        String generatedRules = matrix.generateRules(ENGINE_NAME.toLowerCase());
+
+        // Then
+        assertThat(generatedRules).doesNotContain("ERR004");
+    }
+
+    @Test
+    void shouldThrowExceptionWhenNoRulesFound() {
+        // Given
+        when(pwsQueryDao.getAllTransactionValidationRules()).thenReturn(List.of());
+
+        // When/Then
+        assertThrows(IllegalStateException.class, () -> matrix.refresh(), 
+                "Expected refresh() to throw, but it didn't.");
+    }
+}
+
+```
+
 # Service
 
 ## pain001 service 
