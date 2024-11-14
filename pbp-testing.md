@@ -331,7 +331,6 @@ class BulkProcessingFlowBuilderTest {
 ## pain001 service 
 
 ```java
-```java
 @ExtendWith(MockitoExtension.class)
 class Pain001ServiceImplTest {
 
@@ -536,4 +535,391 @@ class Pain001ServiceImplTest {
     }
 }
 ```
+
+# E2E
+```java
+@TestConfiguration
+@EnableBatchProcessing
+public class E2ETestConfig {
+
+    @Bean
+    @Primary
+    public DataSource h2DataSource() {
+        return new EmbeddedDatabaseBuilder()
+            .setType(EmbeddedDatabaseType.H2)
+            .addScript("classpath:schema-h2.sql")
+            .addScript("classpath:test-data.sql")
+            .build();
+    }
+
+    @Bean
+    @Primary
+    public SqlSessionFactory sqlSessionFactory(DataSource dataSource) throws Exception {
+        SqlSessionFactoryBean sessionFactory = new SqlSessionFactoryBean();
+        sessionFactory.setDataSource(dataSource);
+        sessionFactory.setMapperLocations(new PathMatchingResourcePatternResolver()
+            .getResources("classpath:mappers/**/*.xml"));
+        return sessionFactory.getObject();
+    }
+
+    @Bean
+    @Primary
+    public SqlSessionTemplate sqlSessionTemplate(SqlSessionFactory sqlSessionFactory) {
+        return new SqlSessionTemplate(sqlSessionFactory);
+    }
+
+    @Bean
+    public RetryTemplate retryTemplate(AppConfig appConfig) {
+        RetryTemplate retryTemplate = new RetryTemplate();
+        SimpleRetryPolicy retryPolicy = new SimpleRetryPolicy();
+        retryPolicy.setMaxAttempts(appConfig.getRetry().getMaxAttempts());
+        retryTemplate.setRetryPolicy(retryPolicy);
+        
+        ExponentialBackOffPolicy backOffPolicy = new ExponentialBackOffPolicy();
+        backOffPolicy.setInitialInterval(appConfig.getRetry().getBackoff().getInitialInterval());
+        backOffPolicy.setMultiplier(appConfig.getRetry().getBackoff().getMultiplier());
+        backOffPolicy.setMaxInterval(appConfig.getRetry().getBackoff().getMaxInterval());
+        retryTemplate.setBackOffPolicy(backOffPolicy);
+        
+        return retryTemplate;
+    }
+}
 ```
+
+Now let's create the H2 schema SQL:
+
+
+```sql
+-- Spring Batch Tables
+CREATE TABLE BATCH_JOB_INSTANCE (
+    JOB_INSTANCE_ID BIGINT NOT NULL PRIMARY KEY,
+    VERSION BIGINT,
+    JOB_NAME VARCHAR(100) NOT NULL,
+    JOB_KEY VARCHAR(32) NOT NULL,
+    constraint JOB_INST_UN unique (JOB_NAME, JOB_KEY)
+);
+
+CREATE TABLE BATCH_JOB_EXECUTION (
+    JOB_EXECUTION_ID BIGINT NOT NULL PRIMARY KEY,
+    VERSION BIGINT,
+    JOB_INSTANCE_ID BIGINT NOT NULL,
+    CREATE_TIME TIMESTAMP NOT NULL,
+    START_TIME TIMESTAMP,
+    END_TIME TIMESTAMP,
+    STATUS VARCHAR(10),
+    EXIT_CODE VARCHAR(2500),
+    EXIT_MESSAGE VARCHAR(2500),
+    LAST_UPDATED TIMESTAMP,
+    constraint JOB_INST_EXEC_FK foreign key (JOB_INSTANCE_ID)
+    references BATCH_JOB_INSTANCE(JOB_INSTANCE_ID)
+);
+
+-- Payment Tables
+CREATE TABLE PWS_TRANSACTIONS (
+    TRANSACTION_ID BIGINT PRIMARY KEY AUTO_INCREMENT,
+    BANK_REFERENCE_ID VARCHAR(50),
+    CHANGE_TOKEN BIGINT,
+    RESOURCE_ID VARCHAR(50),
+    FEATURE_ID VARCHAR(50),
+    ACCOUNT_NUMBER VARCHAR(20),
+    ACCOUNT_CURRENCY VARCHAR(3),
+    TRANSACTION_CURRENCY VARCHAR(3),
+    TOTAL_CHILD INT,
+    TOTAL_AMOUNT DECIMAL(19,2),
+    HIGHEST_AMOUNT DECIMAL(19,2),
+    CAPTURE_STATUS VARCHAR(20),
+    CUSTOMER_TRANSACTION_STATUS VARCHAR(50),
+    COMPANY_ID BIGINT,
+    COMPANY_GROUP_ID BIGINT,
+    COMPANY_NAME VARCHAR(255),
+    INITIATED_BY BIGINT
+);
+
+CREATE TABLE PWS_BULK_TRANSACTIONS (
+    BK_TRANSACTION_ID BIGINT PRIMARY KEY AUTO_INCREMENT,
+    TRANSACTION_ID BIGINT,
+    DMP_BATCH_NUMBER VARCHAR(50),
+    CHANGE_TOKEN BIGINT,
+    STATUS VARCHAR(50),
+    FILE_UPLOAD_ID BIGINT,
+    FOREIGN KEY (TRANSACTION_ID) REFERENCES PWS_TRANSACTIONS(TRANSACTION_ID)
+);
+
+CREATE TABLE PWS_BULK_TRANSACTION_INSTRUCTIONS (
+    INSTRUCTION_ID BIGINT PRIMARY KEY AUTO_INCREMENT,
+    TRANSACTION_ID BIGINT,
+    BANK_REFERENCE_ID VARCHAR(50),
+    CHILD_BANK_REFERENCE_ID VARCHAR(50),
+    TRANSACTION_AMOUNT DECIMAL(19,2),
+    TRANSACTION_CURRENCY VARCHAR(3),
+    FOREIGN KEY (TRANSACTION_ID) REFERENCES PWS_TRANSACTIONS(TRANSACTION_ID)
+);
+
+CREATE TABLE PWS_PARTIES (
+    PARTY_ID BIGINT PRIMARY KEY AUTO_INCREMENT,
+    TRANSACTION_ID BIGINT,
+    BANK_REFERENCE_ID VARCHAR(50),
+    CHILD_BANK_REFERENCE_ID VARCHAR(50),
+    BENEFICIARY_CHANGE_TOKEN BIGINT,
+    FOREIGN KEY (TRANSACTION_ID) REFERENCES PWS_TRANSACTIONS(TRANSACTION_ID)
+);
+
+CREATE TABLE PWS_PARTY_CONTACTS (
+    CONTACT_ID BIGINT PRIMARY KEY AUTO_INCREMENT,
+    TRANSACTION_ID BIGINT,
+    PARTY_ID BIGINT,
+    BANK_REFERENCE_ID VARCHAR(50),
+    CHILD_BANK_REFERENCE_ID VARCHAR(50),
+    FOREIGN KEY (TRANSACTION_ID) REFERENCES PWS_TRANSACTIONS(TRANSACTION_ID),
+    FOREIGN KEY (PARTY_ID) REFERENCES PWS_PARTIES(PARTY_ID)
+);
+
+CREATE TABLE PWS_TRANSACTION_ADVICES (
+    ADVICE_ID BIGINT PRIMARY KEY AUTO_INCREMENT,
+    TRANSACTION_ID BIGINT,
+    PARTY_ID BIGINT,
+    BANK_REFERENCE_ID VARCHAR(50),
+    CHILD_BANK_REFERENCE_ID VARCHAR(50),
+    FOREIGN KEY (TRANSACTION_ID) REFERENCES PWS_TRANSACTIONS(TRANSACTION_ID),
+    FOREIGN KEY (PARTY_ID) REFERENCES PWS_PARTIES(PARTY_ID)
+);
+
+CREATE TABLE PWS_TAX_INSTRUCTIONS (
+    TAX_ID BIGINT PRIMARY KEY AUTO_INCREMENT,
+    TRANSACTION_ID BIGINT,
+    BANK_REFERENCE_ID VARCHAR(50),
+    CHILD_BANK_REFERENCE_ID VARCHAR(50),
+    FOREIGN KEY (TRANSACTION_ID) REFERENCES PWS_TRANSACTIONS(TRANSACTION_ID)
+);
+
+CREATE TABLE PWS_TRANSIT_MESSAGE (
+    MESSAGE_ID BIGINT PRIMARY KEY AUTO_INCREMENT,
+    BANK_REFERENCE_ID VARCHAR(50),
+    SERVICE_TYPE VARCHAR(20),
+    END_SYSTEM VARCHAR(20),
+    MESSAGE_REF_NO VARCHAR(50),
+    RETRY_COUNT INT,
+    PROCESSING_DATE TIMESTAMP,
+    STATUS VARCHAR(50)
+);
+
+CREATE TABLE PWS_FILE_UPLOAD (
+    FILE_UPLOAD_ID BIGINT PRIMARY KEY AUTO_INCREMENT,
+    FILE_REFERENCE_ID VARCHAR(50),
+    RESOURCE_ID VARCHAR(50),
+    FEATURE_ID VARCHAR(50),
+    COMPANY_ID BIGINT,
+    CREATED_BY VARCHAR(50),
+    STATUS VARCHAR(20)
+);
+
+CREATE TABLE PWS_REJECTED_RECORD (
+    REJECT_ID BIGINT PRIMARY KEY AUTO_INCREMENT,
+    ENTITY_TYPE VARCHAR(50),
+    ENTITY_ID BIGINT,
+    CREATED_BY VARCHAR(50),
+    CREATED_DATE DATE,
+    BANK_REFERENCE_ID VARCHAR(50),
+    REJECT_CODE VARCHAR(20),
+    ERROR_DETAIL VARCHAR(500)
+);
+```
+
+Now let's create the E2E test:
+
+
+```java
+@SpringBootTest
+@ActiveProfiles("test")
+@TestPropertySource(properties = {
+    "spring.main.allow-bean-definition-overriding=true"
+})
+@Import(E2ETestConfig.class)
+class PaymentBulkProcessingE2ETest {
+
+    @Autowired
+    private BulkProcessingFlowBuilder flowBuilder;
+
+    @Autowired
+    private JobLauncher jobLauncher;
+
+    @Autowired
+    private Pain001InboundService pain001InboundService;
+
+    @Autowired
+    private SqlSessionTemplate sqlSessionTemplate;
+
+    @Autowired
+    private PwsSaveDao pwsSaveDao;
+
+    @MockBean
+    private PaymentIntegrationservice paymentIntegrationService;
+
+    @Value("classpath:test-data/pain001-simple.json")
+    private Resource simplePain001Json;
+
+    @Value("classpath:test-data/pain001-complex.json")
+    private Resource complexPain001Json;
+
+    @BeforeEach
+    void setUp() {
+        // Setup mock integration responses
+        when(paymentIntegrationService.getResourcesAndFeatures(anyLong()))
+            .thenReturn(createMockResourceFeatures());
+        when(paymentIntegrationService.getCompanyAndAccounts(anyLong(), anyString(), anyString()))
+            .thenReturn(createMockCompanyAccounts());
+    }
+
+    @Test
+    void testSimplePain001Processing() throws Exception {
+        // Arrange
+        String jsonContent = new String(Files.readAllBytes(simplePain001Json.getFile().toPath()));
+        BulkRoute route = createTestRoute();
+
+        // Act
+        JobParameters jobParameters = createJobParameters(route);
+        JobExecution jobExecution = jobLauncher.run(flowBuilder.createJob(route, createMockExchange()), jobParameters);
+
+        // Assert
+        assertEquals(ExitStatus.COMPLETED, jobExecution.getExitStatus());
+        verifyPaymentSaved();
+    }
+
+    @Test
+    void testComplexPain001Processing() throws Exception {
+        // Similar to simple test but with complex payload
+    }
+
+    private BulkRoute createTestRoute() {
+        BulkRoute route = new BulkRoute();
+        route.setRouteName("test-inbound-route");
+        route.setProcessingType(ProcessingType.INBOUND);
+        route.setSourceType(SourceDestinationType.FILE);
+        route.setEnabled(true);
+        route.setSteps(Arrays.asList(
+            "pain001-processing",
+            "payment-debulk",
+            "payment-validation",
+            "payment-enrichment",
+            "payment-save"
+        ));
+        return route;
+    }
+
+    private Exchange createMockExchange() {
+        Exchange exchange = new DefaultExchange(new DefaultCamelContext());
+        exchange.getIn().setHeader(Exchange.FILE_NAME, "test.json");
+        exchange.getIn().setHeader(Exchange.FILE_PATH, "/test/path/test.json");
+        
+        InboundContext routeContext = new InboundContext();
+        routeContext.setCountry(new Country("TH", "Thailand"));
+        routeContext.setSourcePath("/test/path/test.json");
+        routeContext.setSourceName("test.json");
+        exchange.setProperty(ContextKey.routeContext, routeContext);
+        
+        return exchange;
+    }
+
+    private JobParameters createJobParameters(BulkRoute route) {
+        return new JobParametersBuilder()
+            .addString(ContextKey.routeName, route.getRouteName())
+            .addString(ContextKey.country, "TH")
+            .addString(ContextKey.sourcePath, "/test/path/test.json")
+            .addString(ContextKey.sourceName, "test.json")
+            .addLong("time", System.currentTimeMillis())
+            .toJobParameters();
+    }
+
+    private void verifyPaymentSaved() {
+        // Verify database state
+        List<PwsTransactions> transactions = pwsSaveDao.findAllTransactions();
+        assertFalse(transactions.isEmpty());
+        
+        PwsTransactions transaction = transactions.get(0);
+        assertNotNull(transaction.getBankReferenceId());
+        assertEquals(CaptureStatus.SUBMITTED.name(), transaction.getCaptureStatus());
+        
+        List<PwsBulkTransactions> bulkTxns = pwsSaveDao.findBulkTransactionsByTxnId(transaction.getTransactionId());
+        assertFalse(bulkTxns.isEmpty());
+        
+        // Verify child transactions
+        List<PwsBulkTransactionInstructions> instructions = 
+            pwsSaveDao.findInstructionsByTxnId(transaction.getTransactionId());
+        assertFalse(instructions.isEmpty());
+    }
+
+    private UserResourceFeaturesActionsData createMockResourceFeatures() {
+        // Create mock entitlements data
+        UserResourceFeaturesActionsData data = new UserResourceFeaturesActionsData();
+        // Set up mock data
+        return data;
+    }
+
+    private CompanyAndAccountsForResourceFeaturesResp createMockCompanyAccounts() {
+        // Create mock company and accounts data
+        CompanyAndAccountsForResourceFeaturesResp resp = new CompanyAndAccountsForResourceFeaturesResp();
+        // Set up mock data
+        return resp;
+    }
+}
+```
+
+And here's the test application.yml:
+
+
+```yaml
+spring:
+  main:
+    allow-bean-definition-overriding: true
+  datasource:
+    driver-class-name: org.h2.Driver
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1
+    username: sa
+    password: 
+
+bulk-processing:
+  country: TH
+  retry:
+    maxAttempts: 3
+    backoff:
+      initialInterval: 1000
+      multiplier: 2.0
+      maxInterval: 5000
+  batchInsertSize: 100
+  uploadSourceFormatNoCompany:
+    - BCU11P2
+    - BCU11P4
+    - BCU11P6
+  debulk:
+    debulkSmart:
+      bankCode: 024
+      bahtnetThreshold: 2000000
+      sourceFormat:
+        - BCU10P1
+        - BCU10P2
+
+bulk-routes:
+  - route-name: CUSTOMER_SUBMITTED_TRANSFORMED
+    processing-type: INBOUND
+    source-type: FILE
+    bank-entity: UOBT
+    channel: IDB
+    request-type: BulkUpload
+    enabled: true
+    steps:
+      - pain001-processing
+      - payment-debulk
+      - payment-validation
+      - payment-enrichment
+      - payment-save
+    file-source:
+      directoryName: /test/inbound
+      antInclude: "*_Auth.json"
+      charset: utf-8
+      doneFileName: "${file:name:noext}.xml.done"
+      delay: 1000
+      maxMessagesPerPoll: 1
+    payment-save:
+      datasource: datasource-payment-save
+```
+
