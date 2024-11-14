@@ -125,217 +125,9 @@ spring.datasource.hikari.data-source-properties.defaultBatchValue=100
 -   Error handling is implemented to catch and log any issues during the insert process.
 -    Use the APPEND hint in your INSERT statements:
 
-
-# Pws Save
-
-```java
-@Service
-@Slf4j
-@Transactional
-public class Pain001ServiceImpl implements Pain001Service {
-
-    @Autowired 
-    private PaymentDao paymentDao;
-    
-    @Autowired
-    private SqlSessionTemplate sqlSessionTemplate;
-    
-    @Value("${jdbc.batch.size:1000}")
-    private int jdbcBatchSize;
-
-    private final RetryTemplate retryTemplate;
-
-    @PostConstruct
-    private void init() {
-        this.retryTemplate = createRetryTemplate();
-    }
-
-    private void executeBatchInsertsInOrder(BatchCollections collections) {
-        Map<String, Long> partyIdsByRef = new HashMap<>();
-        
-        try {
-            // 1. Process bulk transaction instructions
-            if (!collections.getInstructions().isEmpty()) {
-                executeBatchInsert("insertBulkTransactionInstruction", 
-                    collections.getInstructions(), 
-                    null);
-            }
-
-            // 2. Process parties and store their IDs
-            if (!collections.getParties().isEmpty()) {
-                List<PwsParties> insertedParties = executeBatchInsertWithIds("insertParty", 
-                    collections.getParties());
-                
-                // Store party IDs for contacts
-                for (PwsParties party : insertedParties) {
-                    partyIdsByRef.put(party.getBankReferenceId() + "_" + party.getPartyType(), 
-                        party.getPartyId());
-                }
-            }
-
-            // 3. Process contacts with party IDs
-            for (Map.Entry<String, List<PwsPartyContracts>> entry : 
-                    collections.getContactsByPartyType().entrySet()) {
-                List<PwsPartyContracts> contacts = entry.getValue();
-                setPartyIdsForContacts(contacts, partyIdsByRef);
-                executeBatchInsert("insertPartyContact", contacts, null);
-            }
-
-            // 4. Process tax instructions
-            if (!collections.getTaxInstructions().isEmpty()) {
-                executeBatchInsert("insertTaxInstruction", 
-                    collections.getTaxInstructions(), 
-                    null);
-            }
-
-            // 5. Process transaction advices
-            if (!collections.getAdvices().isEmpty()) {
-                executeBatchInsert("insertTransactionAdvice", 
-                    collections.getAdvices(), 
-                    null);
-            }
-
-            // 6. Process transaction charges
-            if (!collections.getCharges().isEmpty()) {
-                executeBatchInsert("insertTransactionCharge", 
-                    collections.getCharges(), 
-                    null);
-            }
-
-        } catch (Exception e) {
-            log.error("Failed to execute batch inserts", e);
-            throw new PaymentProcessingException("Failed to execute batch inserts", e);
-        }
-    }
-
-    /**
-     * Generic batch insert method
-     */
-    private <T> void executeBatchInsert(String insertMethod, List<T> records, 
-            Consumer<List<T>> postBatchProcessor) {
-        retryTemplate.execute(context -> {
-            SqlSession session = sqlSessionTemplate.getSqlSessionFactory()
-                .openSession(ExecutorType.BATCH);
-            
-            try {
-                PaymentDao mapper = session.getMapper(PaymentDao.class);
-                int count = 0;
-                List<T> currentBatch = new ArrayList<>();
-
-                for (T record : records) {
-                    // Use reflection to call the appropriate insert method
-                    Method method = mapper.getClass().getMethod(insertMethod, record.getClass());
-                    method.invoke(mapper, record);
-                    currentBatch.add(record);
-                    count++;
-                    
-                    if (count % jdbcBatchSize == 0) {
-                        session.flushStatements();
-                        if (postBatchProcessor != null) {
-                            postBatchProcessor.accept(currentBatch);
-                        }
-                        currentBatch = new ArrayList<>();
-                    }
-                }
-                
-                // Process remaining records
-                if (!currentBatch.isEmpty()) {
-                    session.flushStatements();
-                    if (postBatchProcessor != null) {
-                        postBatchProcessor.accept(currentBatch);
-                    }
-                }
-                
-                session.commit();
-                return null;
-            } catch (Exception e) {
-                session.rollback();
-                throw new PaymentProcessingException("Batch insert failed", e);
-            } finally {
-                session.close();
-            }
-        });
-    }
-
-    /**
-     * Generic batch insert method with ID return
-     */
-    private <T> List<T> executeBatchInsertWithIds(String insertMethod, List<T> records) {
-        return retryTemplate.execute(context -> {
-            SqlSession session = sqlSessionTemplate.getSqlSessionFactory()
-                .openSession(ExecutorType.BATCH);
-            List<T> processedRecords = new ArrayList<>();
-            
-            try {
-                PaymentDao mapper = session.getMapper(PaymentDao.class);
-                int count = 0;
-                List<T> currentBatch = new ArrayList<>();
-
-                for (T record : records) {
-                    Method method = mapper.getClass().getMethod(insertMethod, record.getClass());
-                    method.invoke(mapper, record);
-                    currentBatch.add(record);
-                    count++;
-                    
-                    if (count % jdbcBatchSize == 0) {
-                        session.flushStatements();
-                        processedRecords.addAll(currentBatch);
-                        currentBatch = new ArrayList<>();
-                    }
-                }
-                
-                if (!currentBatch.isEmpty()) {
-                    session.flushStatements();
-                    processedRecords.addAll(currentBatch);
-                }
-                
-                session.commit();
-                return processedRecords;
-            } catch (Exception e) {
-                session.rollback();
-                throw new PaymentProcessingException("Batch insert with IDs failed", e);
-            } finally {
-                session.close();
-            }
-        });
-    }
-}
-```
-
-# DAO 
-```java
-@Repository("pwsSaveDao")
-public interface PwsSaveDao {
-
-    // bank ref
-    int getBankRefSequenceNum();
-    int[] getBatchBankRefSequenceNum(int count);
-
-    // bulk payment
-    long insertPwsTransactions(@Param("pwsTransactions") PwsTransactions pwsTransactions);
-    long insertPwsBulkTransactions(@Param("pwsBulkTransactions") PwsBulkTransactions pwsBulkTransactions);
-
-    // child txn
-    long insertPwsBulkTransactionInstructions(@Param("pwsBulkTransactionInstructions" pwsBulkTransactionInstructions);
-    long insertPwsParties(@Param("pwsParties" pwsParties);
-    void insertPwsPartyContacts(@Param("pwsPartyContacts" pwsPartyContacts);
-    void insertPwsPartyBanks(@Param("pwsPartyBanks" pwsPartyBanks);
-    void insertPwsTransactionAdvices(@Param("pwsTransactionAdvices" pwsTransactionAdvices);
-    void insertPwsTaxInstructions(@Param("pwsTaxInstructions" pwsTaxInstructions);
-
-
-    // batch insert child txns
-    List<Long> batchInsertTxnInstructions(List<PwsBulkTransactionInstructions> txnInstructions);
-    List<Long> batchInsertPwsParties(List<PwsParties> parties);
-    void batchInsertPwsPartyContacts(List<PwsPartyContacts> partyContacts);
-    void batchInsertPwsPartyBanks(List<PwsPartyBanks> partyBanks);
-    void batchInsertPwsTransactionAdvices(List<PwsTransactionAdvices> advices);
-    void batchInsertPwsTaxInstructions(List<PwsTaxInstructions> taxInstructions);
-
-}
-```
-
 # Mapper.xml
+
+## insert
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -771,58 +563,79 @@ public interface PwsSaveDao {
         ]]>
     </insert>
 
+<!-- Insert PwsRejectedRecord -->
+    <insert id="insertPwsRejectedRecord" 
+            parameterType="com.uob.gwb.pbp.po.PwsRejectedRecord"
+            statementType="PREPARED" 
+            useGeneratedKeys="true" 
+            keyProperty="rejectedRecordId" 
+            keyColumn="rejected_record_id">
+        <![CDATA[
+        INSERT INTO pws_rejected_record (
+            entity_type,
+            entity_id,
+            sequence_no,
+            line_no,
+            colum_no,
+            created_by,
+            created_date,
+            bank_reference_id,
+            transaction_id,
+            reject_code,
+            error_detail
+        ) VALUES (
+            #{entityType},
+            #{entityId},
+            #{sequenceNo},
+            #{lineNo},
+            #{columNo},
+            #{createdBy},
+            #{createdDate},
+            #{bankReferenceId},
+            #{transactionId},
+            #{rejectCode},
+            #{errorDetail}
+        )
+        ]]>
+    </insert>
+
 </mapper>
 ```
 
-# mybatis config 
-```java
-@Configuration
-public class MyBatisConfig {
+## query
 
-    @Bean
-    @Primary
-    public SqlSessionFactory defaultSqlSessionFactory(@Qualifier("defaultDataSource") DataSource dataSource)
-            throws Exception {
-        return createSqlSessionFactory(dataSource, "classpath:mappers/default/**/*.xml");
-    }
-
-    @Bean
-    public SqlSessionFactory paymentSaveSqlSessionFactory(@Qualifier("paymentSaveDataSource") DataSource dataSource)
-            throws Exception {
-        return createSqlSessionFactory(dataSource, "classpath:mappers/paymentSave/**/*.xml");
-    }
-
-    @Bean
-    public SqlSessionFactory paymentLoadingSqlSessionFactory(
-            @Qualifier("paymentLoadingDataSource") DataSource dataSource) throws Exception {
-        return createSqlSessionFactory(dataSource, "classpath:mappers/paymentLoading/**/*.xml");
-    }
-
-    private SqlSessionFactory createSqlSessionFactory(DataSource dataSource, String mapperLocation) throws Exception {
-        SqlSessionFactoryBean sessionFactory = new SqlSessionFactoryBean();
-        sessionFactory.setDataSource(dataSource);
-        sessionFactory.setMapperLocations(new PathMatchingResourcePatternResolver().getResources(mapperLocation));
-        return sessionFactory.getObject();
-    }
-
-    @Bean
-    @Primary
-    public SqlSessionTemplate defaultSqlSessionTemplate(
-            @Qualifier("defaultSqlSessionFactory") SqlSessionFactory sqlSessionFactory) {
-        return new SqlSessionTemplate(sqlSessionFactory);
-    }
-
-    @Bean
-    public SqlSessionTemplate paymentSaveSqlSessionTemplate(
-            @Qualifier("paymentSaveSqlSessionFactory") SqlSessionFactory sqlSessionFactory) {
-        return new SqlSessionTemplate(sqlSessionFactory);
-    }
-
-    @Bean
-    public SqlSessionTemplate paymentLoadingSqlSessionTemplate(
-            @Qualifier("paymentLoadingSqlSessionFactory") SqlSessionFactory sqlSessionFactory) {
-        return new SqlSessionTemplate(sqlSessionFactory);
-    }
-}
-
+```xml
+<!-- Select PwsFileUpload by ID -->
+    <select id="getPwsFileUpload" resultMap="PwsFileUploadResultMap"
+            parameterType="Long" statementType="PREPARED">
+        <![CDATA[
+        SELECT 
+            file_upload_id,
+            file_reference_id,
+            transaction_id,
+            feature_id,
+            resource_id,
+            file_type_enum,
+            file_sub_type_enum,
+            upload_file_name,
+            upload_file_path,
+            file_size,
+            company_id,
+            account_id,
+            resource_category,
+            charge_option,
+            payroll_option,
+            file_upload_status,
+            status,
+            created_by,
+            created_date,
+            updated_by,
+            updated_date,
+            change_token
+        FROM 
+            pws_file_upload
+        WHERE 
+            file_upload_id = #{fileUploadId}
+        ]]>
+    </select>
 ```
