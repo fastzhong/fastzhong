@@ -10,9 +10,9 @@ sync.account.nra.islamic.query=merge  INTO aes_account_attributes a using (selec
 
 ```
 
-# Detailed Data Flow Analysis
+## Detailed Data Flow Analysis
 
-## System Overview
+### System Overview
 The SQL statements show an integration between two systems:
 1. GEB (Source System) - Contains tables:
    - geb_account_data: Primary account information
@@ -22,9 +22,9 @@ The SQL statements show an integration between two systems:
    - aes_account_attributes: Main account table
    - aes_account_alternate_identifiers: Links accounts between systems
 
-## Data Flow Process
+### Data Flow Process
 
-### Step 1: Initial Data Read
+#### Step 1: Initial Data Read
 ```sql
 select ACCOUNT_NUMBER, ACCOUNT_TYPE, CUR_CODE, OWNER_TYPE 
 from aes_Account_attributes 
@@ -40,7 +40,7 @@ The second query counts the total number of records in aes_Account_attributes, w
 
 Data Flow: The information fetched here could be used for comparison or logging to ensure updates are accurate and complete.
 
-### Step 2: Major Data Synchronization
+#### Step 2: Major Data Synchronization
 ```sql
 MERGE into aes_account_attributes A 
 Using (select * from (
@@ -114,7 +114,7 @@ Data Flow: If cew_account_id (main or alternate) exists in aes_account_attribute
 UPDATE fields like BRCH_CODE, ACCOUNT_TYPE, and ADDRESS_LINE_1 where they differ, and set the updated date.
 If the account does not exist, INSERT a new row with values from geb_account_data.
 
-### Step 3: Cleanup of Obsolete Records
+#### Step 3: Cleanup of Obsolete Records
 ```sql
 delete from AES_ACCOUNT_ATTRIBUTES acc 
 where acc.account_id not in (
@@ -140,7 +140,7 @@ The subquery gathers account IDs from geb_account_data, selecting cew_acc_id whe
 Data Flow: Only those records present in geb_account_data or linked with a GEB identifier (UOBT entity) are retained, keeping aes_account_attributes synchronized with GEB data.
 
 
-### Step 4: Account Type Standardization
+#### Step 4: Account Type Standardization
 ```sql
 merge INTO aes_account_attributes a 
 using (
@@ -167,7 +167,7 @@ The subquery gathers account IDs from geb_account_data, selecting cew_acc_id whe
 
 Data Flow: Only those records present in geb_account_data or linked with a GEB identifier (UOBT entity) are retained, keeping aes_account_attributes synchronized with GEB data.
 
-### Step 5: Additional Attributes Update
+#### Step 5: Additional Attributes Update
 ```sql
 merge INTO aes_account_attributes a 
 using (
@@ -194,7 +194,7 @@ If account_type and owner_type match specific values, corresponding bank_account
 
 Data Flow: This standardizes and completes account type information in aes_account_attributes.
 
-## Final Data State
+### Final Data State
 
 After this process completes:
 
@@ -213,6 +213,201 @@ After this process completes:
    - No orphaned records
    - Consistent account types
    - Complete audit trail (system updates tracked)
+
+## Detailed SQL Business Rules Analysis
+
+### 1. Initial Account Reading
+```sql
+select ACCOUNT_NUMBER, ACCOUNT_TYPE, CUR_CODE, OWNER_TYPE 
+from aes_Account_attributes 
+where account_type in ('01','03')
+```
+
+Business Rules:
+- Only processes specific account types:
+  - '01': Likely Current/Checking accounts
+  - '03': Likely Savings accounts
+- Required fields for each account:
+  - ACCOUNT_NUMBER: Unique identifier
+  - ACCOUNT_TYPE: Account classification
+  - CUR_CODE: Currency of the account
+  - OWNER_TYPE: Type of account holder
+
+### 2. Account Synchronization (Major MERGE Operation)
+
+#### Data Preparation Rules
+```sql
+SELECT abc.*, 
+DECODE(abc.cew_acc_id, NULL, abc.account_id, abc.cew_acc_id) cew_account_id 
+FROM (
+    SELECT mv.*, aai.account_id cew_acc_id 
+    FROM geb_account_data mv 
+    LEFT JOIN aes_account_alternate_identifiers aai 
+    ON aai.id_value = mv.account_id
+) abc
+```
+
+Business Rules:
+1. Account ID Resolution:
+   - Primary: Use CEW (Common Enterprise-Wide) account ID if available
+   - Fallback: Use original account ID if no CEW ID exists
+   - Purpose: Maintain single source of truth for account identification
+
+2. Data Quality Rules:
+   ```sql
+   where xyz.cew_account_id not in (
+       select ACCOUNT_ID 
+       from (
+           select ACCOUNT_ID, count(ID_VALUE) 
+           from aes_account_alternate_identifiers 
+           group by ACCOUNT_ID 
+           having count(ID_VALUE)>1
+       )
+   )
+   ```
+   - Excludes accounts with multiple ID mappings
+   - Prevents data inconsistency
+   - Ensures one-to-one mapping between systems
+
+#### Update Rules
+```sql
+WHEN MATCHED THEN UPDATE SET 
+    A.BRCH_CODE = B.BRCH_CODE,
+    A.ACCOUNT_TYPE = B.ACCOUNT_TYPE,
+    A.ADDRESS_LINE_1 = B.ADDRESS_LINE_1,
+    /* ... other fields ... */
+WHERE 
+    A.BRCH_CODE <> B.BRCH_CODE or
+    A.ACCOUNT_TYPE <> B.ACCOUNT_TYPE or
+    /* ... other conditions ... */
+```
+
+Business Rules:
+1. Update Conditions:
+   - Only update when values actually change
+   - All fields must be explicitly compared
+   - Null handling is implicit in comparison
+
+2. Audit Trail:
+   - UPDATED_BY set to 'SYSTEM'
+   - UPDATED_DATE set to SYSDATE
+   - Tracks all system-driven changes
+
+#### Insert Rules
+```sql
+WHEN NOT MATCHED THEN Insert
+(account_id, account_type, account_name, /* ... */)
+values 
+(b.cew_account_id, b.account_type, b.ACCT_NAME, /* ... */)
+```
+
+Business Rules:
+1. New Account Creation:
+   - Uses CEW account ID as primary key
+   - Sets default values for optional fields
+   - Maintains standardized naming conventions
+
+2. Required Fields:
+   - account_id: Mandatory unique identifier
+   - account_type: Must be valid type code
+   - cur_code: Valid currency code
+   - bank_entity_id: Set to 'UOBT'
+
+### 3. Account Cleanup Rules
+```sql
+delete from AES_ACCOUNT_ATTRIBUTES acc 
+where acc.account_id not in (
+    select decode(abc.cew_acc_id,NULL,abc.account_id,abc.cew_acc_id) 
+    from (
+        select mv.account_id, aai.account_id cew_acc_id 
+        from geb_account_data mv 
+        left join aes_account_alternate_identifiers aai 
+        on aai.id_value=mv.account_id 
+        and aai.id_type='GEB' 
+        and aai.bank_entity_id='UOBT'
+    ) abc
+)
+```
+
+Business Rules:
+1. Deletion Criteria:
+   - Remove accounts not in GEB system
+   - Only affect UOBT bank entity
+   - Consider both direct and indirect matches
+
+2. Data Integrity:
+   - Checks alternate identifiers
+   - Preserves linked accounts
+   - Maintains referential integrity
+
+### 4. Account Type Standardization Rules
+```sql
+case 
+    when account_type='01' and owner_type='01' then 'CUR'
+    when account_type='03' and owner_type='01' then 'SAV'
+    when account_type='01' and owner_type='05' then 'EXT'
+    when account_type='05' and owner_type='01' then 'GTD'
+    when account_type='04' and owner_type='01' then 'LNS'
+    else c.bank_account_type 
+end as bank_account_type
+```
+
+Business Rules:
+1. Account Type Mapping:
+   - '01'+'01' → 'CUR': Individual Current Account
+   - '03'+'01' → 'SAV': Individual Savings Account
+   - '01'+'05' → 'EXT': External Current Account
+   - '05'+'01' → 'GTD': Individual Guaranteed Account
+   - '04'+'01' → 'LNS': Individual Loan Account
+
+2. Update Conditions:
+   - Only update NULL bank_account_type
+   - Preserve existing valid values
+   - Maintain type consistency
+
+### 5. Special Attributes Update Rules
+```sql
+merge INTO aes_account_attributes a 
+using (
+    select AAAI.Account_id,
+           GEB_NRA.String_Value as NRA_Ind,
+           GEB_Islamic.String_Value as IslamicInd 
+    /* ... joins ... */
+)
+```
+
+Business Rules:
+1. NRA (Non-Residential Account) Rules:
+   - Derived from GEB system
+   - Updates only if UPDATED_DATE is null
+   - Maintains regulatory compliance
+
+2. Islamic Banking Rules:
+   - Flags Islamic banking products
+   - Updates in sync with NRA status
+   - Ensures proper product classification
+
+### Overall Process Rules
+
+1. Data Synchronization:
+   - Source of Truth: GEB system
+   - Target: AES system
+   - Frequency: Implied batch process
+
+2. Data Quality:
+   - No duplicate mappings allowed
+   - Complete audit trail maintained
+   - Standardized account classifications
+
+3. Business Entity:
+   - Specific to 'UOBT' bank entity
+   - Maintains entity-specific rules
+   - Preserves entity boundaries
+
+4. Error Handling:
+   - Implicit handling of nulls
+   - Validation through constraints
+   - Atomic operations for consistency
 
 # utils
 
