@@ -8,8 +8,211 @@ sync.account.delete.query=delete from AES_ACCOUNT_ATTRIBUTES acc where acc.accou
 sync.account.bankacct.update.query=merge INTO aes_account_attributes a using ( select  Account_id, case when account_type='01' and owner_type='01' then 'CUR' when account_type='03' and owner_type='01' then 'SAV'  when account_type='01' and owner_type='05' then 'EXT' when account_type='05' and owner_type='01' then 'GTD' when account_type='04' and owner_type='01' then 'LNS'  else c.bank_account_type end as bank_account_type from aes_account_attributes c  )b on (a.ACCOUNT_ID=b.ACCOUNT_ID and  a.BANK_ACCOUNT_TYPE is null) WHEN MATCHED THEN UPDATE set a.BANK_ACCOUNT_TYPE=b.bank_account_type
 sync.account.nra.islamic.query=merge  INTO aes_account_attributes a using (select AAAI.Account_id, GEB_NRA.String_Value as NRA_Ind, GEB_Islamic.String_Value as IslamicInd from  aes_account_alternate_identifiers AAAI left join geb_account_objectdata GEB_NRA ON aaai.id_value = GEB_NRA.account_id and aaai.id_type = 'GEB' and GEB_NRA.string_name = 'nra' left join geb_account_objectdata GEB_Islamic ON aaai.id_value = GEB_Islamic.account_id and aaai.id_type = 'GEB' and GEB_Islamic.string_name = 'IslamicInd') b on (a.ACCOUNT_ID=b.ACCOUNT_ID  and  UPDATED_DATE is null) WHEN MATCHED THEN UPDATE set a.NON_RESIDENTIAL_STATUS = b.NRA_Ind, a.ISLAMIC = b.IslamicInd
 
-
 ```
+
+# Detailed Data Flow Analysis
+
+## System Overview
+The SQL statements show an integration between two systems:
+1. GEB (Source System) - Contains tables:
+   - geb_account_data: Primary account information
+   - geb_account_objectdata: Additional account attributes
+
+2. AES (Target System) - Contains tables:
+   - aes_account_attributes: Main account table
+   - aes_account_alternate_identifiers: Links accounts between systems
+
+## Data Flow Process
+
+### Step 1: Initial Data Read
+```sql
+select ACCOUNT_NUMBER, ACCOUNT_TYPE, CUR_CODE, OWNER_TYPE 
+from aes_Account_attributes 
+where account_type in ('01','03')
+```
+- Purpose: Initial read of existing accounts
+- Only reads accounts of type '01' (likely current accounts) and '03' (likely savings accounts)
+- Used to establish baseline of existing data
+
+Purpose:
+The first query retrieves details (ACCOUNT_NUMBER, ACCOUNT_TYPE, CUR_CODE, OWNER_TYPE) from the aes_Account_attributes table for specific account types ('01' and '03'). This could be used to gather all account information that fits these types before running updates.
+The second query counts the total number of records in aes_Account_attributes, which might be used to verify the number of accounts to ensure synchronization completeness.
+
+Data Flow: The information fetched here could be used for comparison or logging to ensure updates are accurate and complete.
+
+### Step 2: Major Data Synchronization
+```sql
+MERGE into aes_account_attributes A 
+Using (select * from (
+    SELECT abc.*, 
+    DECODE(abc.cew_acc_id, NULL, abc.account_id, abc.cew_acc_id) cew_account_id 
+    FROM (
+        SELECT mv.*, aai.account_id cew_acc_id 
+        FROM geb_account_data mv 
+        LEFT JOIN aes_account_alternate_identifiers aai 
+        ON aai.id_value = mv.account_id
+    ) abc
+) xyz where xyz.cew_account_id not in (
+    select ACCOUNT_ID from (
+        select ACCOUNT_ID, count(ID_VALUE) 
+        from aes_account_alternate_identifiers 
+        group by ACCOUNT_ID 
+        having count(ID_VALUE)>1
+    )
+)) b
+```
+
+Key Operations:
+1. Data Preparation:
+   - Joins GEB account data with alternate identifiers
+   - Creates unified account ID (cew_account_id)
+   - Excludes accounts with multiple mappings
+
+2. Data Updates:
+   ```sql
+   WHEN MATCHED THEN UPDATE SET 
+   A.BRCH_CODE = B.BRCH_CODE,
+   A.ACCOUNT_TYPE = B.ACCOUNT_TYPE,
+   /* ... more fields ... */
+   where A.BRCH_CODE <> B.BRCH_CODE or 
+   A.ACCOUNT_TYPE <> B.ACCOUNT_TYPE
+   /* ... more conditions ... */
+   ```
+   - Updates only changed fields
+   - Tracks system updates with timestamp
+
+Purpose:
+This MERGE statement (a combined UPDATE/INSERT query) is used to synchronize data from geb_account_data into aes_account_attributes.
+The subqueries here:
+mv.*: Grabs account details from geb_account_data.
+aai.account_id: Brings in alternative identifiers from aes_account_alternate_identifiers.
+DECODE function: Ensures that if cew_acc_id (alternate identifier) is NULL, the main account ID (account_id) is used instead.
+Exclusion of accounts with multiple alternate identifiers prevents updating or inserting duplicate accounts.
+
+Data Flow: If cew_account_id (main or alternate) exists in aes_account_attributes:
+UPDATE fields like BRCH_CODE, ACCOUNT_TYPE, and ADDRESS_LINE_1 where they differ, and set the updated date.
+If the account does not exist, INSERT a new row with values from
+
+3. New Account Creation:
+   ```sql
+   WHEN NOT MATCHED THEN Insert
+   (account_id, account_type, /* ... */)
+   values (b.cew_account_id, b.account_type, /* ... */)
+   ```
+   - Creates new accounts in AES
+   - Sets default values for optional fields
+
+Purpose:
+This MERGE statement (a combined UPDATE/INSERT query) is used to synchronize data from geb_account_data into aes_account_attributes.
+The subqueries here:
+mv.*: Grabs account details from geb_account_data.
+aai.account_id: Brings in alternative identifiers from aes_account_alternate_identifiers.
+DECODE function: Ensures that if cew_acc_id (alternate identifier) is NULL, the main account ID (account_id) is used instead.
+Exclusion of accounts with multiple alternate identifiers prevents updating or inserting duplicate accounts.
+
+Data Flow: If cew_account_id (main or alternate) exists in aes_account_attributes:
+UPDATE fields like BRCH_CODE, ACCOUNT_TYPE, and ADDRESS_LINE_1 where they differ, and set the updated date.
+If the account does not exist, INSERT a new row with values from geb_account_data.
+
+### Step 3: Cleanup of Obsolete Records
+```sql
+delete from AES_ACCOUNT_ATTRIBUTES acc 
+where acc.account_id not in (
+    select decode(abc.cew_acc_id,NULL,abc.account_id,abc.cew_acc_id) 
+    from (
+        select mv.account_id, aai.account_id cew_acc_id 
+        from geb_account_data mv 
+        left join aes_account_alternate_identifiers aai 
+        on aai.id_value=mv.account_id 
+        and aai.id_type='GEB' 
+        and aai.bank_entity_id='UOBT'
+    ) abc
+)
+```
+- Removes accounts that no longer exist in GEB
+- Maintains referential integrity
+- Only affects accounts for bank entity 'UOBT'
+
+Purpose:
+This deletes accounts from aes_account_attributes that do not exist in geb_account_data.
+The subquery gathers account IDs from geb_account_data, selecting cew_acc_id when available; otherwise, it uses account_id.
+
+Data Flow: Only those records present in geb_account_data or linked with a GEB identifier (UOBT entity) are retained, keeping aes_account_attributes synchronized with GEB data.
+
+
+### Step 4: Account Type Standardization
+```sql
+merge INTO aes_account_attributes a 
+using (
+    select Account_id,
+    case 
+        when account_type='01' and owner_type='01' then 'CUR'
+        when account_type='03' and owner_type='01' then 'SAV'
+        when account_type='01' and owner_type='05' then 'EXT'
+        when account_type='05' and owner_type='01' then 'GTD'
+        when account_type='04' and owner_type='01' then 'LNS'
+        else c.bank_account_type 
+    end as bank_account_type 
+    from aes_account_attributes c
+) b
+```
+Standardizes account types based on combinations:
+- Maps numerical codes to readable formats
+- Only updates null bank_account_type fields
+- Preserves existing valid values
+
+Purpose:
+This deletes accounts from aes_account_attributes that do not exist in geb_account_data.
+The subquery gathers account IDs from geb_account_data, selecting cew_acc_id when available; otherwise, it uses account_id.
+
+Data Flow: Only those records present in geb_account_data or linked with a GEB identifier (UOBT entity) are retained, keeping aes_account_attributes synchronized with GEB data.
+
+### Step 5: Additional Attributes Update
+```sql
+merge INTO aes_account_attributes a 
+using (
+    select AAAI.Account_id,
+           GEB_NRA.String_Value as NRA_Ind,
+           GEB_Islamic.String_Value as IslamicInd 
+    from aes_account_alternate_identifiers AAAI 
+    left join geb_account_objectdata GEB_NRA 
+    ON aaai.id_value = GEB_NRA.account_id 
+    and GEB_NRA.string_name = 'nra'
+    left join geb_account_objectdata GEB_Islamic 
+    ON aaai.id_value = GEB_Islamic.account_id 
+    and GEB_Islamic.string_name = 'IslamicInd'
+)
+```
+- Updates special account indicators
+- NRA (Non-Residential Account) status
+- Islamic banking flags
+- Only for accounts not previously updated
+
+Purpose:
+This updates the BANK_ACCOUNT_TYPE field in aes_account_attributes based on specific conditions.
+If account_type and owner_type match specific values, corresponding bank_account_type codes like 'CUR', 'SAV', 'EXT', etc., are assigned. If no match is found, it defaults to the current bank_account_type of the row.
+
+Data Flow: This standardizes and completes account type information in aes_account_attributes.
+
+## Final Data State
+
+After this process completes:
+
+1. Account Master Data:
+   - Synchronized account details
+   - Standardized account types
+   - Updated addresses and bank information
+
+2. Account Classifications:
+   - Mapped account types (CUR, SAV, EXT, GTD, LNS)
+   - NRA status
+   - Islamic banking indicators
+
+3. Data Quality:
+   - No duplicate mappings
+   - No orphaned records
+   - Consistent account types
+   - Complete audit trail (system updates tracked)
 
 # utils
 
