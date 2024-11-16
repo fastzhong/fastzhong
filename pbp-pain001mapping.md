@@ -1,51 +1,37 @@
 ## mapper
-```java
-@Mapping(target = "deliveryMethod", source = "childDTO", qualifiedByName = "mapDeliveryMethod")
-    @Mapping(target = "deliveryAddress", source = "childDTO", qualifiedByName = "mapDeliveryAddress")
-    PwsTransactionAdvices mapToPwsTransactionAdvices(CreditTransferTransactionInformationDTO childDTO);
-
-    @Named("mapDeliveryMethod")
-    default String mapDeliveryMethod(CreditTransferTransactionInformationDTO childDTO) {
-        return childDTO.getRelatedRemittanceInformation() != null &&
-               !childDTO.getRelatedRemittanceInformation().isEmpty() &&
-               childDTO.getRelatedRemittanceInformation().get(0).getRemittanceLocationDetails() != null &&
-               !childDTO.getRelatedRemittanceInformation().get(0).getRemittanceLocationDetails().isEmpty()
-               ? childDTO.getRelatedRemittanceInformation().get(0).getRemittanceLocationDetails().get(0).getMethod()
-               : null;
-    }
-
-    @Named("mapDeliveryAddress")
-    default String mapDeliveryAddress(CreditTransferTransactionInformationDTO childDTO) {
-        return childDTO.getRelatedRemittanceInformation() != null &&
-               !childDTO.getRelatedRemittanceInformation().isEmpty() &&
-               childDTO.getRelatedRemittanceInformation().get(0).getRemittanceLocationDetails() != null &&
-               !childDTO.getRelatedRemittanceInformation().get(0).getRemittanceLocationDetails().isEmpty()
-               ? childDTO.getRelatedRemittanceInformation().get(0).getRemittanceLocationDetails().get(0).getElectronicAddress()
-               : null;
-    }
-```
 
 ## testing
 
-```java
 @SpringBootTest
+@ActiveProfiles("test")
 class Pain001MappingServiceIntegrationTest {
 
     @Autowired
     private PaymentMappingServiceImpl paymentMappingService;
 
+    @Mock
+    private PwsFileUpload mockFileUpload;
+
+    @BeforeEach
+    void setup() {
+        mockFileUpload = createMockFileUpload();
+        ReflectionTestUtils.setField(paymentMappingService, "fileUpload", mockFileUpload);
+    }
+
+    private PwsFileUpload createMockFileUpload() {
+        PwsFileUpload fileUpload = new PwsFileUpload();
+        fileUpload.setFileUploadId(1L);
+        fileUpload.setFileReferenceId("THISE05118202402");
+        fileUpload.setChargeOption("OUR");
+        fileUpload.setPayrollOption("STANDARD");
+        return fileUpload;
+    }
+
     @Test
     void testPain001PaymentToBo_WithRealJsonData() throws Exception {
         // Given
-        String jsonContent = "{\n" +
-            "  \"businessDocument\": {\n" +
-            "    \"customerCreditTransferInitiation\": {\n" +
-            "      \"groupHeader\": {\n" +
-            // ... (using the JSON you provided, removed for brevity)
-            "      }\n" +
-            "    }\n" +
-            "  }\n" +
-            "}";
+        ClassPathResource jsonResource = new ClassPathResource("pain001-sample.json");
+        String jsonContent = Files.readString(Path.of(jsonResource.getURI()));
 
         ObjectMapper objectMapper = new ObjectMapper();
         Pain001 pain001 = objectMapper.readValue(jsonContent, Pain001.class);
@@ -75,12 +61,17 @@ class Pain001MappingServiceIntegrationTest {
         assertEquals("Bulk-File-Upload", pwsTxn.getFeatureId());
         assertEquals("0987654321", pwsTxn.getAccountNumber());
         assertEquals("ชื่อ 00", pwsTxn.getCompanyName());
-        assertEquals("PENDING_SUBMIT", pwsTxn.getCaptureStatus());
-        assertEquals("NEW", pwsTxn.getCustomerTransactionStatus());
+        assertEquals("SUBMITTED", pwsTxn.getCaptureStatus());
+        assertEquals("PENDING_VERIFICATION", pwsTxn.getCustomerTransactionStatus());
+        assertNotNull(pwsTxn.getInitiationTime());
         
         // Verify PwsBulkTransactions
         PwsBulkTransactions pwsBulkTxn = result.getPwsBulkTransactions();
         assertNotNull(pwsBulkTxn);
+        assertEquals(mockFileUpload.getFileUploadId(), pwsBulkTxn.getFileUploadId());
+        assertEquals("OUR", pwsBulkTxn.getChargeOptions());
+        assertEquals("STANDARD", pwsBulkTxn.getPayrollOptions());
+        assertEquals("PENDING_VERIFICATION", pwsBulkTxn.getStatus());
         assertNotNull(pwsBulkTxn.getTransferDate());
         assertEquals("2007-02-23", new SimpleDateFormat("yyyy-MM-dd").format(pwsBulkTxn.getTransferDate()));
 
@@ -91,6 +82,8 @@ class Pain001MappingServiceIntegrationTest {
         
         // Verify first transaction details
         CreditTransferTransaction firstTxn = creditTransfers.get(0);
+        assertEquals(1, firstTxn.getDmpLineNo());
+        assertEquals(DmpTransactionStatus.fromValue("01"), firstTxn.getDmpTransactionStatus());
         
         // Verify PwsBulkTransactionInstructions
         PwsBulkTransactionInstructions instructions = firstTxn.getPwsBulkTransactionInstructions();
@@ -99,6 +92,10 @@ class Pain001MappingServiceIntegrationTest {
         assertEquals(new BigDecimal("2490.68"), instructions.getTransactionAmount());
         assertEquals("รายละเอียดการชำระเงิน12345", instructions.getPaymentDetails());
         assertEquals("อ้างอิง000000", instructions.getCustomerReference());
+        assertEquals("PENDING_VERIFICATION", instructions.getCustomerTransactionStatus());
+        assertEquals("OUR", instructions.getChargeOptions());
+        assertNotNull(instructions.getOriginalValueDate());
+        assertNotNull(instructions.getInitiationTime());
         
         // Verify Creditor
         Creditor creditor = firstTxn.getCreditor();
@@ -119,6 +116,7 @@ class Pain001MappingServiceIntegrationTest {
         PwsTaxInstructions firstTaxInstruction = taxInstructions.get(0);
         assertEquals("234987", firstTaxInstruction.getTaxPayerId());
         assertEquals("53", firstTaxInstruction.getTaxType());
+        assertEquals("หักภาษี ณ ที่จ่าย (Withhold at source)       1/R  ", firstTaxInstruction.getTaxPaymentCondition());
         assertEquals("T1", firstTaxInstruction.getTypeOfIncome());
         assertEquals("คำอธิบาย1", firstTaxInstruction.getTaxDescription());
         assertEquals(new BigDecimal("1.23"), firstTaxInstruction.getTaxRateInPercentage());
@@ -131,24 +129,30 @@ class Pain001MappingServiceIntegrationTest {
         assertEquals("EMAIL", advice.getDeliveryMethod());
         assertEquals("mgminterA@thaimail.com", advice.getDeliveryAddress());
         
-        // Verify remaining transactions have expected values
-        assertEquals("บริษัท22222", creditTransfers.get(1).getCreditor().getPwsParties().getPartyName());
-        assertEquals("บริษัท33333", creditTransfers.get(2).getCreditor().getPwsParties().getPartyName());
-        assertEquals("บริษัท44444", creditTransfers.get(3).getCreditor().getPwsParties().getPartyName());
-        assertEquals("บริษัท55555", creditTransfers.get(4).getCreditor().getPwsParties().getPartyName());
+        // Verify remaining transactions
+        verifyTransaction(creditTransfers.get(1), "บริษัท22222", "mgminterB@thaimail.com", 4);
+        verifyTransaction(creditTransfers.get(2), "บริษัท33333", "mgminterC@thaimail.com", 7);
+        verifyTransaction(creditTransfers.get(3), "บริษัท44444", "mgminterD@thaimail.com", 10);
+        verifyTransaction(creditTransfers.get(4), "บริษัท55555", "mgminterE@thaimail.com", 13);
+    }
+
+    private void verifyTransaction(CreditTransferTransaction txn, String expectedPartyName, 
+                                 String expectedEmail, int expectedLineNo) {
+        assertNotNull(txn);
+        assertEquals(expectedLineNo, txn.getDmpLineNo());
+        assertEquals(DmpTransactionStatus.fromValue("01"), txn.getDmpTransactionStatus());
+        
+        assertNotNull(txn.getCreditor());
+        assertNotNull(txn.getCreditor().getPwsParties());
+        assertEquals(expectedPartyName, txn.getCreditor().getPwsParties().getPartyName());
+        
+        assertNotNull(txn.getAdvice());
+        assertEquals("EMAIL", txn.getAdvice().getDeliveryMethod());
+        assertEquals(expectedEmail, txn.getAdvice().getDeliveryAddress());
+        
+        assertNotNull(txn.getPwsBulkTransactionInstructions());
+        assertEquals("THB", txn.getPwsBulkTransactionInstructions().getTransactionCurrency());
+        assertEquals(new BigDecimal("2490.68"), txn.getPwsBulkTransactionInstructions().getTransactionAmount());
+        assertEquals("PENDING_VERIFICATION", txn.getPwsBulkTransactionInstructions().getCustomerTransactionStatus());
     }
 }
-```
-
-# mapper2
-```java
-// PwsBulkTransactions
-     @Mapping(target = "fileUpload", source = "fileUpload.fileReferenceId")
-     @Mapping(target = "status", constant = "PENDING_VERIFICATION")
-     @Mapping(target = "dmpBatchNumber", source = "paymentDTO.DMPBatchRef")
-     @Mapping(target = "fileUpload", source = "fileUpload.fileReferenceId")
-     @Mapping(target = "chargeOptions", source = "fileUpload.chargeOption")
-     @Mapping(target = "payrollOptions", source = "fileUpload.payrollOption")
-     PwsBulkTransactions mapToPwsBulkTransactions(PaymentInformationDTO paymentDTO, PwsFileUpload fileUpload);
-```
-
