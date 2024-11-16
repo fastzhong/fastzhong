@@ -1642,6 +1642,209 @@ class PaymentSaveServiceTest {
         when(config.getBatchInsertSize()).thenReturn(1000);
     }
 
+    @Test
+        void createTransitMessage_Successful() {
+            // Arrange
+            PwsTransitMessage transitMessage = createTestTransitMessage();
+
+            // Act
+            paymentSave.createTransitMessage(transitMessage);
+
+            // Assert
+            verify(pwsSaveDao).insertPwsTransitMessage(transitMessage);
+        }
+
+        @Test
+        void createTransitMessage_WhenInsertFails_ShouldThrowException() {
+            // Arrange
+            PwsTransitMessage transitMessage = createTestTransitMessage();
+            when(pwsSaveDao.insertPwsTransitMessage(any()))
+                .thenThrow(new RuntimeException("Insert failed"));
+
+            // Act & Assert
+            assertThrows(RuntimeException.class, 
+                () -> paymentSave.createTransitMessage(transitMessage));
+        }
+
+        private PwsTransitMessage createTestTransitMessage() {
+            PwsTransitMessage message = new PwsTransitMessage();
+            message.setMessageRefNo("MSG-001");
+            message.setBankReferenceId(TEST_BANK_REF);
+            message.setServiceType("SERVICE_INBOUND");
+            message.setEndSystem("DMP");
+            message.setStatus("PROCESSING");
+            message.setRetryCount(0);
+            message.setProcessingDate(new Date());
+            return message;
+        }
+    }
+
+    @Nested
+    class RejectedRecordTests {
+        @Test
+        void createSingleRejectedRecord_Successful() {
+            // Arrange
+            PwsRejectedRecord rejectedRecord = createTestRejectedRecord(1L);
+
+            // Act
+            paymentSave.createRejectedRecord(rejectedRecord);
+
+            // Assert
+            verify(pwsSaveDao).insertPwsRejectedRecord(rejectedRecord);
+        }
+
+        @Test
+        void createSingleRejectedRecord_WhenInsertFails_ShouldThrowException() {
+            // Arrange
+            PwsRejectedRecord rejectedRecord = createTestRejectedRecord(1L);
+            when(pwsSaveDao.insertPwsRejectedRecord(any()))
+                .thenThrow(new RuntimeException("Insert failed"));
+
+            // Act & Assert
+            assertThrows(RuntimeException.class, 
+                () -> paymentSave.createRejectedRecord(rejectedRecord));
+        }
+
+        @Test
+        void createMultipleRejectedRecords_WithinSingleBatch_Successful() {
+            // Arrange
+            int recordCount = 5;
+            when(config.getBatchInsertSize()).thenReturn(10);
+            List<PwsRejectedRecord> rejectedRecords = createTestRejectedRecords(recordCount);
+            setupSuccessfulRetryTemplate();
+
+            // Act
+            paymentSave.createRejectedRecords(rejectedRecords);
+
+            // Assert
+            verify(sqlSession, times(1)).commit();
+            verify(sqlSession, never()).rollback();
+            verifyRejectedRecordsInserted(recordCount);
+        }
+
+        @Test
+        void createMultipleRejectedRecords_AcrossMultipleBatches_Successful() {
+            // Arrange
+            int batchSize = 2;
+            int totalRecords = 5;
+            when(config.getBatchInsertSize()).thenReturn(batchSize);
+            List<PwsRejectedRecord> rejectedRecords = createTestRejectedRecords(totalRecords);
+            setupSuccessfulRetryTemplate();
+
+            // Act
+            paymentSave.createRejectedRecords(rejectedRecords);
+
+            // Assert
+            verify(sqlSession, times(3)).commit(); // ceil(5/2) batches
+            verify(sqlSession, never()).rollback();
+            verifyRejectedRecordsInserted(totalRecords);
+        }
+
+        @Test
+        void createMultipleRejectedRecords_WhenBatchFails_ShouldContinue() {
+            // Arrange
+            int batchSize = 2;
+            int totalRecords = 4;
+            when(config.getBatchInsertSize()).thenReturn(batchSize);
+            List<PwsRejectedRecord> rejectedRecords = createTestRejectedRecords(totalRecords);
+            setupPartiallyFailingRetryTemplate(1); // Fail first batch
+
+            // Act
+            paymentSave.createRejectedRecords(rejectedRecords);
+
+            // Assert
+            verify(sqlSession, atLeastOnce()).rollback();
+            verify(sqlSession, atLeastOnce()).commit();
+        }
+
+        @Test
+        void createMultipleRejectedRecords_WhenAllBatchesFail_ShouldHandleError() {
+            // Arrange
+            int totalRecords = 4;
+            List<PwsRejectedRecord> rejectedRecords = createTestRejectedRecords(totalRecords);
+            setupFailedRetryTemplate();
+
+            // Act
+            paymentSave.createRejectedRecords(rejectedRecords);
+
+            // Assert
+            verify(sqlSession, times(2)).rollback(); // Two batches attempted
+            verify(sqlSession, never()).commit();
+        }
+
+        private PwsRejectedRecord createTestRejectedRecord(Long entityId) {
+            PwsRejectedRecord record = new PwsRejectedRecord();
+            record.setEntityId(entityId);
+            record.setEntityType("PAYMENT");
+            record.setBankReferenceId(TEST_BANK_REF);
+            record.setRejectCode("ERR-001");
+            record.setErrorDetail("Test Error");
+            record.setCreatedBy("TEST_USER");
+            record.setCreatedDate(new Date());
+            return record;
+        }
+
+        private List<PwsRejectedRecord> createTestRejectedRecords(int count) {
+            return IntStream.range(0, count)
+                .mapToObj(i -> createTestRejectedRecord((long) i))
+                .collect(Collectors.toList());
+        }
+
+        private void verifyRejectedRecordsInserted(int expectedCount) {
+            ArgumentCaptor<PwsRejectedRecord> captor = ArgumentCaptor.forClass(PwsRejectedRecord.class);
+            verify(pwsSaveDao, times(expectedCount)).insertPwsRejectedRecord(captor.capture());
+            
+            List<PwsRejectedRecord> capturedRecords = captor.getAllValues();
+            assertEquals(expectedCount, capturedRecords.size());
+            
+            // Verify each record has required fields
+            capturedRecords.forEach(record -> {
+                assertNotNull(record.getEntityId());
+                assertNotNull(record.getEntityType());
+                assertNotNull(record.getBankReferenceId());
+                assertNotNull(record.getRejectCode());
+                assertNotNull(record.getErrorDetail());
+                assertNotNull(record.getCreatedBy());
+                assertNotNull(record.getCreatedDate());
+            });
+        }
+    }
+
+    // Additional helper methods for retry template setup
+    private void setupPartiallyFailingRetryTemplate(int failBatchNumber) {
+        AtomicInteger batchCounter = new AtomicInteger(0);
+        lenient().when(retryTemplate.execute(any(RetryCallback.class), any(RecoveryCallback.class)))
+            .thenAnswer(invocation -> {
+                int currentBatch = batchCounter.incrementAndGet();
+                if (currentBatch == failBatchNumber) {
+                    throw new BulkProcessingException("Failed to insert batch " + failBatchNumber, 
+                        new RuntimeException());
+                }
+                RetryCallback<Object, RuntimeException> callback = invocation.getArgument(0);
+                return callback.doWithRetry(null);
+            });
+    }
+
+    private class TestRetryContext implements RetryContext {
+        private final int retryCount;
+        private final Throwable lastThrowable;
+
+        TestRetryContext(int retryCount, Throwable lastThrowable) {
+            this.retryCount = retryCount;
+            this.lastThrowable = lastThrowable;
+        }
+
+        @Override
+        public int getRetryCount() {
+            return retryCount;
+        }
+
+        @Override
+        public Throwable getLastThrowable() {
+            return lastThrowable;
+        }
+    }
+
     @Nested
     class SavePaymentInformationTests {
         @Test
