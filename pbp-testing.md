@@ -1,3 +1,500 @@
+# E2E
+
+## config
+
+```java
+@TestConfiguration
+@EnableBatchProcessing
+public class E2ETestConfig {
+
+    @Bean
+    @Primary
+    public DataSource h2DataSource() {
+        return new EmbeddedDatabaseBuilder()
+            .setType(EmbeddedDatabaseType.H2)
+            .addScript("classpath:schema-h2.sql")
+            .addScript("classpath:test-data.sql")
+            .build();
+    }
+
+    @Bean
+    @Primary
+    public SqlSessionFactory sqlSessionFactory(DataSource dataSource) throws Exception {
+        SqlSessionFactoryBean sessionFactory = new SqlSessionFactoryBean();
+        sessionFactory.setDataSource(dataSource);
+        sessionFactory.setMapperLocations(new PathMatchingResourcePatternResolver()
+            .getResources("classpath:mappers/**/*.xml"));
+        return sessionFactory.getObject();
+    }
+
+    @Bean
+    @Primary
+    public SqlSessionTemplate sqlSessionTemplate(SqlSessionFactory sqlSessionFactory) {
+        return new SqlSessionTemplate(sqlSessionFactory);
+    }
+
+    @Bean
+    public RetryTemplate retryTemplate(AppConfig appConfig) {
+        RetryTemplate retryTemplate = new RetryTemplate();
+        SimpleRetryPolicy retryPolicy = new SimpleRetryPolicy();
+        retryPolicy.setMaxAttempts(appConfig.getRetry().getMaxAttempts());
+        retryTemplate.setRetryPolicy(retryPolicy);
+        
+        ExponentialBackOffPolicy backOffPolicy = new ExponentialBackOffPolicy();
+        backOffPolicy.setInitialInterval(appConfig.getRetry().getBackoff().getInitialInterval());
+        backOffPolicy.setMultiplier(appConfig.getRetry().getBackoff().getMultiplier());
+        backOffPolicy.setMaxInterval(appConfig.getRetry().getBackoff().getMaxInterval());
+        retryTemplate.setBackOffPolicy(backOffPolicy);
+        
+        return retryTemplate;
+    }
+}
+```
+
+## sql 
+
+```sql
+-- Spring Batch Tables
+CREATE TABLE BATCH_JOB_INSTANCE (
+    JOB_INSTANCE_ID BIGINT NOT NULL PRIMARY KEY,
+    VERSION BIGINT,
+    JOB_NAME VARCHAR(100) NOT NULL,
+    JOB_KEY VARCHAR(32) NOT NULL,
+    constraint JOB_INST_UN unique (JOB_NAME, JOB_KEY)
+);
+
+CREATE TABLE BATCH_JOB_EXECUTION (
+    JOB_EXECUTION_ID BIGINT NOT NULL PRIMARY KEY,
+    VERSION BIGINT,
+    JOB_INSTANCE_ID BIGINT NOT NULL,
+    CREATE_TIME TIMESTAMP NOT NULL,
+    START_TIME TIMESTAMP,
+    END_TIME TIMESTAMP,
+    STATUS VARCHAR(10),
+    EXIT_CODE VARCHAR(2500),
+    EXIT_MESSAGE VARCHAR(2500),
+    LAST_UPDATED TIMESTAMP,
+    constraint JOB_INST_EXEC_FK foreign key (JOB_INSTANCE_ID)
+    references BATCH_JOB_INSTANCE(JOB_INSTANCE_ID)
+);
+
+-- Payment Tables
+-- File Upload table
+CREATE TABLE PWS_FILE_UPLOAD (
+    FILE_UPLOAD_ID BIGINT PRIMARY KEY AUTO_INCREMENT,
+    FILE_REFERENCE_ID VARCHAR(255),
+    TRANSACTION_ID BIGINT,
+    FEATURE_ID VARCHAR(100),
+    RESOURCE_ID VARCHAR(100),
+    FILE_TYPE_ENUM VARCHAR(50),
+    FILE_SUB_TYPE_ENUM VARCHAR(50),
+    UPLOAD_FILE_NAME VARCHAR(255),
+    UPLOAD_FILE_PATH VARCHAR(500),
+    FILE_SIZE BIGINT,
+    COMPANY_ID BIGINT,
+    ACCOUNT_ID VARCHAR(100),
+    RESOURCE_CATEGORY VARCHAR(100),
+    CHARGE_OPTION VARCHAR(50),
+    PAYROLL_OPTION VARCHAR(50),
+    FILE_UPLOAD_STATUS VARCHAR(50),
+    STATUS VARCHAR(50),
+    CREATED_BY VARCHAR(100),
+    CREATED_DATE TIMESTAMP,
+    UPDATED_BY VARCHAR(100),
+    UPDATED_DATE TIMESTAMP,
+    CHANGE_TOKEN BIGINT
+);
+
+-- Rejected Records table
+CREATE TABLE PWS_REJECTED_RECORD (
+    REJECTED_RECORD_ID BIGINT PRIMARY KEY AUTO_INCREMENT,
+    ENTITY_TYPE VARCHAR(100),
+    ENTITY_ID BIGINT,
+    SEQUENCE_NO BIGINT,
+    LINE_NO BIGINT,
+    COLUMN_NO BIGINT,
+    CREATED_BY VARCHAR(100),
+    CREATED_DATE TIMESTAMP,
+    BANK_REFERENCE_ID VARCHAR(100),
+    TRANSACTION_ID BIGINT,
+    REJECT_CODE VARCHAR(50),
+    ERROR_DETAIL VARCHAR(500)
+);
+
+-- Transaction Validation Rules table
+CREATE TABLE PWS_TRANSACTION_VALIDATION_RULES (
+    ID BIGINT PRIMARY KEY AUTO_INCREMENT,
+    COUNTRY_CODE VARCHAR(3),
+    CHANNEL VARCHAR(50),
+    BANK_ENTITY_ID VARCHAR(100),
+    SOURCE_FORMAT VARCHAR(50),
+    RESOURCE_ID VARCHAR(100),
+    FEATURE_ID VARCHAR(100),
+    FIELD_NAME VARCHAR(255),
+    FIELD_VALUE VARCHAR(255),
+    CONDITION1 VARCHAR(255),
+    CONDITION2 VARCHAR(255),
+    RULE VARCHAR(500),
+    CONDITION_FLAG VARCHAR(50),
+    ERROR_CODE VARCHAR(50),
+    ERROR_MESSAGE VARCHAR(500),
+    ACTION VARCHAR(100)
+);
+
+-- Transit Message table
+CREATE TABLE PWS_TRANSIT_MESSAGE (
+    MESSAGE_ID BIGINT PRIMARY KEY AUTO_INCREMENT,
+    MESSAGE_REF_NO VARCHAR(100),
+    BANK_REFERENCE_ID VARCHAR(100),
+    CORRELATION_ID VARCHAR(100),
+    MESSAGE_CONTENT BLOB,
+    SERVICE_TYPE VARCHAR(100),
+    END_SYSTEM VARCHAR(100),
+    PROCESSING_DATE TIMESTAMP,
+    RETRY_COUNT INT,
+    STATUS VARCHAR(50)
+);
+
+-- Existing tables from previous POs
+CREATE TABLE PWS_TRANSACTIONS (
+    TRANSACTION_ID BIGINT PRIMARY KEY AUTO_INCREMENT,
+    BANK_ENTITY_ID VARCHAR(100),
+    RESOURCE_ID VARCHAR(100),
+    FEATURE_ID VARCHAR(100),
+    CORRELATION_ID VARCHAR(100),
+    BANK_REFERENCE_ID VARCHAR(100),
+    APPLICATION_TYPE VARCHAR(50),
+    ACCOUNT_CURRENCY VARCHAR(3),
+    ACCOUNT_NUMBER VARCHAR(100),
+    COMPANY_GROUP_ID BIGINT,
+    COMPANY_ID BIGINT,
+    COMPANY_NAME VARCHAR(255),
+    TRANSACTION_CURRENCY VARCHAR(3),
+    TOTAL_AMOUNT DECIMAL(19,2),
+    TOTAL_CHILD INT,
+    HIGHEST_AMOUNT DECIMAL(19,2),
+    AUTHORIZATION_STATUS VARCHAR(50),
+    CAPTURE_STATUS VARCHAR(50),
+    CUSTOMER_TRANSACTION_STATUS VARCHAR(50),
+    PROCESSING_STATUS VARCHAR(50),
+    REJECT_REASON VARCHAR(500),
+    INITIATED_BY BIGINT,
+    INITIATION_TIME TIMESTAMP,
+    RELEASED_BY BIGINT,
+    RELEASE_DATE TIMESTAMP,
+    CHANGE_TOKEN BIGINT
+);
+
+CREATE TABLE PWS_BULK_TRANSACTIONS (
+    BK_TRANSACTION_ID BIGINT PRIMARY KEY AUTO_INCREMENT,
+    TRANSACTION_ID BIGINT,
+    FILE_UPLOAD_ID BIGINT,
+    RECIPIENTS_REFERENCE VARCHAR(100),
+    RECIPIENTS_DESCRIPTION VARCHAR(500),
+    FATE_FILE_NAME VARCHAR(255),
+    FATE_FILE_PATH VARCHAR(500),
+    COMBINE_DEBIT VARCHAR(1),
+    STATUS VARCHAR(50),
+    CHANGE_TOKEN BIGINT,
+    ERROR_DETAIL VARCHAR(500),
+    FINAL_FATE_UPDATED_DATE TIMESTAMP,
+    ACK_FILE_PATH VARCHAR(500),
+    ACK_UPDATED_DATE TIMESTAMP,
+    TRANSFER_DATE DATE,
+    USER_COMMENTS VARCHAR(500),
+    DMP_BATCH_NUMBER VARCHAR(100),
+    REJECT_CODE VARCHAR(50),
+    BATCH_BOOKING VARCHAR(50),
+    CHARGE_OPTIONS VARCHAR(50),
+    PAYROLL_OPTIONS VARCHAR(50),
+    FOREIGN KEY (TRANSACTION_ID) REFERENCES PWS_TRANSACTIONS(TRANSACTION_ID),
+    FOREIGN KEY (FILE_UPLOAD_ID) REFERENCES PWS_FILE_UPLOAD(FILE_UPLOAD_ID)
+);
+
+CREATE TABLE PWS_BULK_TRANSACTION_INSTRUCTIONS (
+    CHILD_TRANSACTION_INSTRUCTIONS_ID BIGINT PRIMARY KEY AUTO_INCREMENT,
+    CHILD_BANK_REFERENCE_ID VARCHAR(100),
+    TRANSACTION_ID BIGINT,
+    BANK_REFERENCE_ID VARCHAR(100),
+    TRANSACTION_CURRENCY VARCHAR(3),
+    TRANSACTION_AMOUNT DECIMAL(19,2),
+    EQUIVALENT_CURRENCY VARCHAR(3),
+    EQUIVALENT_AMOUNT DECIMAL(19,2),
+    DESTINATION_COUNTRY VARCHAR(3),
+    DESTINATION_BANK_NAME VARCHAR(255),
+    FX_FLAG VARCHAR(1),
+    CHARGE_OPTIONS VARCHAR(50),
+    ORIGINAL_VALUE_DATE TIMESTAMP,
+    VALUE_DATE TIMESTAMP,
+    SETTLEMENT_DATE TIMESTAMP,
+    PAYMENT_CODE_ID VARCHAR(50),
+    PAYMENT_DETAILS VARCHAR(500),
+    RAIL_CODE VARCHAR(50),
+    IS_RECURRING VARCHAR(1),
+    IS_PRE_APPROVED VARCHAR(1),
+    CUSTOMER_REFERENCE VARCHAR(100),
+    CUSTOMER_TRANSACTION_STATUS VARCHAR(50),
+    PROCESSING_STATUS VARCHAR(50),
+    REJECT_REASON VARCHAR(500),
+    REMARKS_FOR_APPROVAL VARCHAR(500),
+    USER_COMMENTS VARCHAR(500),
+    DUPLICATION_FLAG VARCHAR(1),
+    REJECT_CODE VARCHAR(50),
+    TRANSFER_SPEED BIGINT,
+    DMP_TRANS_REF VARCHAR(100),
+    CHILD_TEMPLATE_ID BIGINT,
+    INITIATION_TIME TIMESTAMP,
+    FOREIGN KEY (TRANSACTION_ID) REFERENCES PWS_TRANSACTIONS(TRANSACTION_ID)
+);
+
+CREATE TABLE PWS_PARTIES (
+    PARTY_ID BIGINT PRIMARY KEY AUTO_INCREMENT,
+    BANK_ENTITY_ID VARCHAR(100),
+    TRANSACTION_ID BIGINT,
+    BANK_REFERENCE_ID VARCHAR(100),
+    CHILD_BANK_REFERENCE_ID VARCHAR(100),
+    BANK_CODE VARCHAR(50),
+    BANK_ID BIGINT,
+    PARTY_ACCOUNT_TYPE VARCHAR(50),
+    PARTY_ACCOUNT_NUMBER VARCHAR(100),
+    PARTY_ACCOUNT_NAME VARCHAR(255),
+    PARTY_NICK_NAME VARCHAR(255),
+    PARTY_MASKED_NICK_NAME VARCHAR(255),
+    PARTY_ACCOUNT_CURRENCY VARCHAR(3),
+    PARTY_AGENT_BIC VARCHAR(11),
+    PARTY_NAME VARCHAR(255),
+    PARTY_ROLE VARCHAR(50),
+    RESIDENTIAL_STATUS VARCHAR(50),
+    PROXY_ID VARCHAR(100),
+    PROXY_ID_TYPE VARCHAR(50),
+    ID_ISSUING_COUNTRY VARCHAR(3),
+    PRODUCT_TYPE VARCHAR(50),
+    PRIMARY_IDENTIFICATION_TYPE VARCHAR(50),
+    PRIMARY_IDENTIFICATION_VALUE VARCHAR(100),
+    SECONDARY_IDENTIFICATION_TYPE VARCHAR(50),
+    SECONDARY_IDENTIFICATION_VALUE VARCHAR(100),
+    REGISTRATION_ID VARCHAR(100),
+    BENEFICIARY_REFERENCE_ID BIGINT,
+    SWIFT_CODE VARCHAR(11),
+    PARTY_TYPE VARCHAR(50),
+    RESIDENCY_STATUS VARCHAR(50),
+    ACCOUNT_OWNERSHIP VARCHAR(50),
+    RELATIONSHIP_TYPE VARCHAR(50),
+    ULTIMATE_PAYEE_COUNTRY_CODE VARCHAR(3),
+    ULTIMATE_PAYEE_NAME VARCHAR(255),
+    ULTIMATE_PAYER_NAME VARCHAR(255),
+    IS_PREAPPROVED VARCHAR(1),
+    PARTY_MODIFIED_DATE TIMESTAMP,
+    BENEFICIARY_CHANGE_TOKEN BIGINT,
+    FOREIGN KEY (TRANSACTION_ID) REFERENCES PWS_TRANSACTIONS(TRANSACTION_ID)
+);
+
+-- Indexes
+CREATE INDEX IDX_FILE_UPLOAD_REF ON PWS_FILE_UPLOAD(FILE_REFERENCE_ID);
+CREATE INDEX IDX_FILE_UPLOAD_TXN ON PWS_FILE_UPLOAD(TRANSACTION_ID);
+CREATE INDEX IDX_REJECTED_RECORD_TXN ON PWS_REJECTED_RECORD(TRANSACTION_ID);
+CREATE INDEX IDX_TRANSIT_MSG_REF ON PWS_TRANSIT_MESSAGE(MESSAGE_REF_NO);
+CREATE INDEX IDX_TRANSIT_MSG_BANK_REF ON PWS_TRANSIT_MESSAGE(BANK_REFERENCE_ID);
+CREATE INDEX IDX_TXN_BANK_REF ON PWS_TRANSACTIONS(BANK_REFERENCE_ID);
+CREATE INDEX IDX_BULK_TXN_STATUS ON PWS_BULK_TRANSACTIONS(STATUS);
+CREATE INDEX IDX_PARTY_BANK_REF ON PWS_PARTIES(BANK_REFERENCE_ID);
+```
+## test 
+
+```java
+@SpringBootTest
+@ActiveProfiles("test")
+@TestPropertySource(properties = {
+    "spring.main.allow-bean-definition-overriding=true"
+})
+@Import(E2ETestConfig.class)
+class PaymentBulkProcessingE2ETest {
+
+    @Autowired
+    private BulkProcessingFlowBuilder flowBuilder;
+
+    @Autowired
+    private JobLauncher jobLauncher;
+
+    @Autowired
+    private Pain001InboundService pain001InboundService;
+
+    @Autowired
+    private SqlSessionTemplate sqlSessionTemplate;
+
+    @Autowired
+    private PwsSaveDao pwsSaveDao;
+
+    @MockBean
+    private PaymentIntegrationservice paymentIntegrationService;
+
+    @Value("classpath:test-data/pain001-simple.json")
+    private Resource simplePain001Json;
+
+    @Value("classpath:test-data/pain001-complex.json")
+    private Resource complexPain001Json;
+
+    @BeforeEach
+    void setUp() {
+        // Setup mock integration responses
+        when(paymentIntegrationService.getResourcesAndFeatures(anyLong()))
+            .thenReturn(createMockResourceFeatures());
+        when(paymentIntegrationService.getCompanyAndAccounts(anyLong(), anyString(), anyString()))
+            .thenReturn(createMockCompanyAccounts());
+    }
+
+    @Test
+    void testSimplePain001Processing() throws Exception {
+        // Arrange
+        String jsonContent = new String(Files.readAllBytes(simplePain001Json.getFile().toPath()));
+        BulkRoute route = createTestRoute();
+
+        // Act
+        JobParameters jobParameters = createJobParameters(route);
+        JobExecution jobExecution = jobLauncher.run(flowBuilder.createJob(route, createMockExchange()), jobParameters);
+
+        // Assert
+        assertEquals(ExitStatus.COMPLETED, jobExecution.getExitStatus());
+        verifyPaymentSaved();
+    }
+
+    @Test
+    void testComplexPain001Processing() throws Exception {
+        // Similar to simple test but with complex payload
+    }
+
+    private BulkRoute createTestRoute() {
+        BulkRoute route = new BulkRoute();
+        route.setRouteName("test-inbound-route");
+        route.setProcessingType(ProcessingType.INBOUND);
+        route.setSourceType(SourceDestinationType.FILE);
+        route.setEnabled(true);
+        route.setSteps(Arrays.asList(
+            "pain001-processing",
+            "payment-debulk",
+            "payment-validation",
+            "payment-enrichment",
+            "payment-save"
+        ));
+        return route;
+    }
+
+    private Exchange createMockExchange() {
+        Exchange exchange = new DefaultExchange(new DefaultCamelContext());
+        exchange.getIn().setHeader(Exchange.FILE_NAME, "test.json");
+        exchange.getIn().setHeader(Exchange.FILE_PATH, "/test/path/test.json");
+        
+        InboundContext routeContext = new InboundContext();
+        routeContext.setCountry(new Country("TH", "Thailand"));
+        routeContext.setSourcePath("/test/path/test.json");
+        routeContext.setSourceName("test.json");
+        exchange.setProperty(ContextKey.routeContext, routeContext);
+        
+        return exchange;
+    }
+
+    private JobParameters createJobParameters(BulkRoute route) {
+        return new JobParametersBuilder()
+            .addString(ContextKey.routeName, route.getRouteName())
+            .addString(ContextKey.country, "TH")
+            .addString(ContextKey.sourcePath, "/test/path/test.json")
+            .addString(ContextKey.sourceName, "test.json")
+            .addLong("time", System.currentTimeMillis())
+            .toJobParameters();
+    }
+
+    private void verifyPaymentSaved() {
+        // Verify database state
+        List<PwsTransactions> transactions = pwsSaveDao.findAllTransactions();
+        assertFalse(transactions.isEmpty());
+        
+        PwsTransactions transaction = transactions.get(0);
+        assertNotNull(transaction.getBankReferenceId());
+        assertEquals(CaptureStatus.SUBMITTED.name(), transaction.getCaptureStatus());
+        
+        List<PwsBulkTransactions> bulkTxns = pwsSaveDao.findBulkTransactionsByTxnId(transaction.getTransactionId());
+        assertFalse(bulkTxns.isEmpty());
+        
+        // Verify child transactions
+        List<PwsBulkTransactionInstructions> instructions = 
+            pwsSaveDao.findInstructionsByTxnId(transaction.getTransactionId());
+        assertFalse(instructions.isEmpty());
+    }
+
+    private UserResourceFeaturesActionsData createMockResourceFeatures() {
+        // Create mock entitlements data
+        UserResourceFeaturesActionsData data = new UserResourceFeaturesActionsData();
+        // Set up mock data
+        return data;
+    }
+
+    private CompanyAndAccountsForResourceFeaturesResp createMockCompanyAccounts() {
+        // Create mock company and accounts data
+        CompanyAndAccountsForResourceFeaturesResp resp = new CompanyAndAccountsForResourceFeaturesResp();
+        // Set up mock data
+        return resp;
+    }
+}
+```
+
+## test application.yml
+
+```yaml
+spring:
+  main:
+    allow-bean-definition-overriding: true
+  datasource:
+    driver-class-name: org.h2.Driver
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1
+    username: sa
+    password: 
+
+bulk-processing:
+  country: TH
+  retry:
+    maxAttempts: 3
+    backoff:
+      initialInterval: 1000
+      multiplier: 2.0
+      maxInterval: 5000
+  batchInsertSize: 100
+  uploadSourceFormatNoCompany:
+    - BCU11P2
+    - BCU11P4
+    - BCU11P6
+  debulk:
+    debulkSmart:
+      bankCode: 024
+      bahtnetThreshold: 2000000
+      sourceFormat:
+        - BCU10P1
+        - BCU10P2
+
+bulk-routes:
+  - route-name: CUSTOMER_SUBMITTED_TRANSFORMED
+    processing-type: INBOUND
+    source-type: FILE
+    bank-entity: UOBT
+    channel: IDB
+    request-type: BulkUpload
+    enabled: true
+    steps:
+      - pain001-processing
+      - payment-debulk
+      - payment-validation
+      - payment-enrichment
+      - payment-save
+    file-source:
+      directoryName: /test/inbound
+      antInclude: "*_Auth.json"
+      charset: utf-8
+      doneFileName: "${file:name:noext}.xml.done"
+      delay: 1000
+      maxMessagesPerPoll: 1
+    payment-save:
+      datasource: datasource-payment-save
+```
+
 # Bulk Processing Builder 
 ```java
 @ExtendWith(MockitoExtension.class)
@@ -326,317 +823,6 @@ class BulkProcessingFlowBuilderTest {
 }
 ```
 
-# rule 
-```java
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-
-import java.util.List;
-
-@ExtendWith(MockitoExtension.class)
-class ValidationRuleEngineTest {
-
-    @Mock
-    private PaymentValidationHelper validationHelper;
-
-    @Mock
-    private ExecutionContext executionContext;
-
-    private ValidationRuleEngine engine;
-
-    @BeforeEach
-    void setUp() {
-        engine = new ValidationRuleEngine();
-    }
-
-    @Test
-    void shouldRefreshAndFireRules() {
-        // Arrange
-        String engineName = "test-engine";
-        String rules = """
-                package rules;
-                import com.uob.gwb.pbp.bo.validation.TransactionValidationRecord;
-                import com.uob.gwb.pbp.bo.CreditTransferTransaction;
-                import org.springframework.batch.item.ExecutionContext;
-                import com.uob.gwb.pbp.service.TransactionValidationHelper;
-
-                global ExecutionContext context;
-                global TransactionValidationHelper validationHelper;
-
-                rule "Test Rule"
-                when
-                    $record: TransactionValidationRecord(countryCode == "TH")
-                then
-                    $record.getTransaction().addValidationError("TEST001", "Test Error");
-                end
-                """;
-
-        TransactionValidationRecord record = new TransactionValidationRecord();
-        record.setCountryCode("TH");
-        record.setTransaction(new CreditTransferTransaction());
-
-        // Act
-        engine.refreshRules(engineName, rules);
-        engine.fireRules(engineName, List.of(record), executionContext, validationHelper);
-
-        // Assert
-        assertThat(record.getTransaction().getPaymentValidationResults())
-                .hasSize(1)
-                .extracting("errorCode")
-                .containsExactly("TEST001");
-    }
-
-    @Test
-    void shouldFireComplicatedRules() {
-        // Arrange
-        String engineName = "test-engine";
-        String rules = """
-                package rules;
-                import com.uob.gwb.pbp.bo.validation.TransactionValidationRecord;
-                import com.uob.gwb.pbp.bo.CreditTransferTransaction;
-                import org.springframework.batch.item.ExecutionContext;
-                import com.uob.gwb.pbp.service.TransactionValidationHelper;
-
-                global ExecutionContext context;
-                global TransactionValidationHelper validationHelper;
-
-                rule "Complicated Rule"
-                when
-                    $record: TransactionValidationRecord(countryCode == "TH")
-                then
-                    $record.getTransaction().addValidationError("TEST001", "Test Error");
-                end
-                """;
-
-        TransactionValidationRecord record = new TransactionValidationRecord();
-        record.setCountryCode("TH");
-        record.setTransaction(new CreditTransferTransaction());
-
-        // Act
-        engine.refreshRules(engineName, rules);
-        engine.fireRules(engineName, List.of(record), executionContext, validationHelper);
-
-        // Assert
-        assertThat(record.getTransaction().getPaymentValidationResults())
-                .hasSize(1)
-                .extracting("errorCode")
-                .containsExactly("TEST001");
-    }
-
-    @Test
-    void shouldHandleStopCondition() {
-        // Arrange
-        String engineName = "test-engine";
-        String rules = """
-                package rules;
-                import com.uob.gwb.pbp.bo.validation.TransactionValidationRecord;
-                import com.uob.gwb.pbp.bo.CreditTransferTransaction;
-                import org.springframework.batch.item.ExecutionContext;
-                import com.uob.gwb.pbp.service.TransactionValidationHelper;
-                global ExecutionContext context;
-                global TransactionValidationHelper validationHelper;
-                global java.lang.Boolean shouldStop;
-
-                rule "Stop Rule"
-                when
-                    $record: TransactionValidationRecord(countryCode == "TH")
-                then
-                    $record.getTransaction().addValidationError("STOP001", "Stop Error");
-                    drools.getKnowledgeRuntime().setGlobal("shouldStop", java.lang.Boolean.TRUE);
-                end
-                """;
-
-        TransactionValidationRecord record = new TransactionValidationRecord();
-        record.setCountryCode("TH");
-        record.setTransaction(new CreditTransferTransaction());
-
-        // Act
-        engine.refreshRules(engineName, rules);
-        boolean stopped = engine.fireRulesShouldStop(engineName, List.of(record), executionContext, validationHelper, true);
-
-        // Assert
-        assertThat(stopped).isTrue();
-        assertThat(record.getTransaction().getPaymentValidationResults())
-                .hasSize(1)
-                .extracting("errorCode")
-                .containsExactly("STOP001");
-    }
-
-    @Test
-    void shouldHandleInvalidRules() {
-        // Arrange
-        String engineName = "test-engine";
-        String invalidRules = "invalid drools syntax";
-
-        // Act & Assert
-        assertThatThrownBy(() -> engine.refreshRules(engineName, invalidRules))
-                .isInstanceOf(RuntimeException.class)
-                .hasMessageContaining("Failed to refresh rules for engine");
-    }
-
-    @Test
-    void shouldHandleMultipleEngineInstances() {
-        // Arrange
-        String engine1 = "engine1";
-        String engine2 = "engine2";
-        String rules1 = "package rules;\nrule \"Rule1\" when then end\n";
-        String rules2 = "package rules;\nrule \"Rule2\" when then end\n";
-
-        // Act
-        engine.refreshRules(engine1, rules1);
-        engine.refreshRules(engine2, rules2);
-
-        // Assert
-        assertThat(engine.hasEngine(engine1)).isTrue();
-        assertThat(engine.hasEngine(engine2)).isTrue();
-    }
-
-    @Test
-    void shouldCleanupEngineInstance() {
-        // Arrange
-        String engineName = "test-engine";
-        String rules = "package rules;\nrule \"Test\" when then end";
-        engine.refreshRules(engineName, rules);
-
-        // Act
-        engine.removeEngine(engineName);
-
-        // Assert
-        assertThat(engine.hasEngine(engineName)).isFalse();
-    }
-}
-
-```
-
-```java
-@ExtendWith(MockitoExtension.class)
-class TransactionValidationDecisionMatrixTest {
-
-    @Mock
-    private PwsQueryDao pwsQueryDao;
-
-    private TransactionValidationDecisionMatrix matrix;
-
-    private static final String ENGINE_NAME = "validationTest";
-
-    @BeforeEach
-    void setUp() {
-        matrix = new TransactionValidationDecisionMatrix(pwsQueryDao);
-    }
-
-    @Test
-    void shouldGenerateSimpleValidationRule() {
-        // Given
-        PwsTransactionValidationRules rule = new PwsTransactionValidationRules();
-        rule.setId(1L);
-        rule.setCountryCode("countryCode == \"TH\"");
-        rule.setChannel("channel == \"IDB\"");
-        rule.setConditionFlag("1");
-        rule.setErrorCode("ERR001");
-        rule.setErrorMessage("Test Error");
-
-        when(pwsQueryDao.getAllTransactionValidationRules()).thenReturn(List.of(rule));
-
-        // When
-        matrix.refresh();
-        String generatedRules = matrix.generateRules(ENGINE_NAME.toLowerCase());
-
-        // Then
-        assertThat(generatedRules)
-                .contains("rule \"Rule_1\"")
-                .contains("countryCode == \"TH\"")
-                .contains("channel == \"IDB\"")
-                .contains("ERR001")
-                .contains("Test Error");
-    }
-
-    @Test
-    void shouldGenerateNegativeMatchingRule() {
-        // Given
-        PwsTransactionValidationRules rule = new PwsTransactionValidationRules();
-        rule.setId(2L);
-        rule.setField("amount");
-        rule.setFieldValue(">= 1000");
-        rule.setConditionFlag("-1");
-        rule.setErrorCode("ERR002");
-        rule.setErrorMessage("Amount validation failed");
-
-        when(pwsQueryDao.getAllTransactionValidationRules()).thenReturn(List.of(rule));
-
-        // When
-        matrix.refresh();
-        String generatedRules = matrix.generateRules(ENGINE_NAME.toLowerCase());
-
-        // Then
-        assertThat(generatedRules)
-                .contains("rule \"Rule_2\"")
-                .contains("not (")
-                .contains("transaction.amount >= 1000")
-                .contains("ERR002")
-                .contains("Amount validation failed");
-    }
-
-    @Test
-    void shouldGenerateBusinessRuleValidation() {
-        // Given
-        PwsTransactionValidationRules rule = new PwsTransactionValidationRules();
-        rule.setId(3L);
-        rule.setBusinessRule("validationHelper.checkDailyLimit(context, transaction.getCustomerId())");
-        rule.setConditionFlag("1");
-        rule.setErrorCode("ERR003");
-        rule.setErrorMessage("Daily limit exceeded");
-        rule.setAction("STOP");
-
-        when(pwsQueryDao.getAllTransactionValidationRules()).thenReturn(List.of(rule));
-
-        // When
-        matrix.refresh();
-        String generatedRules = matrix.generateRules(ENGINE_NAME.toLowerCase());
-
-        // Then
-        assertThat(generatedRules)
-                .contains("rule \"Rule_3\"")
-                .contains("eval(validationHelper.checkDailyLimit")
-                .contains("ERR003")
-                .contains("Daily limit exceeded")
-                .contains("STOP");
-    }
-
-    @Test
-    void shouldSkipDisabledRules() {
-        // Given
-        PwsTransactionValidationRules rule = new PwsTransactionValidationRules();
-        rule.setId(4L);
-        rule.setConditionFlag("0");  // Disabled rule
-        rule.setErrorCode("ERR004");
-
-        when(pwsQueryDao.getAllTransactionValidationRules()).thenReturn(List.of(rule));
-
-        // When
-        matrix.refresh();
-        String generatedRules = matrix.generateRules(ENGINE_NAME.toLowerCase());
-
-        // Then
-        assertThat(generatedRules).doesNotContain("ERR004");
-    }
-
-    @Test
-    void shouldThrowExceptionWhenNoRulesFound() {
-        // Given
-        when(pwsQueryDao.getAllTransactionValidationRules()).thenReturn(List.of());
-
-        // When/Then
-        assertThrows(IllegalStateException.class, () -> matrix.refresh(), 
-                "Expected refresh() to throw, but it didn't.");
-    }
-}
-
-```
 
 # Service
 
@@ -1461,501 +1647,278 @@ Key improvements made:
    - Mixed validation setup
    - Comprehensive record verification
 
-# E2E
+# utils
+
+## Common 
+
 ```java
-@TestConfiguration
-@EnableBatchProcessing
-public class E2ETestConfig {
+@ExtendWith(MockitoExtension.class)
+class CommonUtilsTest {
 
-    @Bean
-    @Primary
-    public DataSource h2DataSource() {
-        return new EmbeddedDatabaseBuilder()
-            .setType(EmbeddedDatabaseType.H2)
-            .addScript("classpath:schema-h2.sql")
-            .addScript("classpath:test-data.sql")
-            .build();
+    private static final String VALID_DATE_STRING = "2024-11-01";
+    private static final String INVALID_DATE_STRING = "20-24-11";
+    private static final String VALID_DATETIME_STRING = "2024-11-01 12:34:56.789";
+    private static final String INVALID_DATETIME_STRING = "2024-11-01T12:34:56"; // Invalid format for the configured pattern
+
+    @Test
+    void testStringToDate_WithValidDate() throws Exception {
+        // Given
+        String dateString = VALID_DATE_STRING;
+
+        // When
+        Date result = CommonUtils.stringToDate(dateString);
+
+        // Then
+        assertNotNull(result);
+        assertEquals(CommonUtils.ISO_DATE_FORMAT.parse(dateString), result);
     }
 
-    @Bean
-    @Primary
-    public SqlSessionFactory sqlSessionFactory(DataSource dataSource) throws Exception {
-        SqlSessionFactoryBean sessionFactory = new SqlSessionFactoryBean();
-        sessionFactory.setDataSource(dataSource);
-        sessionFactory.setMapperLocations(new PathMatchingResourcePatternResolver()
-            .getResources("classpath:mappers/**/*.xml"));
-        return sessionFactory.getObject();
+    @Test
+    void testStringToDate_WithInvalidDate() {
+        // Given
+        String invalidDateString = INVALID_DATE_STRING;
+
+        // When/Then
+        assertThrows(ParseException.class, () -> CommonUtils.stringToDate(invalidDateString));
     }
 
-    @Bean
-    @Primary
-    public SqlSessionTemplate sqlSessionTemplate(SqlSessionFactory sqlSessionFactory) {
-        return new SqlSessionTemplate(sqlSessionFactory);
+    @Test
+    void testStringToDate_WithNullDate() throws ParseException {
+        // When/Then
+        assertNull(CommonUtils.stringToDate(null));
     }
 
-    @Bean
-    public RetryTemplate retryTemplate(AppConfig appConfig) {
-        RetryTemplate retryTemplate = new RetryTemplate();
-        SimpleRetryPolicy retryPolicy = new SimpleRetryPolicy();
-        retryPolicy.setMaxAttempts(appConfig.getRetry().getMaxAttempts());
-        retryTemplate.setRetryPolicy(retryPolicy);
-        
-        ExponentialBackOffPolicy backOffPolicy = new ExponentialBackOffPolicy();
-        backOffPolicy.setInitialInterval(appConfig.getRetry().getBackoff().getInitialInterval());
-        backOffPolicy.setMultiplier(appConfig.getRetry().getBackoff().getMultiplier());
-        backOffPolicy.setMaxInterval(appConfig.getRetry().getBackoff().getMaxInterval());
-        retryTemplate.setBackOffPolicy(backOffPolicy);
-        
-        return retryTemplate;
+    @Test
+    void testStringToTimestamp_WithValidDatetime() throws Exception {
+        // Given
+        String datetimeString = VALID_DATETIME_STRING;
+
+        // When
+        Timestamp result = CommonUtils.stringToTimestamp(datetimeString);
+
+        // Then
+        assertNotNull(result);
+        assertEquals(new Timestamp(CommonUtils.ISO_DATETIME_FORMAT.parse(datetimeString).getTime()), result);
+    }
+
+    @Test
+    void testStringToTimestamp_WithInvalidDatetime() {
+        // Given
+        String invalidDatetimeString = INVALID_DATETIME_STRING;
+
+        // When/Then
+        assertThrows(ParseException.class, () -> CommonUtils.stringToTimestamp(invalidDatetimeString));
+    }
+
+    @Test
+    void testStringToTimestamp_WithNullDatetime() throws ParseException {
+        // When/Then
+        assertNull(CommonUtils.stringToTimestamp(null));
+    }
+
+    @Test
+    void testGetShortErrorMessage_WithCause() {
+        // Given
+        Exception rootCause = new Exception("Root Cause");
+        Exception exception = new RuntimeException("Outer Exception", rootCause);
+
+        // When
+        String message = CommonUtils.getShortErrorMessage(exception);
+
+        // Then
+        assertEquals("Root Cause", message);
+    }
+
+    @Test
+    void testGetShortErrorMessage_WithoutCause() {
+        // Given
+        Exception exception = new RuntimeException("No Cause Exception");
+
+        // When
+        String message = CommonUtils.getShortErrorMessage(exception);
+
+        // Then
+        assertEquals("No Cause Exception", message);
     }
 }
 ```
 
-Now let's create the H2 schema SQL:
-
-
-```sql
--- Spring Batch Tables
-CREATE TABLE BATCH_JOB_INSTANCE (
-    JOB_INSTANCE_ID BIGINT NOT NULL PRIMARY KEY,
-    VERSION BIGINT,
-    JOB_NAME VARCHAR(100) NOT NULL,
-    JOB_KEY VARCHAR(32) NOT NULL,
-    constraint JOB_INST_UN unique (JOB_NAME, JOB_KEY)
-);
-
-CREATE TABLE BATCH_JOB_EXECUTION (
-    JOB_EXECUTION_ID BIGINT NOT NULL PRIMARY KEY,
-    VERSION BIGINT,
-    JOB_INSTANCE_ID BIGINT NOT NULL,
-    CREATE_TIME TIMESTAMP NOT NULL,
-    START_TIME TIMESTAMP,
-    END_TIME TIMESTAMP,
-    STATUS VARCHAR(10),
-    EXIT_CODE VARCHAR(2500),
-    EXIT_MESSAGE VARCHAR(2500),
-    LAST_UPDATED TIMESTAMP,
-    constraint JOB_INST_EXEC_FK foreign key (JOB_INSTANCE_ID)
-    references BATCH_JOB_INSTANCE(JOB_INSTANCE_ID)
-);
-
--- Payment Tables
--- File Upload table
-CREATE TABLE PWS_FILE_UPLOAD (
-    FILE_UPLOAD_ID BIGINT PRIMARY KEY AUTO_INCREMENT,
-    FILE_REFERENCE_ID VARCHAR(255),
-    TRANSACTION_ID BIGINT,
-    FEATURE_ID VARCHAR(100),
-    RESOURCE_ID VARCHAR(100),
-    FILE_TYPE_ENUM VARCHAR(50),
-    FILE_SUB_TYPE_ENUM VARCHAR(50),
-    UPLOAD_FILE_NAME VARCHAR(255),
-    UPLOAD_FILE_PATH VARCHAR(500),
-    FILE_SIZE BIGINT,
-    COMPANY_ID BIGINT,
-    ACCOUNT_ID VARCHAR(100),
-    RESOURCE_CATEGORY VARCHAR(100),
-    CHARGE_OPTION VARCHAR(50),
-    PAYROLL_OPTION VARCHAR(50),
-    FILE_UPLOAD_STATUS VARCHAR(50),
-    STATUS VARCHAR(50),
-    CREATED_BY VARCHAR(100),
-    CREATED_DATE TIMESTAMP,
-    UPDATED_BY VARCHAR(100),
-    UPDATED_DATE TIMESTAMP,
-    CHANGE_TOKEN BIGINT
-);
-
--- Rejected Records table
-CREATE TABLE PWS_REJECTED_RECORD (
-    REJECTED_RECORD_ID BIGINT PRIMARY KEY AUTO_INCREMENT,
-    ENTITY_TYPE VARCHAR(100),
-    ENTITY_ID BIGINT,
-    SEQUENCE_NO BIGINT,
-    LINE_NO BIGINT,
-    COLUMN_NO BIGINT,
-    CREATED_BY VARCHAR(100),
-    CREATED_DATE TIMESTAMP,
-    BANK_REFERENCE_ID VARCHAR(100),
-    TRANSACTION_ID BIGINT,
-    REJECT_CODE VARCHAR(50),
-    ERROR_DETAIL VARCHAR(500)
-);
-
--- Transaction Validation Rules table
-CREATE TABLE PWS_TRANSACTION_VALIDATION_RULES (
-    ID BIGINT PRIMARY KEY AUTO_INCREMENT,
-    COUNTRY_CODE VARCHAR(3),
-    CHANNEL VARCHAR(50),
-    BANK_ENTITY_ID VARCHAR(100),
-    SOURCE_FORMAT VARCHAR(50),
-    RESOURCE_ID VARCHAR(100),
-    FEATURE_ID VARCHAR(100),
-    FIELD_NAME VARCHAR(255),
-    FIELD_VALUE VARCHAR(255),
-    CONDITION1 VARCHAR(255),
-    CONDITION2 VARCHAR(255),
-    RULE VARCHAR(500),
-    CONDITION_FLAG VARCHAR(50),
-    ERROR_CODE VARCHAR(50),
-    ERROR_MESSAGE VARCHAR(500),
-    ACTION VARCHAR(100)
-);
-
--- Transit Message table
-CREATE TABLE PWS_TRANSIT_MESSAGE (
-    MESSAGE_ID BIGINT PRIMARY KEY AUTO_INCREMENT,
-    MESSAGE_REF_NO VARCHAR(100),
-    BANK_REFERENCE_ID VARCHAR(100),
-    CORRELATION_ID VARCHAR(100),
-    MESSAGE_CONTENT BLOB,
-    SERVICE_TYPE VARCHAR(100),
-    END_SYSTEM VARCHAR(100),
-    PROCESSING_DATE TIMESTAMP,
-    RETRY_COUNT INT,
-    STATUS VARCHAR(50)
-);
-
--- Existing tables from previous POs
-CREATE TABLE PWS_TRANSACTIONS (
-    TRANSACTION_ID BIGINT PRIMARY KEY AUTO_INCREMENT,
-    BANK_ENTITY_ID VARCHAR(100),
-    RESOURCE_ID VARCHAR(100),
-    FEATURE_ID VARCHAR(100),
-    CORRELATION_ID VARCHAR(100),
-    BANK_REFERENCE_ID VARCHAR(100),
-    APPLICATION_TYPE VARCHAR(50),
-    ACCOUNT_CURRENCY VARCHAR(3),
-    ACCOUNT_NUMBER VARCHAR(100),
-    COMPANY_GROUP_ID BIGINT,
-    COMPANY_ID BIGINT,
-    COMPANY_NAME VARCHAR(255),
-    TRANSACTION_CURRENCY VARCHAR(3),
-    TOTAL_AMOUNT DECIMAL(19,2),
-    TOTAL_CHILD INT,
-    HIGHEST_AMOUNT DECIMAL(19,2),
-    AUTHORIZATION_STATUS VARCHAR(50),
-    CAPTURE_STATUS VARCHAR(50),
-    CUSTOMER_TRANSACTION_STATUS VARCHAR(50),
-    PROCESSING_STATUS VARCHAR(50),
-    REJECT_REASON VARCHAR(500),
-    INITIATED_BY BIGINT,
-    INITIATION_TIME TIMESTAMP,
-    RELEASED_BY BIGINT,
-    RELEASE_DATE TIMESTAMP,
-    CHANGE_TOKEN BIGINT
-);
-
-CREATE TABLE PWS_BULK_TRANSACTIONS (
-    BK_TRANSACTION_ID BIGINT PRIMARY KEY AUTO_INCREMENT,
-    TRANSACTION_ID BIGINT,
-    FILE_UPLOAD_ID BIGINT,
-    RECIPIENTS_REFERENCE VARCHAR(100),
-    RECIPIENTS_DESCRIPTION VARCHAR(500),
-    FATE_FILE_NAME VARCHAR(255),
-    FATE_FILE_PATH VARCHAR(500),
-    COMBINE_DEBIT VARCHAR(1),
-    STATUS VARCHAR(50),
-    CHANGE_TOKEN BIGINT,
-    ERROR_DETAIL VARCHAR(500),
-    FINAL_FATE_UPDATED_DATE TIMESTAMP,
-    ACK_FILE_PATH VARCHAR(500),
-    ACK_UPDATED_DATE TIMESTAMP,
-    TRANSFER_DATE DATE,
-    USER_COMMENTS VARCHAR(500),
-    DMP_BATCH_NUMBER VARCHAR(100),
-    REJECT_CODE VARCHAR(50),
-    BATCH_BOOKING VARCHAR(50),
-    CHARGE_OPTIONS VARCHAR(50),
-    PAYROLL_OPTIONS VARCHAR(50),
-    FOREIGN KEY (TRANSACTION_ID) REFERENCES PWS_TRANSACTIONS(TRANSACTION_ID),
-    FOREIGN KEY (FILE_UPLOAD_ID) REFERENCES PWS_FILE_UPLOAD(FILE_UPLOAD_ID)
-);
-
-CREATE TABLE PWS_BULK_TRANSACTION_INSTRUCTIONS (
-    CHILD_TRANSACTION_INSTRUCTIONS_ID BIGINT PRIMARY KEY AUTO_INCREMENT,
-    CHILD_BANK_REFERENCE_ID VARCHAR(100),
-    TRANSACTION_ID BIGINT,
-    BANK_REFERENCE_ID VARCHAR(100),
-    TRANSACTION_CURRENCY VARCHAR(3),
-    TRANSACTION_AMOUNT DECIMAL(19,2),
-    EQUIVALENT_CURRENCY VARCHAR(3),
-    EQUIVALENT_AMOUNT DECIMAL(19,2),
-    DESTINATION_COUNTRY VARCHAR(3),
-    DESTINATION_BANK_NAME VARCHAR(255),
-    FX_FLAG VARCHAR(1),
-    CHARGE_OPTIONS VARCHAR(50),
-    ORIGINAL_VALUE_DATE TIMESTAMP,
-    VALUE_DATE TIMESTAMP,
-    SETTLEMENT_DATE TIMESTAMP,
-    PAYMENT_CODE_ID VARCHAR(50),
-    PAYMENT_DETAILS VARCHAR(500),
-    RAIL_CODE VARCHAR(50),
-    IS_RECURRING VARCHAR(1),
-    IS_PRE_APPROVED VARCHAR(1),
-    CUSTOMER_REFERENCE VARCHAR(100),
-    CUSTOMER_TRANSACTION_STATUS VARCHAR(50),
-    PROCESSING_STATUS VARCHAR(50),
-    REJECT_REASON VARCHAR(500),
-    REMARKS_FOR_APPROVAL VARCHAR(500),
-    USER_COMMENTS VARCHAR(500),
-    DUPLICATION_FLAG VARCHAR(1),
-    REJECT_CODE VARCHAR(50),
-    TRANSFER_SPEED BIGINT,
-    DMP_TRANS_REF VARCHAR(100),
-    CHILD_TEMPLATE_ID BIGINT,
-    INITIATION_TIME TIMESTAMP,
-    FOREIGN KEY (TRANSACTION_ID) REFERENCES PWS_TRANSACTIONS(TRANSACTION_ID)
-);
-
-CREATE TABLE PWS_PARTIES (
-    PARTY_ID BIGINT PRIMARY KEY AUTO_INCREMENT,
-    BANK_ENTITY_ID VARCHAR(100),
-    TRANSACTION_ID BIGINT,
-    BANK_REFERENCE_ID VARCHAR(100),
-    CHILD_BANK_REFERENCE_ID VARCHAR(100),
-    BANK_CODE VARCHAR(50),
-    BANK_ID BIGINT,
-    PARTY_ACCOUNT_TYPE VARCHAR(50),
-    PARTY_ACCOUNT_NUMBER VARCHAR(100),
-    PARTY_ACCOUNT_NAME VARCHAR(255),
-    PARTY_NICK_NAME VARCHAR(255),
-    PARTY_MASKED_NICK_NAME VARCHAR(255),
-    PARTY_ACCOUNT_CURRENCY VARCHAR(3),
-    PARTY_AGENT_BIC VARCHAR(11),
-    PARTY_NAME VARCHAR(255),
-    PARTY_ROLE VARCHAR(50),
-    RESIDENTIAL_STATUS VARCHAR(50),
-    PROXY_ID VARCHAR(100),
-    PROXY_ID_TYPE VARCHAR(50),
-    ID_ISSUING_COUNTRY VARCHAR(3),
-    PRODUCT_TYPE VARCHAR(50),
-    PRIMARY_IDENTIFICATION_TYPE VARCHAR(50),
-    PRIMARY_IDENTIFICATION_VALUE VARCHAR(100),
-    SECONDARY_IDENTIFICATION_TYPE VARCHAR(50),
-    SECONDARY_IDENTIFICATION_VALUE VARCHAR(100),
-    REGISTRATION_ID VARCHAR(100),
-    BENEFICIARY_REFERENCE_ID BIGINT,
-    SWIFT_CODE VARCHAR(11),
-    PARTY_TYPE VARCHAR(50),
-    RESIDENCY_STATUS VARCHAR(50),
-    ACCOUNT_OWNERSHIP VARCHAR(50),
-    RELATIONSHIP_TYPE VARCHAR(50),
-    ULTIMATE_PAYEE_COUNTRY_CODE VARCHAR(3),
-    ULTIMATE_PAYEE_NAME VARCHAR(255),
-    ULTIMATE_PAYER_NAME VARCHAR(255),
-    IS_PREAPPROVED VARCHAR(1),
-    PARTY_MODIFIED_DATE TIMESTAMP,
-    BENEFICIARY_CHANGE_TOKEN BIGINT,
-    FOREIGN KEY (TRANSACTION_ID) REFERENCES PWS_TRANSACTIONS(TRANSACTION_ID)
-);
-
--- Indexes
-CREATE INDEX IDX_FILE_UPLOAD_REF ON PWS_FILE_UPLOAD(FILE_REFERENCE_ID);
-CREATE INDEX IDX_FILE_UPLOAD_TXN ON PWS_FILE_UPLOAD(TRANSACTION_ID);
-CREATE INDEX IDX_REJECTED_RECORD_TXN ON PWS_REJECTED_RECORD(TRANSACTION_ID);
-CREATE INDEX IDX_TRANSIT_MSG_REF ON PWS_TRANSIT_MESSAGE(MESSAGE_REF_NO);
-CREATE INDEX IDX_TRANSIT_MSG_BANK_REF ON PWS_TRANSIT_MESSAGE(BANK_REFERENCE_ID);
-CREATE INDEX IDX_TXN_BANK_REF ON PWS_TRANSACTIONS(BANK_REFERENCE_ID);
-CREATE INDEX IDX_BULK_TXN_STATUS ON PWS_BULK_TRANSACTIONS(STATUS);
-CREATE INDEX IDX_PARTY_BANK_REF ON PWS_PARTIES(BANK_REFERENCE_ID);
-```
-
-Now let's create the E2E test:
-
+## payment
 
 ```java
-@SpringBootTest
-@ActiveProfiles("test")
-@TestPropertySource(properties = {
-    "spring.main.allow-bean-definition-overriding=true"
-})
-@Import(E2ETestConfig.class)
-class PaymentBulkProcessingE2ETest {
+@ExtendWith(MockitoExtension.class)
+class PaymentUtilsTest {
 
-    @Autowired
-    private BulkProcessingFlowBuilder flowBuilder;
+    @Mock
+    private StepAwareService stepAwareService;
 
-    @Autowired
-    private JobLauncher jobLauncher;
-
-    @Autowired
-    private Pain001InboundService pain001InboundService;
-
-    @Autowired
-    private SqlSessionTemplate sqlSessionTemplate;
-
-    @Autowired
-    private PwsSaveDao pwsSaveDao;
-
-    @MockBean
-    private PaymentIntegrationservice paymentIntegrationService;
-
-    @Value("classpath:test-data/pain001-simple.json")
-    private Resource simplePain001Json;
-
-    @Value("classpath:test-data/pain001-complex.json")
-    private Resource complexPain001Json;
+    @InjectMocks
+    private PaymentUtils paymentUtils;
 
     @BeforeEach
     void setUp() {
-        // Setup mock integration responses
-        when(paymentIntegrationService.getResourcesAndFeatures(anyLong()))
-            .thenReturn(createMockResourceFeatures());
-        when(paymentIntegrationService.getCompanyAndAccounts(anyLong(), anyString(), anyString()))
-            .thenReturn(createMockCompanyAccounts());
+        MockitoAnnotations.openMocks(this);
     }
 
     @Test
-    void testSimplePain001Processing() throws Exception {
-        // Arrange
-        String jsonContent = new String(Files.readAllBytes(simplePain001Json.getFile().toPath()));
-        BulkRoute route = createTestRoute();
+    void testCreateRecordForRejectedFile_WithFileUpload() {
+        // Given
+        String errMsg = "File upload error";
+        PwsFileUpload fileUpload = new PwsFileUpload();
+        fileUpload.setFileUploadId(123L);
+        fileUpload.setCreatedBy("testUser");
+        fileUpload.setFileReferenceId("fileRef123");
 
-        // Act
-        JobParameters jobParameters = createJobParameters(route);
-        JobExecution jobExecution = jobLauncher.run(flowBuilder.createJob(route, createMockExchange()), jobParameters);
+        when(stepAwareService.getFileUpload()).thenReturn(fileUpload);
 
-        // Assert
-        assertEquals(ExitStatus.COMPLETED, jobExecution.getExitStatus());
-        verifyPaymentSaved();
+        // When
+        PwsRejectedRecord rejected = PaymentUtils.createRecordForRejectedFile(stepAwareService, errMsg);
+
+        // Then
+        assertEquals("Bulk File Rejected", rejected.getEntityType());
+        assertEquals(fileUpload.getFileUploadId(), rejected.getEntityId());
+        assertEquals(fileUpload.getCreatedBy(), rejected.getCreatedBy());
+        assertNotNull(rejected.getCreatedDate());
+        assertEquals(fileUpload.getFileReferenceId(), rejected.getBankReferenceId());
+        assertEquals(ErrorCode.CEW_8803, rejected.getRejectCode());
+        assertEquals(errMsg, rejected.getErrorDetail());
     }
 
     @Test
-    void testComplexPain001Processing() throws Exception {
-        // Similar to simple test but with complex payload
+    void testCreateRecordForRejectedFile_WithoutFileUpload() {
+        // Given
+        String errMsg = "File upload error";
+        String bankEntityId = "bank123";
+
+        when(stepAwareService.getFileUpload()).thenReturn(null);
+        when(stepAwareService.getBankEntityId()).thenReturn(bankEntityId);
+
+        // When
+        PwsRejectedRecord rejected = PaymentUtils.createRecordForRejectedFile(stepAwareService, errMsg);
+
+        // Then
+        assertEquals(bankEntityId, rejected.getEntityType());
+        assertNull(rejected.getEntityId());
+        assertNotNull(rejected.getCreatedDate());
+        assertEquals(ErrorCode.CEW_8803, rejected.getRejectCode());
+        assertEquals(errMsg, rejected.getErrorDetail());
     }
 
-    private BulkRoute createTestRoute() {
-        BulkRoute route = new BulkRoute();
-        route.setRouteName("test-inbound-route");
-        route.setProcessingType(ProcessingType.INBOUND);
-        route.setSourceType(SourceDestinationType.FILE);
-        route.setEnabled(true);
-        route.setSteps(Arrays.asList(
-            "pain001-processing",
-            "payment-debulk",
-            "payment-validation",
-            "payment-enrichment",
-            "payment-save"
-        ));
-        return route;
+    @Test
+    void testCreateRecordForRejectedPayment() {
+        // Given
+        String errMsg = "Payment error";
+        PwsFileUpload fileUpload = new PwsFileUpload();
+        fileUpload.setFileUploadId(123L);
+        fileUpload.setCreatedBy("testUser");
+        fileUpload.setFileReferenceId("fileRef123");
+
+        PwsBulkTransactions bulkTransactions = new PwsBulkTransactions();
+        bulkTransactions.setDmpBatchNumber("batch123");
+
+        PaymentInformation paymentInfo = new PaymentInformation();
+        paymentInfo.setPwsBulkTransactions(bulkTransactions);
+
+        when(stepAwareService.getFileUpload()).thenReturn(fileUpload);
+
+        // When
+        PwsRejectedRecord rejected = PaymentUtils.createRecordForRejectedPayment(stepAwareService, paymentInfo, errMsg);
+
+        // Then
+        assertEquals("Payment Rejected", rejected.getEntityType());
+        assertEquals(fileUpload.getFileUploadId(), rejected.getEntityId());
+        assertEquals(fileUpload.getCreatedBy(), rejected.getCreatedBy());
+        assertNotNull(rejected.getCreatedDate());
+        assertEquals(fileUpload.getFileReferenceId(), rejected.getBankReferenceId());
+        assertEquals(ErrorCode.CEW_8803, rejected.getRejectCode());
+        assertEquals("DMPBatch<batch123>: " + errMsg, rejected.getErrorDetail());
     }
 
-    private Exchange createMockExchange() {
-        Exchange exchange = new DefaultExchange(new DefaultCamelContext());
-        exchange.getIn().setHeader(Exchange.FILE_NAME, "test.json");
-        exchange.getIn().setHeader(Exchange.FILE_PATH, "/test/path/test.json");
-        
-        InboundContext routeContext = new InboundContext();
-        routeContext.setCountry(new Country("TH", "Thailand"));
-        routeContext.setSourcePath("/test/path/test.json");
-        routeContext.setSourceName("test.json");
-        exchange.setProperty(ContextKey.routeContext, routeContext);
-        
-        return exchange;
+    @Test
+    void testCreateRecordForRejectedTransaction() {
+        // Given
+        String errMsg = "Transaction error";
+        PwsFileUpload fileUpload = new PwsFileUpload();
+        fileUpload.setFileUploadId(123L);
+        fileUpload.setCreatedBy("testUser");
+        fileUpload.setFileReferenceId("fileRef123");
+
+        PwsBulkTransactions bulkTransactions = new PwsBulkTransactions();
+        bulkTransactions.setDmpBatchNumber("batch123");
+
+        PaymentInformation paymentInfo = new PaymentInformation();
+        paymentInfo.setPwsBulkTransactions(bulkTransactions);
+
+        CreditTransferTransaction txn = new CreditTransferTransaction();
+        txn.setDmpLineNo("10");
+
+        when(stepAwareService.getFileUpload()).thenReturn(fileUpload);
+
+        // When
+        PwsRejectedRecord rejected = PaymentUtils.createRecordForRejectedTransaction(stepAwareService, paymentInfo, txn, errMsg);
+
+        // Then
+        assertEquals("Transaction Rejected", rejected.getEntityType());
+        assertEquals(fileUpload.getFileUploadId(), rejected.getEntityId());
+        assertEquals(Long.parseLong(txn.getDmpLineNo()), rejected.getLineNo());
+        assertEquals(fileUpload.getCreatedBy(), rejected.getCreatedBy());
+        assertNotNull(rejected.getCreatedDate());
+        assertEquals(fileUpload.getFileReferenceId(), rejected.getBankReferenceId());
+        assertEquals(ErrorCode.CEW_8803, rejected.getRejectCode());
+        assertEquals("DMPBatch<batch123> transaction: " + errMsg, rejected.getErrorDetail());
     }
 
-    private JobParameters createJobParameters(BulkRoute route) {
-        return new JobParametersBuilder()
-            .addString(ContextKey.routeName, route.getRouteName())
-            .addString(ContextKey.country, "TH")
-            .addString(ContextKey.sourcePath, "/test/path/test.json")
-            .addString(ContextKey.sourceName, "test.json")
-            .addLong("time", System.currentTimeMillis())
-            .toJobParameters();
+    @Test
+    void testCreatePwsSaveRecord_WithValidIdAndDmpTxnRef() {
+        long id = 123L;
+        String dmpTxnRef = "dmpRef123";
+
+        PwsSaveRecord record = paymentUtils.createPwsSaveRecord(id, dmpTxnRef);
+
+        assertEquals(id, record.getTxnId());
+        assertEquals(dmpTxnRef, record.getDmpTxnRef());
     }
 
-    private void verifyPaymentSaved() {
-        // Verify database state
-        List<PwsTransactions> transactions = pwsSaveDao.findAllTransactions();
-        assertFalse(transactions.isEmpty());
-        
-        PwsTransactions transaction = transactions.get(0);
-        assertNotNull(transaction.getBankReferenceId());
-        assertEquals(CaptureStatus.SUBMITTED.name(), transaction.getCaptureStatus());
-        
-        List<PwsBulkTransactions> bulkTxns = pwsSaveDao.findBulkTransactionsByTxnId(transaction.getTransactionId());
-        assertFalse(bulkTxns.isEmpty());
-        
-        // Verify child transactions
-        List<PwsBulkTransactionInstructions> instructions = 
-            pwsSaveDao.findInstructionsByTxnId(transaction.getTransactionId());
-        assertFalse(instructions.isEmpty());
+    @Test
+    void testCreatePwsSaveRecord_WithNullDmpTxnRef() {
+        long id = 123L;
+
+        PwsSaveRecord record = paymentUtils.createPwsSaveRecord(id, null);
+
+        assertEquals(id, record.getTxnId());
+        assertEquals("", record.getDmpTxnRef());
     }
 
-    private UserResourceFeaturesActionsData createMockResourceFeatures() {
-        // Create mock entitlements data
-        UserResourceFeaturesActionsData data = new UserResourceFeaturesActionsData();
-        // Set up mock data
-        return data;
+    @Test
+    void testUpdatePaymentSaved() {
+        Pain001InboundProcessingResult result = new Pain001InboundProcessingResult();
+        PwsSaveRecord record = new PwsSaveRecord(123L, "ref123");
+
+        paymentUtils.updatePaymentSaved(result, record);
+
+        assertTrue(result.getPaymentSaved().contains(record));
     }
 
-    private CompanyAndAccountsForResourceFeaturesResp createMockCompanyAccounts() {
-        // Create mock company and accounts data
-        CompanyAndAccountsForResourceFeaturesResp resp = new CompanyAndAccountsForResourceFeaturesResp();
-        // Set up mock data
-        return resp;
+    @Test
+    void testUpdatePaymentSavedError_WhenRecordNotPresent() {
+        Pain001InboundProcessingResult result = new Pain001InboundProcessingResult();
+        PwsSaveRecord record = new PwsSaveRecord(123L, "ref123");
+
+        paymentUtils.updatePaymentSavedError(result, record);
+
+        assertTrue(result.getPaymentSavedError().contains(record));
+    }
+
+    @Test
+    void testUpdatePaymentSavedError_WhenRecordAlreadyPresent() {
+        Pain001InboundProcessingResult result = new Pain001InboundProcessingResult();
+        PwsSaveRecord record = new PwsSaveRecord(123L, "ref123");
+
+        result.getPaymentSavedError().add(record);
+        paymentUtils.updatePaymentSavedError(result, record);
+
+        assertEquals(1, result.getPaymentSavedError().size());
     }
 }
+
 ```
-
-And here's the test application.yml:
-
-
-```yaml
-spring:
-  main:
-    allow-bean-definition-overriding: true
-  datasource:
-    driver-class-name: org.h2.Driver
-    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1
-    username: sa
-    password: 
-
-bulk-processing:
-  country: TH
-  retry:
-    maxAttempts: 3
-    backoff:
-      initialInterval: 1000
-      multiplier: 2.0
-      maxInterval: 5000
-  batchInsertSize: 100
-  uploadSourceFormatNoCompany:
-    - BCU11P2
-    - BCU11P4
-    - BCU11P6
-  debulk:
-    debulkSmart:
-      bankCode: 024
-      bahtnetThreshold: 2000000
-      sourceFormat:
-        - BCU10P1
-        - BCU10P2
-
-bulk-routes:
-  - route-name: CUSTOMER_SUBMITTED_TRANSFORMED
-    processing-type: INBOUND
-    source-type: FILE
-    bank-entity: UOBT
-    channel: IDB
-    request-type: BulkUpload
-    enabled: true
-    steps:
-      - pain001-processing
-      - payment-debulk
-      - payment-validation
-      - payment-enrichment
-      - payment-save
-    file-source:
-      directoryName: /test/inbound
-      antInclude: "*_Auth.json"
-      charset: utf-8
-      doneFileName: "${file:name:noext}.xml.done"
-      delay: 1000
-      maxMessagesPerPoll: 1
-    payment-save:
-      datasource: datasource-payment-save
-```
-
