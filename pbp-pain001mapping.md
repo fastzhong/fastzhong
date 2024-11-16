@@ -1,5 +1,8 @@
 ## mapper
 ```java
+@Mapping(target = "deliveryMethod", source = "relatedRemittanceInformation[0].remittanceLocationDetails[0].method")
+     @Mapping(target = "deliveryAddress", source = "relatedRemittanceInformation[0].remittanceLocationDetails[0].electronicAddress")
+     PwsTransactionAdvices mapToPwsTransactionAdvices(CreditTransferTransactionInformationDTO childDTO);
 ```
 
 ## testing
