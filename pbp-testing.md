@@ -1900,6 +1900,9 @@ class PaymentDebulkServiceTest {
 
 
 ## save 
+
+### part1
+
 ```java
 @ExtendWith(MockitoExtension.class)
 class PaymentSaveServiceTest {
@@ -2646,6 +2649,296 @@ class PaymentSaveServiceTest {
         verify(pwsSaveDao, atLeastOnce()).insertPwsTaxInstructions(any());
     }
 }
+```
+
+### part2
+
+```java
+    @Nested
+    class SaveBulkPaymentTests {
+        @Test
+        void whenValidBulkPayment_shouldSaveSuccessfully() {
+            // Arrange
+            setupValidPaymentInfo(1);
+            setupSuccessfulBulkSave();
+            mockBankRefGeneration();
+
+            // Act
+            long txnId = paymentSave.saveBulkPayment(paymentInfo);
+
+            // Assert
+            assertEquals(1L, txnId);
+            PwsTransactions pwsTransactions = paymentInfo.getPwsTransactions();
+            assertEquals(TEST_BANK_REF, pwsTransactions.getBankReferenceId());
+            assertNotNull(pwsTransactions.getChangeToken());
+            verifyBulkPaymentSaved();
+        }
+
+        @Test
+        void whenBankRefGenerationFails_shouldThrowException() {
+            // Arrange
+            setupValidPaymentInfo(1);
+            when(pwsSaveDao.getBankRefSequenceNum())
+                .thenThrow(new RuntimeException("Sequence generation failed"));
+
+            // Act & Assert
+            assertThrows(RuntimeException.class, 
+                () -> paymentSave.saveBulkPayment(paymentInfo));
+        }
+
+        @Test
+        void whenTransactionInsertFails_shouldThrowException() {
+            // Arrange
+            setupValidPaymentInfo(1);
+            when(pwsSaveDao.insertPwsTransactions(any()))
+                .thenThrow(new RuntimeException("Insert failed"));
+
+            // Act & Assert
+            assertThrows(RuntimeException.class, 
+                () -> paymentSave.saveBulkPayment(paymentInfo));
+        }
+    }
+
+    @Nested
+    class SaveCreditTransferBatchTests {
+        @Test
+        void whenBatchWithAllEntities_shouldSaveSuccessfully() {
+            // Arrange
+            int batchSize = 2;
+            setupValidPaymentInfoWithAllEntities(batchSize);
+            setupChildTxnBatchBankRefSeq(batchSize);
+            setupSuccessfulBulkSave();
+            mockBankRefGeneration();
+
+            // Act
+            paymentSave.saveCreditTransferBatch(
+                paymentInfo, 
+                paymentInfo.getCreditTransferTransactionList(), 
+                1
+            );
+
+            // Assert
+            verifyAllEntitiesSaved(batchSize);
+        }
+
+        @Test
+        void whenBatchWithOptionalEntities_shouldSaveSuccessfully() {
+            // Arrange
+            int batchSize = 2;
+            setupValidPaymentInfoWithOptionalEntities(batchSize);
+            setupChildTxnBatchBankRefSeq(batchSize);
+            setupSuccessfulBulkSave();
+            mockBankRefGeneration();
+
+            // Act
+            paymentSave.saveCreditTransferBatch(
+                paymentInfo, 
+                paymentInfo.getCreditTransferTransactionList(), 
+                1
+            );
+
+            // Assert
+            verifyMandatoryEntitiesSaved(batchSize);
+            verifyNoOptionalEntitiesSaved();
+        }
+
+        @Test
+        void whenBatchWithNullEntities_shouldSkipNullRecords() {
+            // Arrange
+            setupValidPaymentInfoWithNullEntities(2);
+            setupChildTxnBatchBankRefSeq(2);
+            setupSuccessfulBulkSave();
+
+            // Act
+            paymentSave.saveCreditTransferBatch(
+                paymentInfo, 
+                paymentInfo.getCreditTransferTransactionList(), 
+                1
+            );
+
+            // Assert
+            verifyNullRecordsSkipped();
+        }
+    }
+
+    @Nested
+    class BatchExecutionTests {
+        @Test
+        void whenBatchInsertSucceeds_shouldCommitAndClose() {
+            // Arrange
+            List<PwsBulkTransactionInstructions> records = createTestInstructions(2);
+            setupSuccessfulBatchExecution();
+
+            // Act
+            paymentSave.executeBatchInsert(
+                "insertPwsBulkTransactionInstructions", 
+                records, 
+                null
+            );
+
+            // Assert
+            verify(sqlSession).commit();
+            verify(sqlSession).close();
+            verify(sqlSession, never()).rollback();
+        }
+
+        @Test
+        void whenBatchInsertFails_shouldRollbackAndClose() {
+            // Arrange
+            List<PwsBulkTransactionInstructions> records = createTestInstructions(2);
+            setupFailedBatchExecution();
+
+            // Act & Assert
+            assertThrows(BulkProcessingException.class, 
+                () -> paymentSave.executeBatchInsert(
+                    "insertPwsBulkTransactionInstructions", 
+                    records, 
+                    null
+                )
+            );
+            verify(sqlSession).rollback();
+            verify(sqlSession).close();
+            verify(sqlSession, never()).commit();
+        }
+    }
+
+    // Helper methods for setting up test contexts
+    private void setUpExecutionContexts() {
+        paymentInfo = new PaymentInformation();
+        stepContext = new ExecutionContext();
+        jobContext = new ExecutionContext();
+        result = new Pain001InboundProcessingResult();
+        result.setPaymentSaved(new ArrayList<>());
+        result.setPaymentSavedError(new ArrayList<>());
+        jobContext.put("result", result);
+        mockRecord = new PwsSaveRecord("encryptedId123", "BATCH001");
+
+        lenient().when(stepExecution.getExecutionContext()).thenReturn(stepContext);
+        lenient().when(stepExecution.getJobExecution()).thenReturn(jobExecution);
+        lenient().when(jobExecution.getExecutionContext()).thenReturn(jobContext);
+    }
+
+    private void setUpSqlSession() {
+        lenient().when(paymentSaveSqlSessionTemplate.getSqlSessionFactory()).thenReturn(sqlSessionFactory);
+        lenient().when(sqlSessionFactory.openSession(ExecutorType.BATCH)).thenReturn(sqlSession);
+        lenient().when(sqlSession.getMapper(PwsSaveDao.class)).thenReturn(pwsSaveDao);
+        doNothing().when(sqlSession).commit();
+        doNothing().when(sqlSession).rollback();
+        doNothing().when(sqlSession).close();
+    }
+
+    private void setUpPaymentUtils() {
+        lenient().when(paymentUtils.createPwsSaveRecord(anyLong(), anyString())).thenReturn(mockRecord);
+        doNothing().when(paymentUtils).updatePaymentSaved(any(), any());
+        doNothing().when(paymentUtils).updatePaymentSavedError(any(), any());
+    }
+
+    private void setUpBankRef() {
+        bankRefMetaData = new BankRefMetaData("TH", "I", "SE", "2411");
+        paymentSave.setBankRefMetaData(bankRefMetaData);
+        paymentSave.beforeStep(stepExecution);
+    }
+
+    // Helper methods for creating test data
+    private void setupValidPaymentInfoWithAllEntities(int size) {
+        setupValidPaymentInfo(size);
+        paymentInfo.getCreditTransferTransactionList().forEach(txn -> {
+            txn.setAdvice(createTestAdvice());
+            txn.setTaxInformation(createTestTaxInfo());
+            ((Creditor)txn.getCreditor()).setPwsPartyContactList(createTestContacts());
+        });
+    }
+
+    private void setupValidPaymentInfoWithOptionalEntities(int size) {
+        setupValidPaymentInfo(size);
+        paymentInfo.getCreditTransferTransactionList().forEach(txn -> {
+            txn.setAdvice(null);
+            txn.setTaxInformation(null);
+            ((Creditor)txn.getCreditor()).setPwsPartyContactList(Collections.emptyList());
+        });
+    }
+
+    private PwsTransactionAdvices createTestAdvice() {
+        PwsTransactionAdvices advice = new PwsTransactionAdvices();
+        advice.setAdviceId("TEST-ADVICE");
+        advice.setDeliveryMethod("EMAIL");
+        return advice;
+    }
+
+    private TaxInformation createTestTaxInfo() {
+        TaxInformation taxInfo = new TaxInformation();
+        PwsTaxInstructions instruction = new PwsTaxInstructions();
+        instruction.setTaxType("WHT");
+        instruction.setTaxAmount(new BigDecimal("100.00"));
+        taxInfo.setInstructionList(Collections.singletonList(instruction));
+        return taxInfo;
+    }
+
+    // Verification methods
+    private void verifyAllEntitiesSaved(int batchSize) {
+        verify(pwsSaveDao, times(batchSize)).insertPwsBulkTransactionInstructions(any());
+        verify(pwsSaveDao, times(batchSize)).insertPwsParties(any());
+        verify(pwsSaveDao, atLeastOnce()).insertPwsPartyContacts(any());
+        verify(pwsSaveDao, times(batchSize)).insertPwsTransactionAdvices(any());
+        verify(pwsSaveDao, atLeastOnce()).insertPwsTaxInstructions(any());
+        verify(sqlSession).commit();
+        verify(sqlSession, never()).rollback();
+    }
+
+    private void verifyMandatoryEntitiesSaved(int batchSize) {
+        verify(pwsSaveDao, times(batchSize)).insertPwsBulkTransactionInstructions(any());
+        verify(pwsSaveDao, times(batchSize)).insertPwsParties(any());
+        verify(sqlSession).commit();
+        verify(sqlSession, never()).rollback();
+    }
+
+    private void verifyNoOptionalEntitiesSaved() {
+        verify(pwsSaveDao, never()).insertPwsPartyContacts(any());
+        verify(pwsSaveDao, never()).insertPwsTransactionAdvices(any());
+        verify(pwsSaveDao, never()).insertPwsTaxInstructions(any());
+    }
+
+    private void verifyTransactionCounts(int expectedCount) {
+        assertEquals(expectedCount, result.getTransactionCreatedTotal());
+        assertEquals(1, result.getPaymentCreatedTotal());
+    }
+
+    private void verifyBulkPaymentSaved() {
+        verify(pwsSaveDao).insertPwsTransactions(any(PwsTransactions.class));
+        verify(pwsSaveDao).insertPwsBulkTransactions(any(PwsBulkTransactions.class));
+    }
+
+    // Additional helper methods remain the same...
+}
+```
+
+Key improvements in Part 2:
+
+1. Added dedicated test classes for:
+   - Bulk payment operations
+   - Credit transfer batch operations
+   - Batch execution mechanics
+
+2. Enhanced test scenarios for:
+   - Optional entity handling
+   - Null entity handling
+   - Batch processing edge cases
+
+3. Improved verification methods:
+   - Entity-specific verifications
+   - Batch processing verifications
+   - Transaction count verifications
+
+4. Better test data creation:
+   - More realistic test entities
+   - Support for optional entities
+   - Support for full entity relationships
+
+Would you like me to add:
+1. More specific test scenarios?
+2. Integration test examples?
+3. Performance test scenarios?
+4. Additional error scenarios?
 ```
 
 ## crud
