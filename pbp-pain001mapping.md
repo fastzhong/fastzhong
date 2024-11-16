@@ -1,8 +1,28 @@
 ## mapper
 ```java
-@Mapping(target = "deliveryMethod", source = "relatedRemittanceInformation[0].remittanceLocationDetails[0].method")
-     @Mapping(target = "deliveryAddress", source = "relatedRemittanceInformation[0].remittanceLocationDetails[0].electronicAddress")
-     PwsTransactionAdvices mapToPwsTransactionAdvices(CreditTransferTransactionInformationDTO childDTO);
+@Mapping(target = "deliveryMethod", source = "childDTO", qualifiedByName = "mapDeliveryMethod")
+    @Mapping(target = "deliveryAddress", source = "childDTO", qualifiedByName = "mapDeliveryAddress")
+    PwsTransactionAdvices mapToPwsTransactionAdvices(CreditTransferTransactionInformationDTO childDTO);
+
+    @Named("mapDeliveryMethod")
+    default String mapDeliveryMethod(CreditTransferTransactionInformationDTO childDTO) {
+        return childDTO.getRelatedRemittanceInformation() != null &&
+               !childDTO.getRelatedRemittanceInformation().isEmpty() &&
+               childDTO.getRelatedRemittanceInformation().get(0).getRemittanceLocationDetails() != null &&
+               !childDTO.getRelatedRemittanceInformation().get(0).getRemittanceLocationDetails().isEmpty()
+               ? childDTO.getRelatedRemittanceInformation().get(0).getRemittanceLocationDetails().get(0).getMethod()
+               : null;
+    }
+
+    @Named("mapDeliveryAddress")
+    default String mapDeliveryAddress(CreditTransferTransactionInformationDTO childDTO) {
+        return childDTO.getRelatedRemittanceInformation() != null &&
+               !childDTO.getRelatedRemittanceInformation().isEmpty() &&
+               childDTO.getRelatedRemittanceInformation().get(0).getRemittanceLocationDetails() != null &&
+               !childDTO.getRelatedRemittanceInformation().get(0).getRemittanceLocationDetails().isEmpty()
+               ? childDTO.getRelatedRemittanceInformation().get(0).getRemittanceLocationDetails().get(0).getElectronicAddress()
+               : null;
+    }
 ```
 
 ## testing
