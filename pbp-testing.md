@@ -1033,6 +1033,256 @@ class Pain001ServiceImplTest {
     }
 }
 ```
+
+## mapping
+
+```java
+@ExtendWith(MockitoExtension.class)
+class PaymentMappingServiceImplTest {
+
+    @InjectMocks
+    private PaymentMappingServiceImpl paymentMappingService;
+
+    @Mock
+    private Pain001ToBoMapper pain001ToBoMapper;
+
+    @Spy
+    private ObjectMapper objectMapper = new ObjectMapper();
+
+    @Test
+    @DisplayName("Should successfully map pain001 payment to BO")
+    void testPain001PaymentToBo() throws Exception {
+        // Given
+        GroupHeaderDTO groupHeaderDTO = createGroupHeaderDTO();
+        PaymentInformationDTO paymentDTO = createPaymentInformationDTO();
+        PwsFileUpload fileUpload = createMockFileUpload();
+        
+        // Mock service method responses
+        when(paymentMappingService.getBankEntityId()).thenReturn("TESTBANK");
+        when(paymentMappingService.getCompanyId()).thenReturn(12345L);
+        when(paymentMappingService.getUserId()).thenReturn(67890L);
+        when(paymentMappingService.getFileUpload()).thenReturn(fileUpload);
+
+        // Mock mapper responses
+        PaymentInformation mockPaymentInfo = new PaymentInformation();
+        mockPaymentInfo.setDmpBulkStatus(DmpBulkStatus.fromValue("01"));
+        when(pain001ToBoMapper.mapToPaymentInformation(paymentDTO)).thenReturn(mockPaymentInfo);
+
+        PwsTransactions mockPwsTransactions = new PwsTransactions();
+        when(pain001ToBoMapper.mapToPwsTransactions(paymentDTO)).thenReturn(mockPwsTransactions);
+
+        PwsBulkTransactions mockPwsBulkTransactions = new PwsBulkTransactions();
+        when(pain001ToBoMapper.mapToPwsBulkTransactions(eq(paymentDTO), any(PwsFileUpload.class)))
+            .thenReturn(mockPwsBulkTransactions);
+
+        // Mock child transaction mappings
+        PwsBulkTransactionInstructions mockInstructions = new PwsBulkTransactionInstructions();
+        when(pain001ToBoMapper.mapToPwsBulkTransactionInstructions(any(CreditTransferTransactionInformationDTO.class), any(PwsFileUpload.class)))
+            .thenReturn(mockInstructions);
+
+        Creditor mockCreditor = new Creditor();
+        when(pain001ToBoMapper.mapToCreditor(any(CreditTransferTransactionInformationDTO.class)))
+            .thenReturn(mockCreditor);
+
+        PwsTransactionAdvices mockAdvice = new PwsTransactionAdvices();
+        when(pain001ToBoMapper.mapToPwsTransactionAdvices(any(CreditTransferTransactionInformationDTO.class)))
+            .thenReturn(mockAdvice);
+
+        TaxInformation mockTaxInfo = new TaxInformation();
+        when(pain001ToBoMapper.mapToTaxInformation(any(CreditTransferTransactionInformationDTO.class)))
+            .thenReturn(mockTaxInfo);
+
+        // When
+        PaymentInformation result = paymentMappingService.pain001PaymentToBo(groupHeaderDTO, paymentDTO);
+
+        // Then
+        assertNotNull(result);
+        assertEquals(DmpBulkStatus.fromValue("01"), result.getDmpBulkStatus());
+        
+        // Verify PwsTransactions setup
+        PwsTransactions resultTxn = result.getPwsTransactions();
+        assertNotNull(resultTxn);
+        assertEquals("TESTBANK", resultTxn.getBankEntityId());
+        assertEquals(12345L, resultTxn.getCompanyId());
+        assertEquals(67890L, resultTxn.getInitiatedBy());
+        assertNotNull(resultTxn.getInitiationTime());
+
+        // Verify PwsBulkTransactions setup
+        PwsBulkTransactions resultBulkTxn = result.getPwsBulkTransactions();
+        assertNotNull(resultBulkTxn);
+        assertNotNull(resultBulkTxn.getTransferDate());
+        assertEquals("2007-02-23", new SimpleDateFormat("yyyy-MM-dd").format(resultBulkTxn.getTransferDate()));
+
+        // Verify credit transfer transactions
+        assertNotNull(result.getCreditTransferTransactionList());
+        assertFalse(result.getCreditTransferTransactionList().isEmpty());
+        assertEquals(5, result.getCreditTransferTransactionList().size());
+
+        // Verify method invocations
+        verify(pain001ToBoMapper).mapToPaymentInformation(paymentDTO);
+        verify(pain001ToBoMapper).mapToPwsTransactions(paymentDTO);
+        verify(pain001ToBoMapper).mapToPwsBulkTransactions(eq(paymentDTO), any(PwsFileUpload.class));
+        
+        verify(pain001ToBoMapper, times(5))
+            .mapToPwsBulkTransactionInstructions(any(CreditTransferTransactionInformationDTO.class), any(PwsFileUpload.class));
+        verify(pain001ToBoMapper, times(5))
+            .mapToCreditor(any(CreditTransferTransactionInformationDTO.class));
+        verify(pain001ToBoMapper, times(5))
+            .mapToPwsTransactionAdvices(any(CreditTransferTransactionInformationDTO.class));
+        verify(pain001ToBoMapper, times(5))
+            .mapToTaxInformation(any(CreditTransferTransactionInformationDTO.class));
+    }
+
+    @Test
+    @DisplayName("Should handle empty credit transfer transaction list")
+    void testPain001PaymentToBo_EmptyTransactions() throws Exception {
+        // Given
+        GroupHeaderDTO groupHeaderDTO = createGroupHeaderDTO();
+        PaymentInformationDTO paymentDTO = createPaymentInformationDTO();
+        paymentDTO.setCreditTransferTransactionInformation(Collections.emptyList());
+        
+        PwsFileUpload fileUpload = createMockFileUpload();
+        when(paymentMappingService.getFileUpload()).thenReturn(fileUpload);
+
+        // Mock basic mappings
+        when(pain001ToBoMapper.mapToPaymentInformation(paymentDTO))
+            .thenReturn(new PaymentInformation());
+        when(pain001ToBoMapper.mapToPwsTransactions(paymentDTO))
+            .thenReturn(new PwsTransactions());
+        when(pain001ToBoMapper.mapToPwsBulkTransactions(eq(paymentDTO), any(PwsFileUpload.class)))
+            .thenReturn(new PwsBulkTransactions());
+
+        // When
+        PaymentInformation result = paymentMappingService.pain001PaymentToBo(groupHeaderDTO, paymentDTO);
+
+        // Then
+        assertNotNull(result);
+        assertNotNull(result.getCreditTransferTransactionList());
+        assertTrue(result.getCreditTransferTransactionList().isEmpty());
+    }
+
+    @Test
+    @DisplayName("Should handle null payment instructions")
+    void testPain001PaymentToBo_NullInstructions() throws Exception {
+        // Given
+        GroupHeaderDTO groupHeaderDTO = createGroupHeaderDTO();
+        PaymentInformationDTO paymentDTO = createPaymentInformationDTO();
+        CreditTransferTransactionInformationDTO txnDTO = paymentDTO.getCreditTransferTransactionInformation().get(0);
+        txnDTO.setInstructionForCreditorAgent(null);
+        
+        PwsFileUpload fileUpload = createMockFileUpload();
+        when(paymentMappingService.getFileUpload()).thenReturn(fileUpload);
+
+        // Mock mapper responses with basic objects
+        when(pain001ToBoMapper.mapToPaymentInformation(paymentDTO))
+            .thenReturn(new PaymentInformation());
+        when(pain001ToBoMapper.mapToPwsTransactions(paymentDTO))
+            .thenReturn(new PwsTransactions());
+        when(pain001ToBoMapper.mapToPwsBulkTransactions(eq(paymentDTO), any(PwsFileUpload.class)))
+            .thenReturn(new PwsBulkTransactions());
+        when(pain001ToBoMapper.mapToPwsBulkTransactionInstructions(any(), any()))
+            .thenReturn(new PwsBulkTransactionInstructions());
+        when(pain001ToBoMapper.mapToCreditor(any()))
+            .thenReturn(new Creditor());
+        when(pain001ToBoMapper.mapToPwsTransactionAdvices(any()))
+            .thenReturn(new PwsTransactionAdvices());
+        when(pain001ToBoMapper.mapToTaxInformation(any()))
+            .thenReturn(new TaxInformation());
+
+        // When
+        PaymentInformation result = paymentMappingService.pain001PaymentToBo(groupHeaderDTO, paymentDTO);
+
+        // Then
+        assertNotNull(result);
+        assertNotNull(result.getCreditTransferTransactionList());
+        assertFalse(result.getCreditTransferTransactionList().isEmpty());
+        
+        PwsBulkTransactionInstructions instructions = result.getCreditTransferTransactionList()
+            .get(0).getPwsBulkTransactionInstructions();
+        assertNotNull(instructions);
+        assertNull(instructions.getPaymentDetails());
+    }
+
+    private GroupHeaderDTO createGroupHeaderDTO() {
+        GroupHeaderDTO header = new GroupHeaderDTO();
+        header.setMessageIdentification("TESTMSG123");
+        header.setCreationDateTime("2024-02-23T10:00:00");
+        return header;
+    }
+
+    private PaymentInformationDTO createPaymentInformationDTO() throws Exception {
+        // Load from test JSON file
+        ClassPathResource jsonResource = new ClassPathResource("pain001-sample.json");
+        String jsonContent = Files.readString(Path.of(jsonResource.getURI()));
+        
+        Pain001 pain001 = objectMapper.readValue(jsonContent, Pain001.class);
+        return pain001.getBusinessDocument()
+                     .getCustomerCreditTransferInitiation()
+                     .getPaymentInformation()
+                     .get(0);
+    }
+
+    private PwsFileUpload createMockFileUpload() {
+        PwsFileUpload fileUpload = new PwsFileUpload();
+        fileUpload.setFileUploadId(1L);
+        fileUpload.setFileReferenceId("TEST123");
+        fileUpload.setChargeOption("OUR");
+        fileUpload.setPayrollOption("STANDARD");
+        return fileUpload;
+    }
+
+    @Test
+    @DisplayName("Should throw ParseException for invalid date format")
+    void testPain001PaymentToBo_InvalidDate() {
+        // Given
+        GroupHeaderDTO groupHeaderDTO = createGroupHeaderDTO();
+        PaymentInformationDTO paymentDTO = new PaymentInformationDTO();
+        RequestedExecutionDateDTO dateDTO = new RequestedExecutionDateDTO();
+        dateDTO.setDate("invalid-date");
+        paymentDTO.setRequestedExecutionDate(dateDTO);
+
+        // Then
+        assertThrows(ParseException.class, () -> 
+            paymentMappingService.pain001PaymentToBo(groupHeaderDTO, paymentDTO)
+        );
+    }
+
+    @Test
+    @DisplayName("Should handle null tax information")
+    void testPain001PaymentToBo_NullTaxInfo() throws Exception {
+        // Given
+        GroupHeaderDTO groupHeaderDTO = createGroupHeaderDTO();
+        PaymentInformationDTO paymentDTO = createPaymentInformationDTO();
+        paymentDTO.getCreditTransferTransactionInformation().get(0).setTax(null);
+        
+        PwsFileUpload fileUpload = createMockFileUpload();
+        when(paymentMappingService.getFileUpload()).thenReturn(fileUpload);
+
+        // Mock basic mappings
+        when(pain001ToBoMapper.mapToPaymentInformation(paymentDTO))
+            .thenReturn(new PaymentInformation());
+        when(pain001ToBoMapper.mapToPwsTransactions(paymentDTO))
+            .thenReturn(new PwsTransactions());
+        when(pain001ToBoMapper.mapToPwsBulkTransactions(eq(paymentDTO), any(PwsFileUpload.class)))
+            .thenReturn(new PwsBulkTransactions());
+        when(pain001ToBoMapper.mapToPwsBulkTransactionInstructions(any(), any()))
+            .thenReturn(new PwsBulkTransactionInstructions());
+        when(pain001ToBoMapper.mapToCreditor(any()))
+            .thenReturn(new Creditor());
+        when(pain001ToBoMapper.mapToPwsTransactionAdvices(any()))
+            .thenReturn(new PwsTransactionAdvices());
+
+        // When
+        PaymentInformation result = paymentMappingService.pain001PaymentToBo(groupHeaderDTO, paymentDTO);
+
+        // Then
+        assertNotNull(result);
+        assertNotNull(result.getCreditTransferTransactionList());
+        assertNull(result.getCreditTransferTransactionList().get(0).getTaxInformation());
+    }
+}
+```
+
 ## debulk
 
 ```java
@@ -1368,12 +1618,300 @@ class PaymentSaveServiceTest {
     private Pain001InboundProcessingResult result;
     private PwsSaveRecord mockRecord;
 
-    private static final String TEST_BANK_REF = "TEST-REF-001";
-    private static final long TEST_CHANGE_TOKEN = 1699920000000L; // Fixed timestamp for testing
+    private static final String TEST_BANK_REF = "THISE2411001";
+    private static final long TEST_CHANGE_TOKEN = 1699920000000L;
+    private static final BigDecimal TEST_AMOUNT = new BigDecimal("1000.00");
+    private static final String TEST_CURRENCY = "THB";
+
 
     @BeforeEach
     void setUp() {
         // Initialize contexts
+        setUpExecutionContexts();
+        
+        // Setup SQL Session
+        setUpSqlSession();
+        
+        // Setup PaymentUtils
+        setUpPaymentUtils();
+        
+        // Setup BankRef
+        setUpBankRef();
+        
+        // Setup Configuration
+        when(config.getBatchInsertSize()).thenReturn(1000);
+    }
+
+    @Nested
+    class SavePaymentInformationTests {
+        @Test
+        void whenSingleValidTransaction_shouldSaveSuccessfully() {
+            // Arrange
+            setupValidPaymentInfo(1);
+            setupSuccessfulBulkSave();
+            setupSuccessfulRetryTemplate();
+
+            // Act
+            paymentSave.savePaymentInformation(paymentInfo);
+
+            // Assert
+            verify(paymentUtils).updatePaymentSaved(eq(result), eq(mockRecord));
+            verifyBulkPaymentSaved();
+            verifyChildTransactionsSaved(1);
+        }
+
+        @Test
+        void whenMultipleTransactionsWithinBatch_shouldSaveInSingleBatch() {
+            // Arrange
+            int transactionCount = 5;
+            when(config.getBatchInsertSize()).thenReturn(10);
+            setupValidPaymentInfo(transactionCount);
+            setupSuccessfulBulkSave();
+            setupSuccessfulRetryTemplate();
+
+            // Act
+            paymentSave.savePaymentInformation(paymentInfo);
+
+            // Assert
+            verify(paymentUtils).updatePaymentSaved(eq(result), eq(mockRecord));
+            verifyBulkPaymentSaved();
+            verifyChildTransactionsSaved(1); // Single batch
+            verifyTransactionCounts(transactionCount);
+        }
+
+        @Test
+        void whenTransactionsExceedBatchSize_shouldSaveInMultipleBatches() {
+            // Arrange
+            int batchSize = 2;
+            int totalTransactions = 5;
+            when(config.getBatchInsertSize()).thenReturn(batchSize);
+            setupValidPaymentInfo(totalTransactions);
+            setupSuccessfulBulkSave();
+            setupSuccessfulRetryTemplate();
+
+            // Act
+            paymentSave.savePaymentInformation(paymentInfo);
+
+            // Assert
+            verify(paymentUtils).updatePaymentSaved(eq(result), eq(mockRecord));
+            verifyBulkPaymentSaved();
+            verifyChildTransactionsSaved(3); // ceil(5/2) batches
+            verifyTransactionCounts(totalTransactions);
+        }
+
+        @Test
+        void whenSomeTransactionsInvalid_shouldOnlySaveValidOnes() {
+            // Arrange
+            setupPaymentInfoWithMixedValidation(5, 2); // 5 total, 2 invalid
+            setupSuccessfulBulkSave();
+            setupSuccessfulRetryTemplate();
+
+            // Act
+            paymentSave.savePaymentInformation(paymentInfo);
+
+            // Assert
+            verify(paymentUtils).updatePaymentSaved(eq(result), eq(mockRecord));
+            verifyBulkPaymentSaved();
+            verifyTransactionCounts(3); // Only valid ones
+        }
+
+        @Test
+        void whenAllTransactionsInvalid_shouldOnlySaveBulkPayment() {
+            // Arrange
+            setupPaymentInfoWithAllInvalidTransactions(3);
+            setupSuccessfulBulkSave();
+
+            // Act
+            paymentSave.savePaymentInformation(paymentInfo);
+
+            // Assert
+            verify(paymentUtils).updatePaymentSaved(eq(result), eq(mockRecord));
+            verifyBulkPaymentSaved();
+            verifyNoChildTransactionsSaved();
+        }
+
+        @Test
+        void whenBulkSaveFails_shouldNotProcessChildTransactions() {
+            // Arrange
+            setupValidPaymentInfo(3);
+            when(pwsSaveDao.insertPwsTransactions(any()))
+                .thenThrow(new RuntimeException("Bulk save failed"));
+
+            // Act & Assert
+            assertThrows(RuntimeException.class, 
+                () -> paymentSave.savePaymentInformation(paymentInfo));
+            verifyNoChildTransactionsSaved();
+        }
+
+        @Test
+        void whenChildBatchSaveFails_shouldRollbackAndContinue() {
+            // Arrange
+            int batchSize = 2;
+            when(config.getBatchInsertSize()).thenReturn(batchSize);
+            setupValidPaymentInfo(4);
+            setupSuccessfulBulkSave();
+            setupPartiallyFailingRetryTemplate(1); // Fail first batch
+
+            // Act
+            paymentSave.savePaymentInformation(paymentInfo);
+
+            // Assert
+            verify(paymentUtils).updatePaymentSavedError(eq(result), eq(mockRecord));
+            verify(sqlSession, times(1)).rollback();
+            verifyBulkPaymentSaved();
+        }
+    }
+
+    @Nested
+    class SaveBulkPaymentTests {
+        @Test
+        void whenValidBulkPayment_shouldSaveSuccessfully() {
+            // Arrange
+            setupValidPaymentInfo(1);
+            setupSuccessfulBulkSave();
+            mockBankRefGeneration();
+
+            // Act
+            long txnId = paymentSave.saveBulkPayment(paymentInfo);
+
+            // Assert
+            assertEquals(1L, txnId);
+            PwsTransactions pwsTransactions = paymentInfo.getPwsTransactions();
+            assertEquals(TEST_BANK_REF, pwsTransactions.getBankReferenceId());
+            assertNotNull(pwsTransactions.getChangeToken());
+            verifyBulkPaymentSaved();
+        }
+
+        @Test
+        void whenBankRefGenerationFails_shouldThrowException() {
+            // Arrange
+            setupValidPaymentInfo(1);
+            when(pwsSaveDao.getBankRefSequenceNum())
+                .thenThrow(new RuntimeException("Sequence generation failed"));
+
+            // Act & Assert
+            assertThrows(RuntimeException.class, 
+                () -> paymentSave.saveBulkPayment(paymentInfo));
+        }
+
+        @Test
+        void whenTransactionInsertFails_shouldThrowException() {
+            // Arrange
+            setupValidPaymentInfo(1);
+            when(pwsSaveDao.insertPwsTransactions(any()))
+                .thenThrow(new RuntimeException("Insert failed"));
+
+            // Act & Assert
+            assertThrows(RuntimeException.class, 
+                () -> paymentSave.saveBulkPayment(paymentInfo));
+        }
+    }
+
+    @Nested
+    class SaveCreditTransferBatchTests {
+        @Test
+        void whenBatchWithAllEntities_shouldSaveSuccessfully() {
+            // Arrange
+            int batchSize = 2;
+            setupValidPaymentInfoWithAllEntities(batchSize);
+            setupChildTxnBatchBankRefSeq(batchSize);
+            setupSuccessfulBulkSave();
+            mockBankRefGeneration();
+
+            // Act
+            paymentSave.saveCreditTransferBatch(
+                paymentInfo, 
+                paymentInfo.getCreditTransferTransactionList(), 
+                1
+            );
+
+            // Assert
+            verifyAllEntitiesSaved(batchSize);
+        }
+
+        @Test
+        void whenBatchWithOptionalEntities_shouldSaveSuccessfully() {
+            // Arrange
+            int batchSize = 2;
+            setupValidPaymentInfoWithOptionalEntities(batchSize);
+            setupChildTxnBatchBankRefSeq(batchSize);
+            setupSuccessfulBulkSave();
+            mockBankRefGeneration();
+
+            // Act
+            paymentSave.saveCreditTransferBatch(
+                paymentInfo, 
+                paymentInfo.getCreditTransferTransactionList(), 
+                1
+            );
+
+            // Assert
+            verifyMandatoryEntitiesSaved(batchSize);
+            verifyNoOptionalEntitiesSaved();
+        }
+
+        @Test
+        void whenBatchWithNullEntities_shouldSkipNullRecords() {
+            // Arrange
+            setupValidPaymentInfoWithNullEntities(2);
+            setupChildTxnBatchBankRefSeq(2);
+            setupSuccessfulBulkSave();
+
+            // Act
+            paymentSave.saveCreditTransferBatch(
+                paymentInfo, 
+                paymentInfo.getCreditTransferTransactionList(), 
+                1
+            );
+
+            // Assert
+            verifyNullRecordsSkipped();
+        }
+    }
+
+    @Nested
+    class BatchExecutionTests {
+        @Test
+        void whenBatchInsertSucceeds_shouldCommitAndClose() {
+            // Arrange
+            List<PwsBulkTransactionInstructions> records = createTestInstructions(2);
+            setupSuccessfulBatchExecution();
+
+            // Act
+            paymentSave.executeBatchInsert(
+                "insertPwsBulkTransactionInstructions", 
+                records, 
+                null
+            );
+
+            // Assert
+            verify(sqlSession).commit();
+            verify(sqlSession).close();
+            verify(sqlSession, never()).rollback();
+        }
+
+        @Test
+        void whenBatchInsertFails_shouldRollbackAndClose() {
+            // Arrange
+            List<PwsBulkTransactionInstructions> records = createTestInstructions(2);
+            setupFailedBatchExecution();
+
+            // Act & Assert
+            assertThrows(BulkProcessingException.class, 
+                () -> paymentSave.executeBatchInsert(
+                    "insertPwsBulkTransactionInstructions", 
+                    records, 
+                    null
+                )
+            );
+            verify(sqlSession).rollback();
+            verify(sqlSession).close();
+            verify(sqlSession, never()).commit();
+        }
+    }
+
+    // Helper methods for setting up test contexts
+    private void setUpExecutionContexts() {
         paymentInfo = new PaymentInformation();
         stepContext = new ExecutionContext();
         jobContext = new ExecutionContext();
@@ -1383,134 +1921,101 @@ class PaymentSaveServiceTest {
         jobContext.put("result", result);
         mockRecord = new PwsSaveRecord("encryptedId123", "BATCH001");
 
-        // Setup execution contexts
         lenient().when(stepExecution.getExecutionContext()).thenReturn(stepContext);
         lenient().when(stepExecution.getJobExecution()).thenReturn(jobExecution);
         lenient().when(jobExecution.getExecutionContext()).thenReturn(jobContext);
+    }
 
-        // Setup SQL Session
+    private void setUpSqlSession() {
         lenient().when(paymentSaveSqlSessionTemplate.getSqlSessionFactory()).thenReturn(sqlSessionFactory);
         lenient().when(sqlSessionFactory.openSession(ExecutorType.BATCH)).thenReturn(sqlSession);
         lenient().when(sqlSession.getMapper(PwsSaveDao.class)).thenReturn(pwsSaveDao);
+        doNothing().when(sqlSession).commit();
+        doNothing().when(sqlSession).rollback();
+        doNothing().when(sqlSession).close();
+    }
 
-        // Setup PaymentUtils
+    private void setUpPaymentUtils() {
         lenient().when(paymentUtils.createPwsSaveRecord(anyLong(), anyString())).thenReturn(mockRecord);
-        lenient().doNothing().when(paymentUtils).updatePaymentSaved(any(), any());
-        lenient().doNothing().when(paymentUtils).updatePaymentSavedError(any(), any());
+        doNothing().when(paymentUtils).updatePaymentSaved(any(), any());
+        doNothing().when(paymentUtils).updatePaymentSavedError(any(), any());
+    }
 
-        // Setup service
-        paymentSave.beforeStep(stepExecution);
+    private void setUpBankRef() {
         bankRefMetaData = new BankRefMetaData("TH", "I", "SE", "2411");
         paymentSave.setBankRefMetaData(bankRefMetaData);
+        paymentSave.beforeStep(stepExecution);
     }
 
-    @Test
-    void savePaymentInformation_SuccessfulSaveWithMultipleBatches() {
-        // Arrange
-        int batchSize = 2;
-        int totalTransactions = 5;
-        when(config.getBatchInsertSize()).thenReturn(batchSize);
-        setupValidPaymentInfo(totalTransactions);
-        setupSuccessfulBulkSave();
-        setupChildTxnBatchBankRefSeq(totalTransactions);
-        setupSuccessfulRetryTemplate();
+    // Helper methods for creating test data
+    private void setupValidPaymentInfoWithAllEntities(int size) {
+        setupValidPaymentInfo(size);
+        paymentInfo.getCreditTransferTransactionList().forEach(txn -> {
+            txn.setAdvice(createTestAdvice());
+            txn.setTaxInformation(createTestTaxInfo());
+            ((Creditor)txn.getCreditor()).setPwsPartyContactList(createTestContacts());
+        });
+    }
 
-        // Act
-        paymentSave.savePaymentInformation(paymentInfo);
+    private void setupValidPaymentInfoWithOptionalEntities(int size) {
+        setupValidPaymentInfo(size);
+        paymentInfo.getCreditTransferTransactionList().forEach(txn -> {
+            txn.setAdvice(null);
+            txn.setTaxInformation(null);
+            ((Creditor)txn.getCreditor()).setPwsPartyContactList(Collections.emptyList());
+        });
+    }
 
-        // Assert
-        verify(paymentUtils).createPwsSaveRecord(eq(paymentInfo.getPwsTransactions().getTransactionId()),
-                eq(paymentInfo.getPwsBulkTransactions().getDmpBatchNumber()));
-        verify(paymentUtils).updatePaymentSaved(eq(result), eq(mockRecord));
+    private PwsTransactionAdvices createTestAdvice() {
+        PwsTransactionAdvices advice = new PwsTransactionAdvices();
+        advice.setAdviceId("TEST-ADVICE");
+        advice.setDeliveryMethod("EMAIL");
+        return advice;
+    }
+
+    private TaxInformation createTestTaxInfo() {
+        TaxInformation taxInfo = new TaxInformation();
+        PwsTaxInstructions instruction = new PwsTaxInstructions();
+        instruction.setTaxType("WHT");
+        instruction.setTaxAmount(new BigDecimal("100.00"));
+        taxInfo.setInstructionList(Collections.singletonList(instruction));
+        return taxInfo;
+    }
+
+    // Verification methods
+    private void verifyAllEntitiesSaved(int batchSize) {
+        verify(pwsSaveDao, times(batchSize)).insertPwsBulkTransactionInstructions(any());
+        verify(pwsSaveDao, times(batchSize)).insertPwsParties(any());
+        verify(pwsSaveDao, atLeastOnce()).insertPwsPartyContacts(any());
+        verify(pwsSaveDao, times(batchSize)).insertPwsTransactionAdvices(any());
+        verify(pwsSaveDao, atLeastOnce()).insertPwsTaxInstructions(any());
+        verify(sqlSession).commit();
+        verify(sqlSession, never()).rollback();
+    }
+
+    private void verifyMandatoryEntitiesSaved(int batchSize) {
+        verify(pwsSaveDao, times(batchSize)).insertPwsBulkTransactionInstructions(any());
+        verify(pwsSaveDao, times(batchSize)).insertPwsParties(any());
+        verify(sqlSession).commit();
+        verify(sqlSession, never()).rollback();
+    }
+
+    private void verifyNoOptionalEntitiesSaved() {
+        verify(pwsSaveDao, never()).insertPwsPartyContacts(any());
+        verify(pwsSaveDao, never()).insertPwsTransactionAdvices(any());
+        verify(pwsSaveDao, never()).insertPwsTaxInstructions(any());
+    }
+
+    private void verifyTransactionCounts(int expectedCount) {
+        assertEquals(expectedCount, result.getTransactionCreatedTotal());
+        assertEquals(1, result.getPaymentCreatedTotal());
+    }
+
+    private void verifyBulkPaymentSaved() {
         verify(pwsSaveDao).insertPwsTransactions(any(PwsTransactions.class));
         verify(pwsSaveDao).insertPwsBulkTransactions(any(PwsBulkTransactions.class));
-        verifyBatchInsertsForMultipleBatches(3); // ceil(5/2) = 3 batches
     }
 
-    @Test
-    void savePaymentInformation_WithInvalidTransactions() {
-        // Arrange
-        int batchSize = 2;
-        when(config.getBatchInsertSize()).thenReturn(batchSize);
-        setupPaymentInfoWithMixedValidation(3);
-        setupSuccessfulBulkSave();
-        setupChildTxnBatchBankRefSeq(2); // Only valid transactions
-        setupSuccessfulRetryTemplate();
-
-        // Act
-        paymentSave.savePaymentInformation(paymentInfo);
-
-        // Assert
-        verify(paymentUtils).updatePaymentSaved(eq(result), eq(mockRecord));
-        verifyBatchInsertsForMultipleBatches(1); // Only one batch for valid transactions
-    }
-
-    @Test
-    void savePaymentInformation_FailedBatchSaveWithRollback() {
-        // Arrange
-        int batchSize = 2;
-        when(config.getBatchInsertSize()).thenReturn(batchSize);
-        setupValidPaymentInfo(batchSize);
-        setupSuccessfulBulkSave();
-        setupChildTxnBatchBankRefSeq(batchSize);
-        setupFailedRetryTemplate();
-
-        // Act
-        paymentSave.savePaymentInformation(paymentInfo);
-
-        // Assert
-        verify(paymentUtils).updatePaymentSavedError(eq(result), eq(mockRecord));
-        verify(paymentUtils, never()).updatePaymentSaved(any(), any());
-        verify(sqlSession, atLeastOnce()).rollback();
-    }
-
-    @Test
-    void saveBulkPayment_SuccessfulSave() {
-        // Arrange
-        setupValidPaymentInfo(1);
-        setupSuccessfulBulkSave();
-        mockBankRefGeneration();
-
-        // Act
-        long txnId = paymentSave.saveBulkPayment(paymentInfo);
-
-        // Assert
-        assertEquals(1L, txnId);
-        PwsTransactions pwsTransactions = paymentInfo.getPwsTransactions();
-        assertEquals(TEST_BANK_REF, pwsTransactions.getBankReferenceId());
-        assertNotNull(pwsTransactions.getChangeToken());
-        verify(pwsSaveDao).insertPwsTransactions(pwsTransactions);
-        verify(pwsSaveDao).insertPwsBulkTransactions(paymentInfo.getPwsBulkTransactions());
-    }
-
-    @Test
-    void saveBulkPayment_FailedSave() {
-        // Arrange
-        setupValidPaymentInfo(1);
-        when(pwsSaveDao.insertPwsTransactions(any())).thenThrow(new RuntimeException("Database error"));
-
-        // Act & Assert
-        assertThrows(RuntimeException.class, () -> paymentSave.saveBulkPayment(paymentInfo));
-    }
-
-    @Test
-    void saveCreditTransferBatch_SuccessfulSave() {
-        // Arrange
-        int batchSize = 2;
-        setupValidPaymentInfo(batchSize);
-        setupChildTxnBatchBankRefSeq(batchSize);
-        setupSuccessfulBulkSave();
-        mockBankRefGeneration();
-
-        // Act
-        paymentSave.saveCreditTransferBatch(paymentInfo, 
-            paymentInfo.getCreditTransferTransactionList(), 1);
-
-        // Assert
-        verify(sqlSession, atLeastOnce()).commit();
-        verify(sqlSession, never()).rollback();
-        verifyAllRecordsSaved();
-    }
 
     private void setupValidPaymentInfo(int size) {
         PwsTransactions pwsTransactions = new PwsTransactions();
@@ -1618,34 +2123,6 @@ class PaymentSaveServiceTest {
 }
 ```
 
-Key improvements made:
-
-1. Enhanced test coverage:
-   - Multiple batch scenarios
-   - Mixed validation scenarios
-   - Bulk payment failure cases
-   - Batch processing with rollback
-
-2. Improved test data creation:
-   - More complete transaction data
-   - Support for tax and advice records
-   - Better party and contact information
-
-3. Added detailed verifications:
-   - Bank reference generation
-   - Change token handling
-   - Multi-batch processing
-   - Related record insertions
-
-4. Better error handling:
-   - Failed save scenarios
-   - Rollback verification
-   - Retry template behavior
-
-5. Improved helper methods:
-   - Setup for different batch sizes
-   - Mixed validation setup
-   - Comprehensive record verification
 
 # utils
 
