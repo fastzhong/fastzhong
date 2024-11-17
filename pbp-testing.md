@@ -1,15 +1,3 @@
-java.lang.NullPointerException
-	at java.base/java.util.concurrent.ConcurrentHashMap.putVal(ConcurrentHashMap.java:1011)
-	at java.base/java.util.concurrent.ConcurrentHashMap.put(ConcurrentHashMap.java:1006)
-	at java.base/java.util.Properties.put(Properties.java:1301)
-	at java.base/java.util.Properties.setProperty(Properties.java:229)
-	at com.uob.gwb.pbp.config.DataSourceConfig.createDataSource(DataSourceConfig.java:94)
-	at com.uob.gwb.pbp.config.DataSourceConfig.defaultDataSource(DataSourceConfig.java:37)
-	at com.uob.gwb.pbp.config.DataSourceConfigTest.testDefaultDataSource(DataSourceConfigTest.java:64)
-	at java.base/java.lang.reflect.Method.invoke(Method.java:568)
-	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
-	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
-
 
 # E2E
 
@@ -161,82 +149,99 @@ class DataSourceConfigTest {
 
     @BeforeEach
     void setUp() {
-        // Mock common properties for Hikari configuration
-        lenient().when(env.getProperty(eq("spring.datasource.common.driver-class-name")))
-                .thenReturn("org.h2.Driver");
-        
-        // Mock getProperty with Class and default value
-        lenient().when(env.getProperty(eq("spring.datasource.common.hikari.maximum-pool-size"), eq(Integer.class), any()))
-                .thenReturn(5);
-        lenient().when(env.getProperty(eq("spring.datasource.common.hikari.minimum-idle"), eq(Integer.class), any()))
-                .thenReturn(2);
-        lenient().when(env.getProperty(eq("spring.datasource.common.hikari.idle-timeout"), eq(Long.class), any()))
-                .thenReturn(600000L);
-        lenient().when(env.getProperty(eq("spring.datasource.common.hikari.connection-timeout"), eq(Long.class), any()))
+        // Mock common properties
+        lenient().when(env.getProperty("spring.datasource.common.type"))
+                .thenReturn("com.zaxxer.hikari.HikariDataSource");
+        lenient().when(env.getProperty("spring.datasource.common.driver-class-name"))
+                .thenReturn("oracle.jdbc.OracleDriver");
+
+        // Mock Hikari common properties
+        lenient().when(env.getProperty("spring.datasource.common.hikari.maximum-pool-size", Integer.class, null))
+                .thenReturn(20);
+        lenient().when(env.getProperty("spring.datasource.common.hikari.minimum-idle", Integer.class, null))
+                .thenReturn(10);
+        lenient().when(env.getProperty("spring.datasource.common.hikari.connection-timeout", Long.class, null))
                 .thenReturn(30000L);
-        lenient().when(env.getProperty(eq("spring.datasource.common.hikari.max-lifetime"), eq(Long.class), any()))
+        lenient().when(env.getProperty("spring.datasource.common.hikari.idle-timeout", Long.class, null))
+                .thenReturn(600000L);
+        lenient().when(env.getProperty("spring.datasource.common.hikari.max-lifetime", Long.class, null))
                 .thenReturn(1800000L);
-        
-        lenient().when(env.getProperty("spring.datasource.common.vault.enabled"))
-                .thenReturn("false");
+
+        // Mock data source properties
+        mockDataSourceProperties();
     }
 
     @Test
     @DisplayName("Should create default datasource correctly")
     void testDefaultDataSource() {
-        // Given
-        mockDatasourceProperties("spring.datasource.default", "jdbc:h2:mem:testdb", "test_user", "test_pass");
-
         // When
         HikariDataSource dataSource = (HikariDataSource) dataSourceConfig.defaultDataSource();
 
         // Then
         verifyDataSourceProperties(dataSource, "spring.datasource.default");
+        verifyHikariConfig(dataSource);
     }
 
     @Test
     @DisplayName("Should create AES datasource correctly")
     void testAesDataSource() {
-        // Given
-        mockDatasourceProperties("spring.datasource.aes", "jdbc:h2:mem:aesdb", "aes_user", "aes_pass");
-
         // When
         HikariDataSource dataSource = (HikariDataSource) dataSourceConfig.aesDataSource();
 
         // Then
         verifyDataSourceProperties(dataSource, "spring.datasource.aes");
+        verifyHikariConfig(dataSource);
     }
 
     @Test
     @DisplayName("Should create RDS datasource correctly")
     void testRdsDataSource() {
-        // Given
-        mockDatasourceProperties("spring.datasource.rds", "jdbc:h2:mem:rdsdb", "rds_user", "rds_pass");
-
         // When
         HikariDataSource dataSource = (HikariDataSource) dataSourceConfig.rdsDataSource();
 
         // Then
         verifyDataSourceProperties(dataSource, "spring.datasource.rds");
+        verifyHikariConfig(dataSource);
     }
 
     @Test
     @DisplayName("Should create PWS datasource correctly")
     void testPwsDataSource() {
-        // Given
-        mockDatasourceProperties("spring.datasource.pws", "jdbc:h2:mem:pwsdb", "pws_user", "pws_pass");
-
         // When
         HikariDataSource dataSource = (HikariDataSource) dataSourceConfig.paymentSaveDataSource();
 
         // Then
         verifyDataSourceProperties(dataSource, "spring.datasource.pws");
+        verifyHikariConfig(dataSource);
     }
 
-    private void mockDatasourceProperties(String prefix, String jdbcUrl, String username, String password) {
+    private void mockDataSourceProperties() {
+        // Default datasource
+        mockSpecificDataSource("spring.datasource.default", 
+            "jdbc:oracle:thin:@localhost:1521/PWSDB1", "batch_user", "batch_password");
+
+        // AES datasource
+        mockSpecificDataSource("spring.datasource.aes", 
+            "jdbc:oracle:thin:@localhost:1521/AESDB", "aes_user", "aes_password");
+
+        // RDS datasource
+        mockSpecificDataSource("spring.datasource.rds", 
+            "jdbc:oracle:thin:@localhost:1521/RDSDB", "rds_user", "rds_password");
+
+        // PWS datasource
+        mockSpecificDataSource("spring.datasource.pws", 
+            "jdbc:oracle:thin:@localhost:1521/PWSDB", "pws_user", "pws_password");
+    }
+
+    private void mockSpecificDataSource(String prefix, String jdbcUrl, String username, String password) {
         lenient().when(env.getProperty(prefix + ".jdbc-url")).thenReturn(jdbcUrl);
         lenient().when(env.getProperty(prefix + ".username")).thenReturn(username);
         lenient().when(env.getProperty(prefix + ".password")).thenReturn(password);
+        
+        // DB Wallet properties
+        lenient().when(env.getProperty(prefix + ".db-wallet.enable-db-wallet")).thenReturn("false");
+        lenient().when(env.getProperty(prefix + ".db-wallet.wallet-location")).thenReturn("");
+        lenient().when(env.getProperty(prefix + ".db-wallet.db-alias")).thenReturn("");
     }
 
     private void verifyDataSourceProperties(HikariDataSource dataSource, String prefix) {
@@ -245,16 +250,25 @@ class DataSourceConfigTest {
         assertEquals(env.getProperty(prefix + ".username"), dataSource.getUsername());
         assertEquals(env.getProperty(prefix + ".password"), dataSource.getPassword());
         assertEquals(env.getProperty("spring.datasource.common.driver-class-name"), dataSource.getDriverClassName());
-        
-        // Verify Hikari pool properties
-        assertEquals(5, dataSource.getMaximumPoolSize());
-        assertEquals(2, dataSource.getMinimumIdle());
-        assertEquals(600000L, dataSource.getIdleTimeout());
-        assertEquals(30000L, dataSource.getConnectionTimeout());
-        assertEquals(1800000L, dataSource.getMaxLifetime());
     }
-}
-```
+
+    private void verifyHikariConfig(HikariDataSource dataSource) {
+        assertEquals(20, dataSource.getMaximumPoolSize());
+        assertEquals(10, dataSource.getMinimumIdle());
+        assertEquals(30000L, dataSource.getConnectionTimeout());
+        assertEquals(600000L, dataSource.getIdleTimeout());
+        assertEquals(1800000L, dataSource.getMaxLifetime());
+        
+        // Verify data source properties if needed
+        Properties dsProps = dataSource.getDataSourceProperties();
+        if (dsProps != null) {
+            assertEquals("true", dsProps.getProperty("rewriteBatchedStatement"));
+            assertEquals("true", dsProps.getProperty("cachePrepStmts"));
+            assertEquals("250", dsProps.getProperty("preStmtCacheSize"));
+            assertEquals("2048", dsProps.getProperty("preStmtCacheSqlLimit"));
+        }
+    }
+}```
 
 2. Cleanup SQL:
 ```sql
