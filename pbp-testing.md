@@ -4,90 +4,37 @@
 
 ```java
 @TestConfiguration
-@EnableBatchProcessing
-public class E2ETestConfig {
+@Profile("test")
+public class TestConfig {
 
-@Bean
-    public RetryTemplate retryTemplate(AppConfig appConfig) {
-        RetryTemplate retryTemplate = new RetryTemplate();
-        SimpleRetryPolicy retryPolicy = new SimpleRetryPolicy();
-        retryPolicy.setMaxAttempts(appConfig.getRetry().getMaxAttempts());
-        retryTemplate.setRetryPolicy(retryPolicy);
-        
-        ExponentialBackOffPolicy backOffPolicy = new ExponentialBackOffPolicy();
-        backOffPolicy.setInitialInterval(appConfig.getRetry().getBackoff().getInitialInterval());
-        backOffPolicy.setMultiplier(appConfig.getRetry().getBackoff().getMultiplier());
-        backOffPolicy.setMaxInterval(appConfig.getRetry().getBackoff().getMaxInterval());
-        retryTemplate.setBackOffPolicy(backOffPolicy);
-        
-        return retryTemplate;
-    }
 
     @Bean
     @Primary
-    public DataSource h2DataSource() {
-        return new EmbeddedDatabaseBuilder()
-            .setType(EmbeddedDatabaseType.H2)
-            .addScript("classpath:schema-h2.sql")
-            .addScript("classpath:test-data.sql")
-            .build();
+    public DataSource defaultDataSource() {
+        return new EmbeddedDatabaseBuilder().setType(EmbeddedDatabaseType.H2)
+                .addScript("classpath:/sql/schema-h2.sql")
+                .addScript("classpath:/sql/schema-h2.sql")
+                .build();
     }
 
     @Bean
-    @Primary
-    public SqlSessionFactory sqlSessionFactory(DataSource dataSource) throws Exception {
-        SqlSessionFactoryBean sessionFactory = new SqlSessionFactoryBean();
-        sessionFactory.setDataSource(dataSource);
-        sessionFactory.setMapperLocations(new PathMatchingResourcePatternResolver()
-            .getResources("classpath:mappers/**/*.xml"));
-        return sessionFactory.getObject();
+    public DataSource aesDataSource() {
+        // ToDo
+        return null; 
     }
 
     @Bean
-    @Primary
-    public SqlSessionTemplate sqlSessionTemplate(SqlSessionFactory sqlSessionFactory) {
-        return new SqlSessionTemplate(sqlSessionFactory);
-    }
-
-@Bean
-    public JobRepository jobRepository(DataSource dataSource, 
-                                     PlatformTransactionManager transactionManager) throws Exception {
-        JobRepositoryFactoryBean factory = new JobRepositoryFactoryBean();
-        factory.setDataSource(dataSource);
-        factory.setTransactionManager(transactionManager);
-        factory.setIsolationLevelForCreate("ISOLATION_READ_COMMITTED");
-        return factory.getObject();
-    }
-
-Bean
-    public SimpleJobLauncher jobLauncher(JobRepository jobRepository) {
-        SimpleJobLauncher launcher = new SimpleJobLauncher();
-        launcher.setJobRepository(jobRepository);
-        return launcher;
+    public DataSource rdsDataSource() {
+        // ToDo
+        return null;
     }
 
     @Bean
-    public ResourceSettings testResourceSettings() {
-        ResourceSettings settings = new ResourceSettings();
-        CreditorBank creditorBank = new CreditorBank();
-        creditorBank.setBankCode("024");
-        settings.setCreditorBank(creditorBank);
-        return settings;
+    public DataSource pwsDataSource() {
+        // ToDo
+        return null;
     }
 
-@Bean
-    public CompanySettings testCompanySettings() {
-        CompanySettings settings = new CompanySettings();
-        settings.setRejectOnErrorConfig(RejectOnErrorConfig.RejectNo);
-        settings.setBatchBookingIndicator(BatchBookingIndicator.ITEMIZED);
-        settings.setMaxCountOfBatchBooking(1000);
-        settings.setAutoFoward(true);
-        settings.setDerivedValueDate(LocalDateTime.now());
-        return settings;
-    }
-
-    
-}
 ```
 
 ## Init
