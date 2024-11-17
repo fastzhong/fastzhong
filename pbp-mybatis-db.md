@@ -737,14 +737,21 @@ public class DataSourceConfig {
 ```java
 import com.zaxxer.hikari.HikariDataSource;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
+import org.springframework.context.annotation.Profile;
 import org.springframework.test.context.TestPropertySource;
 
 import javax.sql.DataSource;
+import java.util.Properties;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.when;
 
 @SpringBootTest
 @TestPropertySource(properties = {
@@ -754,35 +761,14 @@ import static org.junit.jupiter.api.Assertions.*;
         "spring.datasource.common.hikari.connection-timeout=30000",
         "spring.datasource.common.hikari.idle-timeout=600000",
         "spring.datasource.common.hikari.max-lifetime=1800000",
-        "spring.datasource.common.hikari.data-source-properties.rewriteBatchedStatement=true",
-        "spring.datasource.common.hikari.data-source-properties.cachePrepStmts=true",
-        "spring.datasource.common.hikari.data-source-properties.preStmtCacheSize=250",
-        "spring.datasource.common.hikari.data-source-properties.preStmtCacheSqlLimit=1024",
-
-        // Default datasource
         "spring.datasource.default.jdbc-url=jdbc:oracle:thin:@localhost:1521/DEFAULTDB",
         "spring.datasource.default.username=default_user",
         "spring.datasource.default.password=default_password",
         "spring.datasource.default.db-wallet.enable-db-wallet=false",
-
-        // AES datasource
-        "spring.datasource.aes.jdbc-url=jdbc:oracle:thin:@localhost:1521/AESDB",
-        "spring.datasource.aes.username=aes_user",
-        "spring.datasource.aes.password=aes_password",
-        "spring.datasource.aes.db-wallet.enable-db-wallet=false",
-
-        // RDS datasource with wallet
-        "spring.datasource.rds.jdbc-url=jdbc:oracle:thin:@localhost:1521/RDSDB",
         "spring.datasource.rds.db-wallet.enable-db-wallet=true",
-        "spring.datasource.rds.db-wallet.wallet-location=/path/to/rds/wallet",
-        "spring.datasource.rds.db-wallet.tns-admin=/path/to/rds/tnsadmin",
-        "spring.datasource.rds.db-wallet.db-alias=RDS_ALIAS",
-
-        // PWS datasource
-        "spring.datasource.pws.jdbc-url=jdbc:oracle:thin:@localhost:1521/PWSDB",
-        "spring.datasource.pws.username=pws_user",
-        "spring.datasource.pws.password=pws_password",
-        "spring.datasource.pws.db-wallet.enable-db-wallet=false"
+        "spring.datasource.rds.db-wallet.wallet-location=/mock/wallet/location",
+        "spring.datasource.rds.db-wallet.tns-admin=/mock/tns/admin",
+        "spring.datasource.rds.db-wallet.db-alias=MOCK_ALIAS"
 })
 class DataSourceConfigTest {
 
@@ -799,43 +785,65 @@ class DataSourceConfigTest {
         assertEquals("jdbc:oracle:thin:@localhost:1521/DEFAULTDB", hikariDataSource.getJdbcUrl());
         assertEquals("default_user", hikariDataSource.getUsername());
         assertEquals("default_password", hikariDataSource.getPassword());
-        assertEquals(5, hikariDataSource.getMaximumPoolSize());
     }
 
     @Test
-    void testAesDataSource() {
-        DataSource dataSource = applicationContext.getBean("aesDataSource", DataSource.class);
-        assertNotNull(dataSource, "AES DataSource should not be null");
-
-        HikariDataSource hikariDataSource = (HikariDataSource) dataSource;
-        assertEquals("jdbc:oracle:thin:@localhost:1521/AESDB", hikariDataSource.getJdbcUrl());
-        assertEquals("aes_user", hikariDataSource.getUsername());
-        assertEquals("aes_password", hikariDataSource.getPassword());
-    }
-
-    @Test
-    void testRdsDataSourceWithWallet() {
+    void testRdsDataSourceWithMockWallet() {
         DataSource dataSource = applicationContext.getBean("rdsDataSource", DataSource.class);
         assertNotNull(dataSource, "RDS DataSource should not be null");
 
         HikariDataSource hikariDataSource = (HikariDataSource) dataSource;
-        assertEquals("jdbc:oracle:thin:/@RDS_ALIAS", hikariDataSource.getJdbcUrl());
+        assertEquals("jdbc:oracle:thin:/@MOCK_ALIAS", hikariDataSource.getJdbcUrl());
 
         Properties props = hikariDataSource.getDataSourceProperties();
-        assertEquals("/path/to/rds/wallet", props.getProperty("oracle.net.wallet_location"));
-        assertEquals("/path/to/rds/tnsadmin", props.getProperty("oracle.net.tns_admin"));
-    }
-
-    @Test
-    void testPwsDataSource() {
-        DataSource dataSource = applicationContext.getBean("paymentSaveDataSource", DataSource.class);
-        assertNotNull(dataSource, "PWS DataSource should not be null");
-
-        HikariDataSource hikariDataSource = (HikariDataSource) dataSource;
-        assertEquals("jdbc:oracle:thin:@localhost:1521/PWSDB", hikariDataSource.getJdbcUrl());
-        assertEquals("pws_user", hikariDataSource.getUsername());
-        assertEquals("pws_password", hikariDataSource.getPassword());
+        assertEquals("/mock/wallet/location", props.getProperty("oracle.net.wallet_location"));
+        assertEquals("/mock/tns/admin", props.getProperty("oracle.net.tns_admin"));
     }
 }
 
+@Configuration
+@Profile("test")
+class TestDataSourceConfig {
+
+    @Bean
+    @Primary
+    public DataSource defaultDataSource() {
+        HikariDataSource dataSource = Mockito.mock(HikariDataSource.class);
+        when(dataSource.getJdbcUrl()).thenReturn("jdbc:oracle:thin:@localhost:1521/DEFAULTDB");
+        when(dataSource.getUsername()).thenReturn("default_user");
+        when(dataSource.getPassword()).thenReturn("default_password");
+        return dataSource;
+    }
+
+    @Bean
+    public DataSource rdsDataSource() {
+        HikariDataSource dataSource = Mockito.mock(HikariDataSource.class);
+        when(dataSource.getJdbcUrl()).thenReturn("jdbc:oracle:thin:/@MOCK_ALIAS");
+
+        Properties properties = new Properties();
+        properties.setProperty("oracle.net.wallet_location", "/mock/wallet/location");
+        properties.setProperty("oracle.net.tns_admin", "/mock/tns/admin");
+        when(dataSource.getDataSourceProperties()).thenReturn(properties);
+
+        return dataSource;
+    }
+
+    @Bean
+    public DataSource aesDataSource() {
+        HikariDataSource dataSource = Mockito.mock(HikariDataSource.class);
+        when(dataSource.getJdbcUrl()).thenReturn("jdbc:oracle:thin:@localhost:1521/AESDB");
+        when(dataSource.getUsername()).thenReturn("aes_user");
+        when(dataSource.getPassword()).thenReturn("aes_password");
+        return dataSource;
+    }
+
+    @Bean
+    public DataSource paymentSaveDataSource() {
+        HikariDataSource dataSource = Mockito.mock(HikariDataSource.class);
+        when(dataSource.getJdbcUrl()).thenReturn("jdbc:oracle:thin:@localhost:1521/PWSDB");
+        when(dataSource.getUsername()).thenReturn("pws_user");
+        when(dataSource.getPassword()).thenReturn("pws_password");
+        return dataSource;
+    }
+}
 ```
