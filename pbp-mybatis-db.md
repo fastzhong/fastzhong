@@ -639,3 +639,203 @@ spring.datasource.hikari.data-source-properties.defaultBatchValue=100
         ]]>
     </select>
 ```
+
+## datasource config
+
+```java
+import com.zaxxer.hikari.HikariDataSource;
+import org.springframework.boot.autoconfigure.jdbc.DataSourceBuilder;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
+import org.springframework.core.env.Environment;
+
+import javax.sql.DataSource;
+import java.util.Properties;
+
+@Configuration
+public class DataSourceConfig {
+
+    private final Environment env;
+
+    public DataSourceConfig(Environment env) {
+        this.env = env;
+    }
+
+    @Bean
+    @Primary
+    @ConfigurationProperties("spring.datasource.default")
+    public DataSource defaultDataSource() {
+        return createDataSource("spring.datasource.default");
+    }
+
+    @Bean
+    @ConfigurationProperties("spring.datasource.aes")
+    public DataSource aesDataSource() {
+        return createDataSource("spring.datasource.aes");
+    }
+
+    @Bean
+    @ConfigurationProperties("spring.datasource.rds")
+    public DataSource rdsDataSource() {
+        return createDataSource("spring.datasource.rds");
+    }
+
+    @Bean
+    @ConfigurationProperties("spring.datasource.pws")
+    public DataSource paymentSaveDataSource() {
+        return createDataSource("spring.datasource.pws");
+    }
+
+    private DataSource createDataSource(String prefix) {
+        HikariDataSource dataSource = DataSourceBuilder.create().type(HikariDataSource.class).build();
+
+        // Set common properties
+        dataSource.setDriverClassName(env.getProperty("spring.datasource.common.driver-class-name"));
+        dataSource.setMaximumPoolSize(env.getProperty("spring.datasource.common.hikari.maximum-pool-size", Integer.class, 5));
+        dataSource.setMinimumIdle(env.getProperty("spring.datasource.common.hikari.minimum-idle", Integer.class, 1));
+        dataSource.setIdleTimeout(env.getProperty("spring.datasource.common.hikari.idle-timeout", Long.class, 600000L));
+        dataSource.setConnectionTimeout(env.getProperty("spring.datasource.common.hikari.connection-timeout", Long.class, 30000L));
+        dataSource.setMaxLifetime(env.getProperty("spring.datasource.common.hikari.max-lifetime", Long.class, 1800000L));
+
+        // Set specific DataSource properties
+        dataSource.setJdbcUrl(env.getProperty(prefix + ".jdbc-url"));
+
+        // Handle DB Wallet or Username/Password
+        if (Boolean.parseBoolean(env.getProperty(prefix + ".db-wallet.enable-db-wallet"))) {
+            Properties walletProperties = new Properties();
+            String walletLocation = env.getProperty(prefix + ".db-wallet.wallet-location");
+            walletProperties.setProperty("oracle.net.wallet_location", walletLocation);
+            walletProperties.setProperty("oracle.net.tns_admin", env.getProperty(prefix + ".db-wallet.tns-admin", walletLocation));
+            
+            String dbAlias = env.getProperty(prefix + ".db-wallet.db-alias");
+            if (dbAlias != null && !dbAlias.isBlank()) {
+                String jdbcUrl = String.format("jdbc:oracle:thin:/@%s", dbAlias);
+                dataSource.setJdbcUrl(jdbcUrl);
+            }
+            
+            dataSource.setDataSourceProperties(walletProperties);
+        } else {
+            dataSource.setUsername(env.getProperty(prefix + ".username"));
+            dataSource.setPassword(env.getProperty(prefix + ".password"));
+        }
+
+        // Set Hikari-specific datasource properties
+        Properties hikariProps = new Properties();
+        hikariProps.setProperty("rewriteBatchedStatements", env.getProperty("spring.datasource.common.hikari.data-source-properties.rewriteBatchedStatement", "true"));
+        hikariProps.setProperty("cachePrepStmts", env.getProperty("spring.datasource.common.hikari.data-source-properties.cachePrepStmts", "true"));
+        hikariProps.setProperty("prepStmtCacheSize", env.getProperty("spring.datasource.common.hikari.data-source-properties.preStmtCacheSize", "250"));
+        hikariProps.setProperty("prepStmtCacheSqlLimit", env.getProperty("spring.datasource.common.hikari.data-source-properties.preStmtCacheSqlLimit", "1024"));
+        dataSource.setDataSourceProperties(hikariProps);
+
+        return dataSource;
+    }
+}
+```
+
+```java
+import com.zaxxer.hikari.HikariDataSource;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.ApplicationContext;
+import org.springframework.test.context.TestPropertySource;
+
+import javax.sql.DataSource;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+@SpringBootTest
+@TestPropertySource(properties = {
+        "spring.datasource.common.driver-class-name=oracle.jdbc.OracleDriver",
+        "spring.datasource.common.hikari.maximum-pool-size=5",
+        "spring.datasource.common.hikari.minimum-idle=1",
+        "spring.datasource.common.hikari.connection-timeout=30000",
+        "spring.datasource.common.hikari.idle-timeout=600000",
+        "spring.datasource.common.hikari.max-lifetime=1800000",
+        "spring.datasource.common.hikari.data-source-properties.rewriteBatchedStatement=true",
+        "spring.datasource.common.hikari.data-source-properties.cachePrepStmts=true",
+        "spring.datasource.common.hikari.data-source-properties.preStmtCacheSize=250",
+        "spring.datasource.common.hikari.data-source-properties.preStmtCacheSqlLimit=1024",
+
+        // Default datasource
+        "spring.datasource.default.jdbc-url=jdbc:oracle:thin:@localhost:1521/DEFAULTDB",
+        "spring.datasource.default.username=default_user",
+        "spring.datasource.default.password=default_password",
+        "spring.datasource.default.db-wallet.enable-db-wallet=false",
+
+        // AES datasource
+        "spring.datasource.aes.jdbc-url=jdbc:oracle:thin:@localhost:1521/AESDB",
+        "spring.datasource.aes.username=aes_user",
+        "spring.datasource.aes.password=aes_password",
+        "spring.datasource.aes.db-wallet.enable-db-wallet=false",
+
+        // RDS datasource with wallet
+        "spring.datasource.rds.jdbc-url=jdbc:oracle:thin:@localhost:1521/RDSDB",
+        "spring.datasource.rds.db-wallet.enable-db-wallet=true",
+        "spring.datasource.rds.db-wallet.wallet-location=/path/to/rds/wallet",
+        "spring.datasource.rds.db-wallet.tns-admin=/path/to/rds/tnsadmin",
+        "spring.datasource.rds.db-wallet.db-alias=RDS_ALIAS",
+
+        // PWS datasource
+        "spring.datasource.pws.jdbc-url=jdbc:oracle:thin:@localhost:1521/PWSDB",
+        "spring.datasource.pws.username=pws_user",
+        "spring.datasource.pws.password=pws_password",
+        "spring.datasource.pws.db-wallet.enable-db-wallet=false"
+})
+class DataSourceConfigTest {
+
+    @Autowired
+    private ApplicationContext applicationContext;
+
+    @Test
+    void testDefaultDataSource() {
+        DataSource dataSource = applicationContext.getBean("defaultDataSource", DataSource.class);
+        assertNotNull(dataSource, "Default DataSource should not be null");
+        assertTrue(dataSource instanceof HikariDataSource, "DataSource should be an instance of HikariDataSource");
+
+        HikariDataSource hikariDataSource = (HikariDataSource) dataSource;
+        assertEquals("jdbc:oracle:thin:@localhost:1521/DEFAULTDB", hikariDataSource.getJdbcUrl());
+        assertEquals("default_user", hikariDataSource.getUsername());
+        assertEquals("default_password", hikariDataSource.getPassword());
+        assertEquals(5, hikariDataSource.getMaximumPoolSize());
+    }
+
+    @Test
+    void testAesDataSource() {
+        DataSource dataSource = applicationContext.getBean("aesDataSource", DataSource.class);
+        assertNotNull(dataSource, "AES DataSource should not be null");
+
+        HikariDataSource hikariDataSource = (HikariDataSource) dataSource;
+        assertEquals("jdbc:oracle:thin:@localhost:1521/AESDB", hikariDataSource.getJdbcUrl());
+        assertEquals("aes_user", hikariDataSource.getUsername());
+        assertEquals("aes_password", hikariDataSource.getPassword());
+    }
+
+    @Test
+    void testRdsDataSourceWithWallet() {
+        DataSource dataSource = applicationContext.getBean("rdsDataSource", DataSource.class);
+        assertNotNull(dataSource, "RDS DataSource should not be null");
+
+        HikariDataSource hikariDataSource = (HikariDataSource) dataSource;
+        assertEquals("jdbc:oracle:thin:/@RDS_ALIAS", hikariDataSource.getJdbcUrl());
+
+        Properties props = hikariDataSource.getDataSourceProperties();
+        assertEquals("/path/to/rds/wallet", props.getProperty("oracle.net.wallet_location"));
+        assertEquals("/path/to/rds/tnsadmin", props.getProperty("oracle.net.tns_admin"));
+    }
+
+    @Test
+    void testPwsDataSource() {
+        DataSource dataSource = applicationContext.getBean("paymentSaveDataSource", DataSource.class);
+        assertNotNull(dataSource, "PWS DataSource should not be null");
+
+        HikariDataSource hikariDataSource = (HikariDataSource) dataSource;
+        assertEquals("jdbc:oracle:thin:@localhost:1521/PWSDB", hikariDataSource.getJdbcUrl());
+        assertEquals("pws_user", hikariDataSource.getUsername());
+        assertEquals("pws_password", hikariDataSource.getPassword());
+    }
+}
+
+```
