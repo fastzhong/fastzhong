@@ -12,6 +12,14 @@ Deliver strategic/regulatory project releases approved in ITC
 - InvoiceNo
 Capabilities cost baselined. Cost reduction of 10% for new, reused and enhanced capabilities
 
+<<< >>>
+In my first project, THCMPT, I faced several challenges, including being new to the project, a lack of experienced developers in the team, tight timelines, and the complexities of coordinating with an offshore development team. Despite these hurdles, I took full ownership of the project delivery, demonstrating resilience, adaptability, and strong problem-solving skills. I also took on a significant portion of the development work, addressing requirements when the team was unable to take them on, and ensuring progress was made.
+
+Through consistent effort and close collaboration with the team, I successfully delivered the UST points, ensuring alignment with project goals and expectations, even though there were some initial delays. This experience provided valuable insights that I applied to subsequent projects, focusing on strengthening delivery timelines, optimizing resource allocation, and driving the successful execution of strategic initiatives.
+
+Looking ahead, I remain committed to enhancing efficiency, meeting cost baselines, and supporting the organization's growth objectives by leveraging the lessons learned and continuously improving my approach to project delivery.
+
+
 Engaged People & Enhanced Supply
 No misses in filling timesheets and attending CCM meetings
 HC as per SWP (SG & IH2)
@@ -25,6 +33,13 @@ No negative feedback from key stakeholders (e.g. T&O, Business, GBT/GMET Domains
 No missed housekeeping, monitoring alerts, VBM extracts for apps
 Additonal substantial contributions by creating re-usable assets in CEW which can alos be used by other apps, improvement in processes which help to cut down cost or increase quality, building a test framework that’s easy to maintain and can be used by other similar API based applications
 
+<<< >>>
+In line with the goal of fostering an engaged and high-performing team, I consistently supported and motivated team members by providing hands-on technical guidance and mentoring. I actively sought input and shared experiences from other teams to address challenges, ensuring collaborative problem-solving. I took the initiative to understand and address the concerns of team members, offering timely support where needed.
+
+I played a key role in driving the IDB API demo, ensuring its success through prompt responses to defects and requests. 
+Through these efforts, I have not only helped to strengthen the management team and its processes but also contributed significantly to the continuous development of my team’s capabilities and overall productivity.
+
+
 Engineering Excellence
 Convergence/single code base aligned with Engineering teams. Trunk-based branching strategy applied. No major issues in test phase or production due to code merging
 Minimum grade A across all Code Quality Index dimensions (Unit Testing Coverage, Maintainability, Security), for new and onboarded apps (legacy excluded). Minimum hard gate level 4
@@ -33,6 +48,15 @@ Reduce defect density: refer metrics sheet
 Automate component testing for all APIs/Microservices - CEW, OPI, PDR. NPP-PIL, RTD
 99.5% env uptime for SIT and UAT, min 3 env per app, per country
 
+<<<>>>
+In alignment with the goal of achieving engineering excellence, I actively contributed to the trunk-based branching strategy and single codebase convergence, sharing my expertise in Git troubleshooting and best practices with the team. This not only helped streamline collaboration but also minimized issues related to code merging, ensuring the stability and integrity of our codebase.
+
+I took ownership of resolving SATS and SCA issues for junior developers, guiding them in writing effective unit and component tests. This initiative significantly improved code quality, increased test coverage, and helped resolve challenging Sonar issues, contributing to the maintainability and robustness of our applications.
+
+Beyond individual contributions, I consistently shared coding best practices and engineering principles with the team, ensuring that accurate and relevant information was readily available. 
+
+When it came to defect management, I took a hands-on approach in understanding the root causes of application defects. I made it a point to address critical and high-severity issues through thorough investigation and resolution. While I couldn't personally review every defect, I made sure to follow up on significant or complex issues—whether they originated from the TH CMPT team or others—ensuring that they were properly resolved and their recurrence prevented.
+
 Managing Top Risks
 Closure of all project JIRAs, PenTest, Veracode items in 9 months of go-live
 All obsolescence and resiliency commitments met, no deferrals due to internal dependencies
@@ -40,11 +64,17 @@ No missed deadlines for VRA, ISRA, IRF, GRC, Pentest fixes, AO
 No regulatory breach incidents due to app changes. Especially changes to auth matrix, data sync from GEB, and entitlement changes 
 Key vendor (FIS, Finastra, SWIFT, Suntec, Axway, HCL, Aleph, WIPRO) escalation matrix established. New vendor Endava onboarded
 
+<<<>>>
+While TH CMPT is still in the development phase, I ensured that SIT had started smoothly, and I remained actively involved in monitoring potential risks, including system problems, security vulnerabilities, and UAT issues arising from other projects. I remained committed to preventing regulatory breaches related to changes in authentication matrices, data synchronization from GEB, and entitlement changes, ensuring strict adherence to compliance standards.
+
 Strengthening the Core
-aintain Sev 1 / Sev 2 incidents not exceeding 10
+Maintain Sev 1 / Sev 2 incidents not exceeding 10
 Reduce YoY Sev 3 incidents by 20% (10,112)
 < 70 Open PBIs at end of 2024 (10% reduction from 2023)
 Maintain Problem TRO at 99% and 100% problems closed one quarter in advance
 Min. 85% Sev3 Incidents with Impact with assigned Problem Ticket
 Maintain expedited normal changes at 2023 level (106)
 No fix-forward incidents/no rollbacks during PI
+
+<<<>>>
+I have been actively observing and learning from the workflows in other projects to ensure that I am prepared to handle any operational challenges in future phases of the project.  This includes gaining experience with deployments, database setups, and patching applications etc. 
