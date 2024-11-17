@@ -2,6 +2,178 @@
 
 ## testing
 
+```java
+public class Pain001MappingTest {
+
+     private static final String cu10 = "THISE0511202492_Auth_CU10.json";
+     private static final String cu11 = "THISE05118202402_Auth_CU11.json";
+     private static final String cu13 = "THISE02508202406_Auth_CU13.json";
+     private static final String cu27 = "THISE14119200007_Auth_CU27.json";
+
+     @Autowired
+     private PaymentMappingServiceImpl paymentMappingService;
+
+     @Mock
+     protected StepExecution stepExecution;
+
+     @Mock
+     protected JobExecution jobExecution;
+
+     private ExecutionContext stepContext;
+     private ExecutionContext jobContext;
+     private PwsFileUpload fileUpload = createMockFileUpload();
+     private Pain001InboundProcessingResult result;
+
+     private ObjectMapper objectMapper;
+
+     @BeforeEach
+     void setUp() {
+         objectMapper = new ObjectMapper();
+         // ToDo: more configuration
+         objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+         objectMapper.registerModule(new JavaTimeModule());
+
+         // Setup Context
+         setUpExecutionContexts();
+
+         paymentMappingService.beforeStep(stepExecution);
+     }
+
+     @Test
+     void testCu10MappingToBo() throws Exception {
+         ClassPathResource jsonResource = new ClassPathResource("/dmpAuth/" + cu10);
+         String jsonContent = Files.readString(Path.of(jsonResource.getURI()));
+
+         ObjectMapper objectMapper = new ObjectMapper();
+         Pain001 pain001 = objectMapper.readValue(jsonContent, Pain001.class);
+
+         GroupHeaderDTO groupHeaderDTO = pain001.getBusinessDocument()
+                 .getCustomerCreditTransferInitiation()
+                 .getGroupHeader();
+
+         PaymentInformationDTO paymentDTO = pain001.getBusinessDocument()
+                 .getCustomerCreditTransferInitiation()
+                 .getPaymentInformation()
+                 .get(0);
+
+         // When
+         PaymentInformation result = paymentMappingService.pain001PaymentToBo(groupHeaderDTO, paymentDTO);
+
+         // Then
+         assertNotNull(result);
+
+         // ToDo
+
+     }
+
+     @Test
+     void testCu11MappingToBo() throws Exception {
+         ClassPathResource jsonResource = new ClassPathResource("/dmpAuth/" + cu11);
+         String jsonContent = Files.readString(Path.of(jsonResource.getURI()));
+
+         ObjectMapper objectMapper = new ObjectMapper();
+         Pain001 pain001 = objectMapper.readValue(jsonContent, Pain001.class);
+
+         GroupHeaderDTO groupHeaderDTO = pain001.getBusinessDocument()
+                 .getCustomerCreditTransferInitiation()
+                 .getGroupHeader();
+
+         PaymentInformationDTO paymentDTO = pain001.getBusinessDocument()
+                 .getCustomerCreditTransferInitiation()
+                 .getPaymentInformation()
+                 .get(0);
+
+         // When
+         PaymentInformation result = paymentMappingService.pain001PaymentToBo(groupHeaderDTO, paymentDTO);
+
+         // Then
+         assertNotNull(result);
+
+         // ToDo
+     }
+
+
+
+     @Test
+     void testCu13MappingToBo() throws Exception {
+         ClassPathResource jsonResource = new ClassPathResource("/dmpAuth/" + cu13);
+         String jsonContent = Files.readString(Path.of(jsonResource.getURI()));
+
+         ObjectMapper objectMapper = new ObjectMapper();
+         Pain001 pain001 = objectMapper.readValue(jsonContent, Pain001.class);
+
+         GroupHeaderDTO groupHeaderDTO = pain001.getBusinessDocument()
+                 .getCustomerCreditTransferInitiation()
+                 .getGroupHeader();
+
+         PaymentInformationDTO paymentDTO = pain001.getBusinessDocument()
+                 .getCustomerCreditTransferInitiation()
+                 .getPaymentInformation()
+                 .get(0);
+
+         // When
+         PaymentInformation result = paymentMappingService.pain001PaymentToBo(groupHeaderDTO, paymentDTO);
+
+         // Then
+         assertNotNull(result);
+
+         // ToDo
+     }
+
+     @Test
+     void testCu27MappingToBo() throws Exception {
+         ClassPathResource jsonResource = new ClassPathResource("/dmpAuth/" + cu27);
+         String jsonContent = Files.readString(Path.of(jsonResource.getURI()));
+
+         ObjectMapper objectMapper = new ObjectMapper();
+         Pain001 pain001 = objectMapper.readValue(jsonContent, Pain001.class);
+
+         GroupHeaderDTO groupHeaderDTO = pain001.getBusinessDocument()
+                 .getCustomerCreditTransferInitiation()
+                 .getGroupHeader();
+
+         PaymentInformationDTO paymentDTO = pain001.getBusinessDocument()
+                 .getCustomerCreditTransferInitiation()
+                 .getPaymentInformation()
+                 .get(0);
+
+         // When
+         PaymentInformation result = paymentMappingService.pain001PaymentToBo(groupHeaderDTO, paymentDTO);
+
+         // Then
+         assertNotNull(result);
+
+         // ToDo
+     }
+
+
+     private PwsFileUpload createMockFileUpload() {
+         PwsFileUpload fileUpload = new PwsFileUpload();
+         fileUpload.setFileUploadId(1L);
+         fileUpload.setFileReferenceId("THISE05118202402");
+         fileUpload.setChargeOption("OUR");
+         fileUpload.setPayrollOption("STANDARD");
+         return fileUpload;
+     }
+
+     private void setUpExecutionContexts() {
+         stepContext = new ExecutionContext();
+         jobContext = new ExecutionContext();
+         result = new Pain001InboundProcessingResult();
+         jobContext.put(ContextKey.bankEntity, UOBT);
+         jobContext.put(ContextKey.fileUpload, fileUpload);
+         jobContext.put(ContextKey.userId, 123L);
+         jobContext.put(ContextKey.companyId, 456L);
+         jobContext.put(ContextKey.result, result);
+
+         lenient().when(stepExecution.getExecutionContext()).thenReturn(stepContext);
+         lenient().when(stepExecution.getJobExecution()).thenReturn(jobExecution);
+         lenient().when(jobExecution.getExecutionContext()).thenReturn(jobContext);
+     }
+
+ }
+```
+
 @SpringBootTest
 @ActiveProfiles("test")
 class Pain001MappingServiceIntegrationTest {
