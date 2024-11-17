@@ -7,6 +7,22 @@
 @EnableBatchProcessing
 public class E2ETestConfig {
 
+@Bean
+    public RetryTemplate retryTemplate(AppConfig appConfig) {
+        RetryTemplate retryTemplate = new RetryTemplate();
+        SimpleRetryPolicy retryPolicy = new SimpleRetryPolicy();
+        retryPolicy.setMaxAttempts(appConfig.getRetry().getMaxAttempts());
+        retryTemplate.setRetryPolicy(retryPolicy);
+        
+        ExponentialBackOffPolicy backOffPolicy = new ExponentialBackOffPolicy();
+        backOffPolicy.setInitialInterval(appConfig.getRetry().getBackoff().getInitialInterval());
+        backOffPolicy.setMultiplier(appConfig.getRetry().getBackoff().getMultiplier());
+        backOffPolicy.setMaxInterval(appConfig.getRetry().getBackoff().getMaxInterval());
+        retryTemplate.setBackOffPolicy(backOffPolicy);
+        
+        return retryTemplate;
+    }
+
     @Bean
     @Primary
     public DataSource h2DataSource() {
@@ -33,21 +49,44 @@ public class E2ETestConfig {
         return new SqlSessionTemplate(sqlSessionFactory);
     }
 
-    @Bean
-    public RetryTemplate retryTemplate(AppConfig appConfig) {
-        RetryTemplate retryTemplate = new RetryTemplate();
-        SimpleRetryPolicy retryPolicy = new SimpleRetryPolicy();
-        retryPolicy.setMaxAttempts(appConfig.getRetry().getMaxAttempts());
-        retryTemplate.setRetryPolicy(retryPolicy);
-        
-        ExponentialBackOffPolicy backOffPolicy = new ExponentialBackOffPolicy();
-        backOffPolicy.setInitialInterval(appConfig.getRetry().getBackoff().getInitialInterval());
-        backOffPolicy.setMultiplier(appConfig.getRetry().getBackoff().getMultiplier());
-        backOffPolicy.setMaxInterval(appConfig.getRetry().getBackoff().getMaxInterval());
-        retryTemplate.setBackOffPolicy(backOffPolicy);
-        
-        return retryTemplate;
+@Bean
+    public JobRepository jobRepository(DataSource dataSource, 
+                                     PlatformTransactionManager transactionManager) throws Exception {
+        JobRepositoryFactoryBean factory = new JobRepositoryFactoryBean();
+        factory.setDataSource(dataSource);
+        factory.setTransactionManager(transactionManager);
+        factory.setIsolationLevelForCreate("ISOLATION_READ_COMMITTED");
+        return factory.getObject();
     }
+
+Bean
+    public SimpleJobLauncher jobLauncher(JobRepository jobRepository) {
+        SimpleJobLauncher launcher = new SimpleJobLauncher();
+        launcher.setJobRepository(jobRepository);
+        return launcher;
+    }
+
+    @Bean
+    public ResourceSettings testResourceSettings() {
+        ResourceSettings settings = new ResourceSettings();
+        CreditorBank creditorBank = new CreditorBank();
+        creditorBank.setBankCode("024");
+        settings.setCreditorBank(creditorBank);
+        return settings;
+    }
+
+@Bean
+    public CompanySettings testCompanySettings() {
+        CompanySettings settings = new CompanySettings();
+        settings.setRejectOnErrorConfig(RejectOnErrorConfig.RejectNo);
+        settings.setBatchBookingIndicator(BatchBookingIndicator.ITEMIZED);
+        settings.setMaxCountOfBatchBooking(1000);
+        settings.setAutoFoward(true);
+        settings.setDerivedValueDate(LocalDateTime.now());
+        return settings;
+    }
+
+    
 }
 ```
 
