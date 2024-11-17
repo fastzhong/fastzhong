@@ -745,59 +745,93 @@ class PaymentBulkProcessingE2ETest {
 ## test application.yml
 
 ```yaml
+# Test configuration - application-test.yml
+server:
+  port: ${pbp_port:8015}
+  servlet:
+    context-path: /bulkprocessing
+
 spring:
-  main:
-    allow-bean-definition-overriding: true
+  config:
+    import: bootstrap.yml,classpath:trancommon.yml,classpath:tran-common-caches.yml,classpath:common-utils.yml
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
   datasource:
-    driver-class-name: org.h2.Driver
-    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1
-    username: sa
-    password: 
+    common:
+      type: com.zaxxer.hikari.HikariDataSource
+      driver-class-name: org.h2.Driver
+      hikari:
+        maximum-pool-size: 5
+        minimum-idle: 2
+        connection-timeout: 30000
+        idle-timeout: 600000
+        max-lifetime: 1800000
 
-bulk-processing:
-  country: TH
-  retry:
-    maxAttempts: 3
-    backoff:
-      initialInterval: 1000
-      multiplier: 2.0
-      maxInterval: 5000
-  batchInsertSize: 100
-  uploadSourceFormatNoCompany:
-    - BCU11P2
-    - BCU11P4
-    - BCU11P6
-  debulk:
-    debulkSmart:
-      bankCode: 024
-      bahtnetThreshold: 2000000
-      sourceFormat:
-        - BCU10P1
-        - BCU10P2
+    # Default datasource for Spring Batch
+    default:
+      jdbc-url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;MODE=Oracle
+      username: sa
+      password: 
+      driver-class-name: org.h2.Driver
 
-bulk-routes:
-  - route-name: CUSTOMER_SUBMITTED_TRANSFORMED
-    processing-type: INBOUND
-    source-type: FILE
-    bank-entity: UOBT
-    channel: IDB
-    request-type: BulkUpload
-    enabled: true
-    steps:
-      - pain001-processing
-      - payment-debulk
-      - payment-validation
-      - payment-enrichment
-      - payment-save
-    file-source:
-      directoryName: /test/inbound
-      antInclude: "*_Auth.json"
-      charset: utf-8
-      doneFileName: "${file:name:noext}.xml.done"
-      delay: 1000
-      maxMessagesPerPoll: 1
-    payment-save:
-      datasource: datasource-payment-save
+    # aes
+    aes:
+      jdbc-url: jdbc:h2:mem:aesdb;DB_CLOSE_DELAY=-1;MODE=Oracle
+      username: sa
+      password: 
+      driver-class-name: org.h2.Driver
+
+    # rds
+    rds:
+      jdbc-url: jdbc:h2:mem:rdsdb;DB_CLOSE_DELAY=-1;MODE=Oracle
+      username: sa
+      password: 
+      driver-class-name: org.h2.Driver
+
+    # pws
+    pws:
+      jdbc-url: jdbc:h2:mem:pwsdb;DB_CLOSE_DELAY=-1;MODE=Oracle
+      username: sa
+      password: 
+      driver-class-name: org.h2.Driver
+
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: none
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+        
+  sql:
+    init:
+      mode: always
+      schema-locations: 
+        - classpath:schema-h2.sql
+      data-locations:
+        - classpath:data-h2.sql
+
+  batch:
+    job:
+      enabled: false
+    jdbc:
+      initialize-schema: always
+
+mybatis:
+  mapper-locations:
+    - classpath:mappers/**/*.xml
+  configuration:
+    jdbc-type-for-null: VARCHAR
+    default-statement-timeout: 5
+
+logging:
+  level:
+    org.hibernate.SQL: DEBUG
+    org.hibernate.type.descriptor.sql.BasicBinder: TRACE
+    your.package.name.mapper: DEBUG  # Replace with your actual mapper package
 ```
 
 # Bulk Processing Builder 
