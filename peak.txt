@@ -1,0 +1,27 @@
+Enable Growth
+All projects delivered on time, on budget. No project notations caused by PRO delivery 
+Deliver strategic/regulatory project releases approved in ITC
+- UOBPay
+- THCMPT
+- UOBSend + UOBSend H2H/APIs
+- CBPR+
+- API App Refresh (Scalability, Resiliency)
+- GEB Migration/de-coupling
+- AMH Resiliency items
+- VN eTax
+- InvoiceNo
+Capabilities cost baselined. Cost reduction of 10% for new, reused and enhanced capabilities
+
+Engaged People & Enhanced Supply
+No misses in filling timesheets and attending CCM meetings
+HC as per SWP (SG & IH2)
+Improve Employee Engagement (>70%) & Retention
+Increase Employee Engagement participation beyond 50%
+Min 16 hours self-development/training recorded in SuccessFactors
+Min 80% training budget utilised and all non-mandatory training recorded in SuccessFactors
+Strengthen Mgmt Team & named backups for key resources in the pillar
+No missed PPM allocation against demand for SDM and PS T&M incl. IH2
+No negative feedback from key stakeholders (e.g. T&O, Business, GBT/GMET Domains, GIPS, GIS) 
+No missed housekeeping, monitoring alerts, VBM extracts for apps
+Additonal substantial contributions by creating re-usable assets in CEW which can alos be used by other apps, improvement in processes which help to cut down cost or increase quality, building a test framework that’s easy to maintain and can be used by other similar API based applications
+
