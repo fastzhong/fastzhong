@@ -3,11 +3,86 @@
 ## config
 
 ```yml
+spring:
+  profiles:
+    active: test
 
+  h2:
+    console:
+      enable: true
+      path: /h2-console
+
+  datasource:
+    common:
+      type: com.zaxxer.hikari.HikariDataSource
+      driver-class-name: org.h2.Driver
+      hikari:
+        maximum-pool-size: 5
+        minimum-idle: 2
+        connection-timeout: 30000
+        idle-timeout: 600000
+        max-lifetime: 1800000
+
+        # Default datasource for Spring Batch
+        default:
+          jdbc-url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;MODE=Oracle
+          username: sa
+          password:
+
+        # aes
+        aes:
+          jdbc-url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;MODE=Oracle
+          username: sa
+          password:
+
+        # rds
+        rds:
+          jdbc-url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;MODE=Oracle
+          username: sa
+          password:
+
+
+        # pws
+        pws:
+          jdbc-url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;MODE=Oracle
+          username: sa
+          password:
+
+bulk-routes:
+  - route-name: CUSTOMER_SUBMITTED_TRANSFORMED
+    processing-type: INBOUND
+    source-type: FILE
+    enabled: true
+    steps:
+      - auth-validation
+      - payment-debulk
+      - payment-validation
+      - payment-enrichment
+      - payment-save
+    file-source:
+      directoryName: target/test-inbound
+      antInclude: "*_Auth.json"
+      antExclude:
+      charset: utf-8
+      doneFileName: "${file:name:noext}.json.done"
+      delay: 1000
+      sortBy: file:modified
+      maxMessagesPerPoll: 1
+      noop: false
+      recursive: false
+      move: target/test-backup
+      moveFailed: target/test-error
+      readLock: rename
+      readLockTimeout: 10000
+      readLockInterval: 1000
+      readLockLoggingLevel: WARN
+
+bulk-processing:
+  country: TH
 ```
 
 ```java
-@TestConfiguration
+ @TestConfiguration
 @Profile("test")
 public class TestConfig {
 
@@ -20,25 +95,9 @@ public class TestConfig {
                 .addScript("classpath:/sql/schema-h2.sql")
                 .build();
     }
+    
 
-    @Bean
-    public DataSource aesDataSource() {
-        // ToDo
-        return null; 
-    }
-
-    @Bean
-    public DataSource rdsDataSource() {
-        // ToDo
-        return null;
-    }
-
-    @Bean
-    public DataSource pwsDataSource() {
-        // ToDo
-        return null;
-    }
-
+}
 ```
 
 ## Init
