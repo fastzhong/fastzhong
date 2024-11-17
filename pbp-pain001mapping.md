@@ -40,112 +40,172 @@ public class Pain001MappingTest {
      }
 
      @Test
-     void testCu10MappingToBo() throws Exception {
-         ClassPathResource jsonResource = new ClassPathResource("/dmpAuth/" + cu10);
-         String jsonContent = Files.readString(Path.of(jsonResource.getURI()));
+    @DisplayName("CU10 - Test Payroll Inter Account Funds Transfer mapping")
+    void testCu10MappingToBo() throws Exception {
+        // Given
+        Pain001 pain001 = loadJsonFile(cu10);
+        GroupHeaderDTO groupHeaderDTO = getGroupHeader(pain001);
+        PaymentInformationDTO paymentDTO = getPaymentInformation(pain001);
 
-         ObjectMapper objectMapper = new ObjectMapper();
-         Pain001 pain001 = objectMapper.readValue(jsonContent, Pain001.class);
+        // When
+        PaymentInformation result = paymentMappingService.pain001PaymentToBo(groupHeaderDTO, paymentDTO);
 
-         GroupHeaderDTO groupHeaderDTO = pain001.getBusinessDocument()
-                 .getCustomerCreditTransferInitiation()
-                 .getGroupHeader();
+        // Then
+        assertNotNull(result);
+        
+        // Verify PaymentInformation
+        assertEquals(DmpBulkStatus.fromValue("01"), result.getDmpBulkStatus());
+        
+        // Verify PwsTransactions
+        PwsTransactions pwsTxn = result.getPwsTransactions();
+        assertNotNull(pwsTxn);
+        assertEquals("Payroll-Inter-Account-Funds-Transfer", pwsTxn.getResourceId());
+        assertEquals("Bulk-File-Upload-Executive", pwsTxn.getFeatureId());
+        assertEquals("00471048801", pwsTxn.getAccountNumber());
+        assertEquals("ABC COMPANY LIMITED.", pwsTxn.getCompanyName());
+        assertEquals("SUBMITTED", pwsTxn.getCaptureStatus());
+        assertEquals("PENDING_VERIFICATION", pwsTxn.getCustomerTransactionStatus());
+        
+        // Verify CreditTransferTransactions
+        List<CreditTransferTransaction> creditTransfers = result.getCreditTransferTransactionList();
+        assertNotNull(creditTransfers);
+        assertEquals(2, creditTransfers.size());
+        
+        // Verify first transaction
+        CreditTransferTransaction firstTxn = creditTransfers.get(0);
+        assertEquals(1, firstTxn.getDmpLineNo());
+        assertEquals(DmpTransactionStatus.fromValue("01"), firstTxn.getDmpTransactionStatus());
+        assertEquals(new BigDecimal("200"), firstTxn.getPwsBulkTransactionInstructions().getTransactionAmount());
+        assertEquals("NaME MR.AeArs", firstTxn.getCreditor().getPwsParties().getPartyName());
 
-         PaymentInformationDTO paymentDTO = pain001.getBusinessDocument()
-                 .getCustomerCreditTransferInitiation()
-                 .getPaymentInformation()
-                 .get(0);
+        // Verify second transaction
+        CreditTransferTransaction secondTxn = creditTransfers.get(1);
+        assertEquals(2, secondTxn.getDmpLineNo());
+        assertEquals(new BigDecimal("450"), secondTxn.getPwsBulkTransactionInstructions().getTransactionAmount());
+        assertEquals("NsME MR.C4qCU", secondTxn.getCreditor().getPwsParties().getPartyName());
+    }
 
-         // When
-         PaymentInformation result = paymentMappingService.pain001PaymentToBo(groupHeaderDTO, paymentDTO);
+    @Test
+    @DisplayName("CU11 - Test Inter Account Funds Transfer with Tax Information")
+    void testCu11MappingToBo() throws Exception {
+        // Given
+        Pain001 pain001 = loadJsonFile(cu11);
+        GroupHeaderDTO groupHeaderDTO = getGroupHeader(pain001);
+        PaymentInformationDTO paymentDTO = getPaymentInformation(pain001);
 
-         // Then
-         assertNotNull(result);
+        // When
+        PaymentInformation result = paymentMappingService.pain001PaymentToBo(groupHeaderDTO, paymentDTO);
 
-         // ToDo
+        // Then
+        assertNotNull(result);
+        
+        // Verify basic transaction info
+        assertEquals("Inter-Account-Funds-Transfer", result.getPwsTransactions().getResourceId());
+        assertEquals("Bulk-File-Upload", result.getPwsTransactions().getFeatureId());
+        
+        // Verify transactions
+        List<CreditTransferTransaction> transactions = result.getCreditTransferTransactionList();
+        assertEquals(5, transactions.size());
+        
+        // Verify first transaction's tax information
+        CreditTransferTransaction firstTxn = transactions.get(0);
+        TaxInformation taxInfo = firstTxn.getTaxInformation();
+        assertNotNull(taxInfo);
+        assertEquals(3, taxInfo.getInstructionList().size());
+        
+        PwsTaxInstructions firstTaxInstruction = taxInfo.getInstructionList().get(0);
+        assertEquals("234987", firstTaxInstruction.getTaxPayerId());
+        assertEquals("53", firstTaxInstruction.getTaxType());
+        assertEquals("T1", firstTaxInstruction.getTypeOfIncome());
+        assertEquals(new BigDecimal("1.23"), firstTaxInstruction.getTaxRateInPercentage());
+        
+        // Verify email notification
+        assertEquals("EMAIL", firstTxn.getAdvice().getDeliveryMethod());
+        assertEquals("mgminterA@thaimail.com", firstTxn.getAdvice().getDeliveryAddress());
+    }
 
-     }
+    @Test
+    @DisplayName("CU13 - Test Payroll Inter Account Fund Transfer with Multiple Recipients")
+    void testCu13MappingToBo() throws Exception {
+        // Given
+        Pain001 pain001 = loadJsonFile(cu13);
+        GroupHeaderDTO groupHeaderDTO = getGroupHeader(pain001);
+        PaymentInformationDTO paymentDTO = getPaymentInformation(pain001);
 
-     @Test
-     void testCu11MappingToBo() throws Exception {
-         ClassPathResource jsonResource = new ClassPathResource("/dmpAuth/" + cu11);
-         String jsonContent = Files.readString(Path.of(jsonResource.getURI()));
+        // When
+        PaymentInformation result = paymentMappingService.pain001PaymentToBo(groupHeaderDTO, paymentDTO);
 
-         ObjectMapper objectMapper = new ObjectMapper();
-         Pain001 pain001 = objectMapper.readValue(jsonContent, Pain001.class);
+        // Then
+        assertNotNull(result);
+        
+        // Verify payment information
+        PwsTransactions pwsTxn = result.getPwsTransactions();
+        assertEquals("Payroll-Inter-Account-Fund-Transfer", pwsTxn.getResourceId());
+        assertEquals("Bulk-File-Upload-Executive", pwsTxn.getFeatureId());
+        assertEquals("0471859030", pwsTxn.getAccountNumber());
+        assertEquals("บริษัท987", pwsTxn.getCompanyName());
+        
+        // Verify transactions
+        List<CreditTransferTransaction> transactions = result.getCreditTransferTransactionList();
+        assertEquals(4, transactions.size());
+        
+        // Verify amounts
+        assertEquals(new BigDecimal("4500.5"), transactions.get(0).getPwsBulkTransactionInstructions().getTransactionAmount());
+        assertEquals(new BigDecimal("1000000"), transactions.get(1).getPwsBulkTransactionInstructions().getTransactionAmount());
+        assertEquals(new BigDecimal("0.12"), transactions.get(2).getPwsBulkTransactionInstructions().getTransactionAmount());
+        assertEquals(new BigDecimal("0.02"), transactions.get(3).getPwsBulkTransactionInstructions().getTransactionAmount());
+        
+        // Verify beneficiary names
+        assertEquals("ชื่อ1", transactions.get(0).getCreditor().getPwsParties().getPartyName());
+        assertEquals("ชื่อ2", transactions.get(1).getCreditor().getPwsParties().getPartyName());
+        assertEquals("EmployeeName3", transactions.get(2).getCreditor().getPwsParties().getPartyName());
+        assertEquals("EmployeeName4", transactions.get(3).getCreditor().getPwsParties().getPartyName());
+    }
 
-         GroupHeaderDTO groupHeaderDTO = pain001.getBusinessDocument()
-                 .getCustomerCreditTransferInitiation()
-                 .getGroupHeader();
+    @Test
+    @DisplayName("CU27 - Test Inter Account Funds Transfer with Complex Tax Structure")
+    void testCu27MappingToBo() throws Exception {
+        // Given
+        Pain001 pain001 = loadJsonFile(cu27);
+        GroupHeaderDTO groupHeaderDTO = getGroupHeader(pain001);
+        PaymentInformationDTO paymentDTO = getPaymentInformation(pain001);
 
-         PaymentInformationDTO paymentDTO = pain001.getBusinessDocument()
-                 .getCustomerCreditTransferInitiation()
-                 .getPaymentInformation()
-                 .get(0);
+        // When
+        PaymentInformation result = paymentMappingService.pain001PaymentToBo(groupHeaderDTO, paymentDTO);
 
-         // When
-         PaymentInformation result = paymentMappingService.pain001PaymentToBo(groupHeaderDTO, paymentDTO);
-
-         // Then
-         assertNotNull(result);
-
-         // ToDo
-     }
-
-
-
-     @Test
-     void testCu13MappingToBo() throws Exception {
-         ClassPathResource jsonResource = new ClassPathResource("/dmpAuth/" + cu13);
-         String jsonContent = Files.readString(Path.of(jsonResource.getURI()));
-
-         ObjectMapper objectMapper = new ObjectMapper();
-         Pain001 pain001 = objectMapper.readValue(jsonContent, Pain001.class);
-
-         GroupHeaderDTO groupHeaderDTO = pain001.getBusinessDocument()
-                 .getCustomerCreditTransferInitiation()
-                 .getGroupHeader();
-
-         PaymentInformationDTO paymentDTO = pain001.getBusinessDocument()
-                 .getCustomerCreditTransferInitiation()
-                 .getPaymentInformation()
-                 .get(0);
-
-         // When
-         PaymentInformation result = paymentMappingService.pain001PaymentToBo(groupHeaderDTO, paymentDTO);
-
-         // Then
-         assertNotNull(result);
-
-         // ToDo
-     }
-
-     @Test
-     void testCu27MappingToBo() throws Exception {
-         ClassPathResource jsonResource = new ClassPathResource("/dmpAuth/" + cu27);
-         String jsonContent = Files.readString(Path.of(jsonResource.getURI()));
-
-         ObjectMapper objectMapper = new ObjectMapper();
-         Pain001 pain001 = objectMapper.readValue(jsonContent, Pain001.class);
-
-         GroupHeaderDTO groupHeaderDTO = pain001.getBusinessDocument()
-                 .getCustomerCreditTransferInitiation()
-                 .getGroupHeader();
-
-         PaymentInformationDTO paymentDTO = pain001.getBusinessDocument()
-                 .getCustomerCreditTransferInitiation()
-                 .getPaymentInformation()
-                 .get(0);
-
-         // When
-         PaymentInformation result = paymentMappingService.pain001PaymentToBo(groupHeaderDTO, paymentDTO);
-
-         // Then
-         assertNotNull(result);
-
-         // ToDo
-     }
-
+        // Then
+        assertNotNull(result);
+        
+        // Verify basic transaction info
+        PwsTransactions pwsTxn = result.getPwsTransactions();
+        assertEquals("Inter-Account-Funds-Transfer", pwsTxn.getResourceId());
+        assertEquals("Bulk-File-Upload", pwsTxn.getFeatureId());
+        assertEquals("7013630716", pwsTxn.getAccountNumber());
+        
+        // Verify transactions
+        List<CreditTransferTransaction> transactions = result.getCreditTransferTransactionList();
+        assertEquals(2, transactions.size());
+        
+        // Verify first transaction tax details
+        CreditTransferTransaction firstTxn = transactions.get(0);
+        TaxInformation firstTaxInfo = firstTxn.getTaxInformation();
+        assertNotNull(firstTaxInfo);
+        assertEquals(5, firstTaxInfo.getInstructionList().size());
+        
+        // Verify specific tax instruction details
+        PwsTaxInstructions taxInstruction = firstTaxInfo.getInstructionList().get(0);
+        assertEquals("3100100477538", taxInstruction.getTaxPayerId());
+        assertEquals("1", taxInstruction.getTaxPaymentCondition());
+        assertEquals("03", taxInstruction.getTypeOfIncome());
+        assertEquals("53", taxInstruction.getTaxType());
+        assertEquals(new BigDecimal("2"), taxInstruction.getTaxRateInPercentage());
+        assertEquals(new BigDecimal("10.11"), taxInstruction.getTaxableAmount());
+        assertEquals(new BigDecimal("0.20"), taxInstruction.getTaxAmount());
+        
+        // Verify proxy information
+        assertEquals("M", transactions.get(0).getPwsBulkTransactionInstructions().getPaymentCodeId());
+        assertEquals("I", transactions.get(1).getPwsBulkTransactionInstructions().getPaymentCodeId());
+    }
 
      private PwsFileUpload createMockFileUpload() {
          PwsFileUpload fileUpload = new PwsFileUpload();
@@ -170,6 +230,25 @@ public class Pain001MappingTest {
          lenient().when(stepExecution.getJobExecution()).thenReturn(jobExecution);
          lenient().when(jobExecution.getExecutionContext()).thenReturn(jobContext);
      }
+
+     private Pain001 loadJsonFile(String filename) throws Exception {
+        ClassPathResource jsonResource = new ClassPathResource("/dmpAuth/" + filename);
+        String jsonContent = Files.readString(Path.of(jsonResource.getURI()));
+        return objectMapper.readValue(jsonContent, Pain001.class);
+    }
+
+    private GroupHeaderDTO getGroupHeader(Pain001 pain001) {
+        return pain001.getBusinessDocument()
+                .getCustomerCreditTransferInitiation()
+                .getGroupHeader();
+    }
+
+    private PaymentInformationDTO getPaymentInformation(Pain001 pain001) {
+        return pain001.getBusinessDocument()
+                .getCustomerCreditTransferInitiation()
+                .getPaymentInformation()
+                .get(0);
+    }
 
  }
 ```
