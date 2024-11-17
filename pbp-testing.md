@@ -1,3 +1,16 @@
+java.lang.NullPointerException
+	at java.base/java.util.concurrent.ConcurrentHashMap.putVal(ConcurrentHashMap.java:1011)
+	at java.base/java.util.concurrent.ConcurrentHashMap.put(ConcurrentHashMap.java:1006)
+	at java.base/java.util.Properties.put(Properties.java:1301)
+	at java.base/java.util.Properties.setProperty(Properties.java:229)
+	at com.uob.gwb.pbp.config.DataSourceConfig.createDataSource(DataSourceConfig.java:94)
+	at com.uob.gwb.pbp.config.DataSourceConfig.defaultDataSource(DataSourceConfig.java:37)
+	at com.uob.gwb.pbp.config.DataSourceConfigTest.testDefaultDataSource(DataSourceConfigTest.java:64)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:568)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+
+
 # E2E
 
 ## config
