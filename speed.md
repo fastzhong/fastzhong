@@ -66,7 +66,12 @@ D7 Is aware of team members' long term and short term career goals
 D8 Provides challenging tasks and stretched assignments for direct reports or project team members
 D9 Encourages team members to learn from one another's successes and failures.
 
+>>>
 In my role, I have made a conscious effort to foster growth and development within my team. I’ve taken the time to understand both the long-term and short-term career goals of team members, ensuring that their aspirations are aligned with opportunities within the projects we are working on. By doing so, I have been able to tailor my approach to supporting each individual's growth journey.
 
 I actively provide challenging tasks and stretch assignments to my team, giving them opportunities to learn and grow beyond their current skill sets. For example, I don’t just help them solve technical problems, but I also guide them through understanding the root causes of those problems and provide insights on how to avoid similar issues in the future. This approach empowers them to think critically and develop stronger problem-solving abilities.
+
+>>>
+Overall, I believe I have demonstrated strong ownership, leadership, and engineering excellence throughout the year. I proactively tackled challenges, worked closely with team members, and led efforts in managing risks and improving processes. I continue to take more responsibility to support the team's growth and ensure successful project outcomes.
+
 
