@@ -90,7 +90,273 @@ Bean
 }
 ```
 
-## sql 
+## Init
+
+```java
+@SpringBootTest
+@ActiveProfiles("test")
+@TestPropertySource(properties = {
+    "spring.main.allow-bean-definition-overriding=true",
+    "spring.batch.job.enabled=false"
+})
+@Import(Pain001IntegrationTestConfig.class)
+class Pain001ProcessingIntegrationTest {
+
+    private static final String TEST_INPUT_DIR = "test-input";
+    private static final String TEST_OUTPUT_DIR = "test-output";
+    private static final String TEST_ERROR_DIR = "test-error";
+    private static final String TEST_BACKUP_DIR = "test-backup";
+
+    @Autowired
+    private Pain001ServiceImpl pain001Service;
+
+    @Autowired
+    private CamelContext camelContext;
+
+    @Autowired
+    private ProducerTemplate producerTemplate;
+
+    @Autowired
+    private DataSource dataSource;
+
+    @MockBean
+    private PaymentIntegrationservice paymentIntegrationservice;
+
+    private Path testRootDir;
+    private Path inputDir;
+    private Path outputDir;
+    private Path errorDir;
+    private Path backupDir;
+
+    @BeforeAll
+    static void initAll() throws IOException {
+        // Create test directories structure
+        createTestDirectories();
+    }
+
+    @BeforeEach
+    void setUp() throws Exception {
+        // Setup directories
+        setupTestDirectories();
+        
+        // Initialize H2 database
+        initializeH2Database();
+        
+        // Setup test files
+        setupTestFiles();
+        
+        // Setup mock responses
+        setupMockResponses();
+
+        // Start Camel context
+        camelContext.start();
+    }
+
+    @AfterEach
+    void tearDown() throws Exception {
+        // Clean up test directories
+        cleanupTestDirectories();
+        
+        // Clean up database
+        cleanupDatabase();
+        
+        // Stop Camel context
+        camelContext.stop();
+    }
+
+    private static void createTestDirectories() throws IOException {
+        Path testRoot = Files.createTempDirectory("pain001-test");
+        Files.createDirectories(testRoot.resolve(TEST_INPUT_DIR));
+        Files.createDirectories(testRoot.resolve(TEST_OUTPUT_DIR));
+        Files.createDirectories(testRoot.resolve(TEST_ERROR_DIR));
+        Files.createDirectories(testRoot.resolve(TEST_BACKUP_DIR));
+    }
+
+    private void setupTestDirectories() throws IOException {
+        testRootDir = Files.createTempDirectory("pain001-test");
+        inputDir = testRootDir.resolve(TEST_INPUT_DIR);
+        outputDir = testRootDir.resolve(TEST_OUTPUT_DIR);
+        errorDir = testRootDir.resolve(TEST_ERROR_DIR);
+        backupDir = testRootDir.resolve(TEST_BACKUP_DIR);
+        
+        Files.createDirectories(inputDir);
+        Files.createDirectories(outputDir);
+        Files.createDirectories(errorDir);
+        Files.createDirectories(backupDir);
+    }
+
+    private void initializeH2Database() {
+        try (Connection conn = dataSource.getConnection()) {
+            // Execute schema scripts
+            executeSqlScript(conn, "schema/h2-schema.sql");
+            executeSqlScript(conn, "schema/h2-triggers.sql");
+            
+            // Execute initial data scripts
+            executeSqlScript(conn, "data/test-data.sql");
+            executeSqlScript(conn, "data/reference-data.sql");
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to initialize H2 database", e);
+        }
+    }
+
+    private void executeSqlScript(Connection conn, String scriptPath) {
+        try {
+            String script = new String(getClass().getResourceAsStream(scriptPath).readAllBytes());
+            ScriptUtils.executeSqlScript(conn, new ByteArrayResource(script.getBytes()));
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to read SQL script: " + scriptPath, e);
+        }
+    }
+
+    private void setupTestFiles() throws IOException {
+        // Copy pain001 test files to input directory
+        copyTestFile("/test-files/pain001-withholding-tax.json", 
+            inputDir.resolve("THISE14119200007_Auth.json"));
+        copyTestFile("/test-files/pain001-payroll.json", 
+            inputDir.resolve("THISE02508202406_Auth.json"));
+        
+        // Create .done files if needed
+        createDoneFile("THISE14119200007_Auth.json");
+        createDoneFile("THISE02508202406_Auth.json");
+    }
+
+    private void copyTestFile(String resourcePath, Path targetPath) throws IOException {
+        try (InputStream is = getClass().getResourceAsStream(resourcePath)) {
+            Files.copy(is, targetPath, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    private void createDoneFile(String fileName) throws IOException {
+        Path donePath = inputDir.resolve(fileName + ".done");
+        Files.writeString(donePath, "");
+    }
+
+    private void cleanupTestDirectories() {
+        try {
+            FileUtils.deleteDirectory(testRootDir.toFile());
+        } catch (IOException e) {
+            // Log warning but don't fail test
+            log.warn("Failed to cleanup test directories", e);
+        }
+    }
+
+    private void cleanupDatabase() {
+        try (Connection conn = dataSource.getConnection()) {
+            // Clean up tables in correct order
+            executeSqlScript(conn, "cleanup/cleanup-tables.sql");
+        } catch (SQLException e) {
+            log.warn("Failed to cleanup database", e);
+        }
+    }
+
+    @Test
+    void testEndToEndPayrollProcessing() throws Exception {
+        // Arrange
+        String fileName = "THISE02508202406_Auth.json";
+        Path sourceFile = inputDir.resolve(fileName);
+        assertTrue(Files.exists(sourceFile), "Test file should exist");
+
+        // Act - Trigger file processing
+        MockEndpoint mockEndpoint = camelContext.getEndpoint("mock:result", MockEndpoint.class);
+        mockEndpoint.expectedMessageCount(1);
+        mockEndpoint.expectedHeaderReceived("CamelFileName", fileName);
+
+        // Wait for processing
+        mockEndpoint.assertIsSatisfied(30, TimeUnit.SECONDS);
+
+        // Assert - Verify processing results
+        verifyPayrollProcessingResults(fileName);
+        verifyFileMovement(fileName);
+    }
+
+    @Test
+    void testEndToEndWithholdingTaxProcessing() throws Exception {
+        // Similar to payroll test but for withholding tax file
+        String fileName = "THISE14119200007_Auth.json";
+        // ... test implementation
+    }
+
+    private void verifyPayrollProcessingResults(String fileName) {
+        // Verify database state
+        verifyTransactionsSaved();
+        verifyBulkTransactionsSaved();
+        verifyChildTransactionsSaved();
+        
+        // Verify processing status
+        verifyProcessingStatus(fileName);
+        
+        // Verify transit message
+        verifyTransitMessage(fileName);
+    }
+
+    private void verifyFileMovement(String fileName) {
+        // Verify original file moved to backup
+        assertTrue(Files.exists(backupDir.resolve(fileName)));
+        assertFalse(Files.exists(inputDir.resolve(fileName)));
+        
+        // Verify done file handled
+        assertFalse(Files.exists(inputDir.resolve(fileName + ".done")));
+    }
+
+    @TestConfiguration
+    static class TestConfig {
+        @Bean
+        public ResourcePatternResolver resourcePatternResolver() {
+            return new PathMatchingResourcePatternResolver();
+        }
+    }
+}
+```
+
+And here are the necessary resources:
+
+1. SQL Scripts Structure:
+```
+src/test/resources/
+├── schema/
+│   ├── h2-schema.sql
+│   └── h2-triggers.sql
+├── data/
+│   ├── test-data.sql
+│   └── reference-data.sql
+├── cleanup/
+│   └── cleanup-tables.sql
+└── test-files/
+    ├── pain001-withholding-tax.json
+    └── pain001-payroll.json
+```
+
+2. Cleanup SQL:
+```sql
+-- cleanup-tables.sql
+DELETE FROM PWS_TAX_INSTRUCTIONS;
+DELETE FROM PWS_TRANSACTION_ADVICES;
+DELETE FROM PWS_PARTY_CONTACTS;
+DELETE FROM PWS_PARTIES;
+DELETE FROM PWS_BULK_TRANSACTION_INSTRUCTIONS;
+DELETE FROM PWS_BULK_TRANSACTIONS;
+DELETE FROM PWS_TRANSACTIONS;
+DELETE FROM PWS_TRANSIT_MESSAGE;
+DELETE FROM PWS_FILE_UPLOAD;
+```
+
+3. Test Data SQL:
+```sql
+-- test-data.sql
+INSERT INTO PWS_FILE_UPLOAD (
+    FILE_UPLOAD_ID, 
+    FILE_REFERENCE_ID, 
+    RESOURCE_ID, 
+    FEATURE_ID, 
+    STATUS
+) VALUES 
+(1, 'THISE14119200007', 'SMART', 'BFU', 'PROCESSING'),
+(2, 'THISE02508202406', 'SMART', 'BFU', 'PROCESSING');
+
+-- Add any other necessary reference data
+```
+
+### sql 
 
 ```sql
 -- Spring Batch Tables
