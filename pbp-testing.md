@@ -1,10 +1,5 @@
-java.lang.NullPointerException
-	at java.base/java.util.concurrent.ConcurrentHashMap.putVal(ConcurrentHashMap.java:1011)
-	at java.base/java.util.concurrent.ConcurrentHashMap.put(ConcurrentHashMap.java:1006)
-	at java.base/java.util.Properties.put(Properties.java:1301)
-	at java.base/java.util.Properties.setProperty(Properties.java:229)
-	at com.uob.gwb.pbp.config.DataSourceConfig.createDataSource(DataSourceConfig.java:96)
-	at com.uob.gwb.pbp.config.DataSourceConfig.defaultDataSource(DataSourceConfig.java:39)
+Caused by: org.springframework.beans.factory.support.BeanDefinitionOverrideException: Invalid bean definition with name 'defaultDataSource' defined in class path resource [com/uob/gwb/pbp/config/DataSourceConfig.class]: Cannot register bean definition [Root bean: class [null]; scope=; abstract=false; lazyInit=null; autowireMode=3; dependencyCheck=0; autowireCandidate=true; primary=true; factoryBeanName=dataSourceConfig; factoryMethodName=defaultDataSource; initMethodNames=null; destroyMethodNames=[(inferred)]; defined in class path resource [com/uob/gwb/pbp/config/DataSourceConfig.class]] for bean 'defaultDataSource' since there is already [Root bean: class [null]; scope=; abstract=false; lazyInit=null; autowireMode=3; dependencyCheck=0; autowireCandidate=true; primary=true; factoryBeanName=testConfig; factoryMethodName=defaultDataSource; initMethodNames=null; destroyMethodNames=[(inferred)]; defined in class path resource [com/uob/gwb/pbp/config/TestConfig.class]] bound.
+
 # E2E
 
 ## config
