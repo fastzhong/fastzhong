@@ -823,6 +823,232 @@ class BulkProcessingFlowBuilderTest {
 }
 ```
 
+## verifycation
+```java
+```java
+    // Mapping Verifications
+    private void verifyPayrollMapping(PaymentInformation payment) {
+        // Verify basic payment info
+        assertEquals(DmpBulkStatus.SUBMITTED, payment.getDmpBulkStatus());
+        
+        // Verify PwsTransactions mapping
+        PwsTransactions pwsTxn = payment.getPwsTransactions();
+        assertEquals("Payroll-Inter-Account-Fund-Transfer", pwsTxn.getResourceId());
+        assertEquals("Bulk-File-Upload-Executive", pwsTxn.getFeatureId());
+        assertEquals("0471859030", pwsTxn.getAccountNumber());
+        assertEquals("บริษัท987", pwsTxn.getCompanyName());
+        
+        // Verify PwsBulkTransactions mapping
+        PwsBulkTransactions bulkTxn = payment.getPwsBulkTransactions();
+        assertEquals(4, Integer.parseInt(bulkTxn.getNumberOfTransactions()));
+        assertEquals(new BigDecimal("1004500.64"), bulkTxn.getControlSum());
+        assertNotNull(bulkTxn.getTransferDate());
+
+        // Verify child transactions
+        List<CreditTransferTransaction> childTxns = payment.getCreditTransferTransactionList();
+        assertEquals(4, childTxns.size());
+        verifyPayrollChildTransactions(childTxns);
+    }
+
+    private void verifyPayrollChildTransactions(List<CreditTransferTransaction> transactions) {
+        // Verify first transaction
+        CreditTransferTransaction firstTxn = transactions.get(0);
+        assertEquals(2, firstTxn.getDmpLineNo());
+        assertEquals(DmpTransactionStatus.APPROVED, firstTxn.getDmpTransactionStatus());
+        
+        // Verify transaction instructions
+        PwsBulkTransactionInstructions firstInstr = firstTxn.getPwsBulkTransactionInstructions();
+        assertEquals(new BigDecimal("4500.50"), firstInstr.getTransactionAmount());
+        assertEquals("THB", firstInstr.getTransactionCurrency());
+        assertEquals("20", firstInstr.getCategoryPurpose());
+        
+        // Verify creditor details
+        assertEquals("ชื่อ1", firstTxn.getCreditor().getPwsParties().getPartyName());
+        assertEquals("0471693490", firstTxn.getCreditor().getPwsParties().getPartyAccountNumber());
+    }
+
+    private void verifyWithholdingTaxMapping(List<PaymentInformation> payments) {
+        assertEquals(1, payments.size());
+        PaymentInformation payment = payments.get(0);
+        
+        // Verify tax information
+        List<CreditTransferTransaction> transactions = payment.getCreditTransferTransactionList();
+        for (CreditTransferTransaction txn : transactions) {
+            verifyTaxInformation(txn.getTaxInformation());
+        }
+    }
+
+    private void verifyTaxInformation(TaxInformation taxInfo) {
+        assertNotNull(taxInfo);
+        assertNotNull(taxInfo.getInstructionList());
+        assertFalse(taxInfo.getInstructionList().isEmpty());
+        
+        // Verify first tax instruction
+        PwsTaxInstructions firstTax = taxInfo.getInstructionList().get(0);
+        assertEquals("53", firstTax.getTaxType());
+        assertNotNull(firstTax.getTaxRateInPercentage());
+        assertNotNull(firstTax.getTaxableAmount());
+        assertNotNull(firstTax.getTaxAmount());
+    }
+
+    // Debulking Verifications
+    private void verifyPayrollDebulking(List<PaymentInformation> debulkedPayments) {
+        assertTrue(debulkedPayments.size() > 1); // Should be split based on amount
+        
+        // Verify BAHTNET payments
+        List<PaymentInformation> bahtnetPayments = debulkedPayments.stream()
+            .filter(p -> Resource.BAHTNET.id.equals(p.getPwsTransactions().getResourceId()))
+            .collect(Collectors.toList());
+        
+        // Verify SMART payments
+        List<PaymentInformation> smartPayments = debulkedPayments.stream()
+            .filter(p -> Resource.SMART_SAME_DAY.id.equals(p.getPwsTransactions().getResourceId()))
+            .collect(Collectors.toList());
+        
+        verifyBahtnetPayments(bahtnetPayments);
+        verifySmartPayments(smartPayments);
+    }
+
+    private void verifyBahtnetPayments(List<PaymentInformation> bahtnetPayments) {
+        assertFalse(bahtnetPayments.isEmpty());
+        for (PaymentInformation payment : bahtnetPayments) {
+            assertTrue(payment.getCreditTransferTransactionList().stream()
+                .allMatch(txn -> txn.getPwsBulkTransactionInstructions().getTransactionAmount()
+                    .compareTo(new BigDecimal("2000000")) > 0));
+        }
+    }
+
+    // Validation Verifications
+    private void verifyPayrollValidation(List<PaymentInformation> validatedPayments) {
+        assertFalse(validatedPayments.isEmpty());
+        for (PaymentInformation payment : validatedPayments) {
+            assertTrue(payment.hasNoValidationError());
+            assertTrue(payment.isValid());
+            verifyValidatedChildTransactions(payment.getCreditTransferTransactionList());
+        }
+    }
+
+    private void verifyValidatedChildTransactions(List<CreditTransferTransaction> transactions) {
+        for (CreditTransferTransaction txn : transactions) {
+            assertTrue(txn.hasNoValidationError());
+            assertNotNull(txn.getPwsBulkTransactionInstructions().getTransactionAmount());
+            assertNotNull(txn.getCreditor().getPwsParties().getPartyAccountNumber());
+        }
+    }
+
+    // Enrichment Verifications
+    private void verifyPayrollEnrichment(List<PaymentInformation> enrichedPayments) {
+        for (PaymentInformation payment : enrichedPayments) {
+            // Verify enriched transaction data
+            PwsTransactions pwsTxn = payment.getPwsTransactions();
+            assertNotNull(pwsTxn.getTotalAmount());
+            assertNotNull(pwsTxn.getHighestAmount());
+            assertEquals(payment.getCreditTransferTransactionList().size(), pwsTxn.getTotalChild());
+            
+            // Verify enriched bulk transaction data
+            verifyEnrichedBulkTransaction(payment.getPwsBulkTransactions());
+            
+            // Verify enriched child transactions
+            verifyEnrichedChildTransactions(payment.getCreditTransferTransactionList());
+        }
+    }
+
+    // Database State Verifications
+    private void verifyPayrollDataSaved() {
+        // Verify main transactions
+        List<PwsTransactions> transactions = pwsSaveDao.findAllTransactions();
+        assertFalse(transactions.isEmpty());
+        
+        for (PwsTransactions txn : transactions) {
+            assertNotNull(txn.getTransactionId());
+            assertNotNull(txn.getBankReferenceId());
+            
+            // Verify bulk transactions
+            List<PwsBulkTransactions> bulkTxns = 
+                pwsSaveDao.findBulkTransactionsByTxnId(txn.getTransactionId());
+            assertFalse(bulkTxns.isEmpty());
+            
+            // Verify child transactions
+            verifyChildTransactionsInDb(txn.getTransactionId());
+            
+            // Verify parties and contacts
+            verifyPartiesAndContactsInDb(txn.getTransactionId());
+        }
+    }
+
+    private void verifyChildTransactionsInDb(long transactionId) {
+        List<PwsBulkTransactionInstructions> instructions = 
+            pwsSaveDao.findInstructionsByTxnId(transactionId);
+        assertFalse(instructions.isEmpty());
+        
+        for (PwsBulkTransactionInstructions instruction : instructions) {
+            assertNotNull(instruction.getChildBankReferenceId());
+            assertNotNull(instruction.getTransactionAmount());
+            assertEquals("THB", instruction.getTransactionCurrency());
+            assertEquals("PENDING_VERIFICATION", instruction.getCustomerTransactionStatus());
+        }
+    }
+
+    private void verifyPartiesAndContactsInDb(long transactionId) {
+        // Verify parties
+        List<PwsParties> parties = pwsSaveDao.findPartiesByTxnId(transactionId);
+        assertFalse(parties.isEmpty());
+        
+        for (PwsParties party : parties) {
+            assertNotNull(party.getPartyId());
+            assertNotNull(party.getPartyName());
+            assertNotNull(party.getPartyAccountNumber());
+            
+            // Verify contacts if any
+            List<PwsPartyContacts> contacts = 
+                pwsSaveDao.findPartyContactsByPartyId(party.getPartyId());
+            if (!contacts.isEmpty()) {
+                verifyPartyContacts(contacts);
+            }
+        }
+    }
+
+    private void verifyWithholdingTaxDataSaved() {
+        // Verify transactions similar to payroll
+        verifyPayrollDataSaved();
+        
+        // Additionally verify tax-specific data
+        List<PwsTransactions> transactions = pwsSaveDao.findAllTransactions();
+        for (PwsTransactions txn : transactions) {
+            verifyTaxInstructionsInDb(txn.getTransactionId());
+        }
+    }
+
+    private void verifyTaxInstructionsInDb(long transactionId) {
+        List<PwsTaxInstructions> taxInstructions = 
+            pwsSaveDao.findTaxInstructionsByTxnId(transactionId);
+        assertFalse(taxInstructions.isEmpty());
+        
+        for (PwsTaxInstructions tax : taxInstructions) {
+            assertNotNull(tax.getTaxType());
+            assertNotNull(tax.getTaxRateInPercentage());
+            assertNotNull(tax.getTaxableAmount());
+            assertNotNull(tax.getTaxAmount());
+            assertNotNull(tax.getTypeOfIncome());
+        }
+    }
+
+    // Helper verification methods
+    private void verifyPartyContacts(List<PwsPartyContacts> contacts) {
+        for (PwsPartyContacts contact : contacts) {
+            assertNotNull(contact.getPartyId());
+            if (contact.getContactType().equals("EMAIL")) {
+                assertNotNull(contact.getDeliveryAddress());
+            } else {
+                // Verify address fields if present
+                if (contact.getAddress1() != null) {
+                    assertFalse(contact.getAddress1().isEmpty());
+                }
+            }
+        }
+    }
+```
+```
 
 # Service
 
@@ -1036,7 +1262,6 @@ class Pain001ServiceImplTest {
 
 ## processing
 
-```java
 ```java
 @ExtendWith(MockitoExtension.class)
 class Pain001ProcessServiceImplTest {
@@ -1351,6 +1576,123 @@ Key features:
 4. Coverage of all major scenarios
 
 Let me know if you want to see the remaining parts or additional scenarios!
+```
+
+```java
+@ExtendWith(MockitoExtension.class)
+class Pain001ProcessServiceImplTest {
+
+    @InjectMocks
+    private Pain001ProcessServiceImpl pain001ProcessService;
+
+    @Mock
+    private PaymentQueryService paymentQueryService;
+
+    @Mock
+    private AppConfig appConfig;
+
+    @Test
+    void testProcessPain001GroupHeader_RejectedFileStatus() {
+        // Arrange
+        Pain001 pain001 = new Pain001();
+        GroupHeaderDTO groupHeaderDTO = new GroupHeaderDTO();
+        groupHeaderDTO.setFilestatus("02"); // Set file status to REJECTED
+        pain001.setBusinessDocument(new BusinessDocument());
+        pain001.getBusinessDocument().setCustomerCreditTransferInitiation(new CustomerCreditTransferInitiation());
+        pain001.getBusinessDocument().getCustomerCreditTransferInitiation().setGroupHeader(groupHeaderDTO);
+
+        // Act
+        SourceProcessStatus result = pain001ProcessService.processPain001GroupHeader(pain001);
+
+        // Assert
+        assertThat(result.getStatus()).isEqualTo(SourceReject);
+        assertThat(result.getMessage()).isEqualTo("File rejected by DMP");
+    }
+
+    @Test
+    void testProcessPain001GroupHeader_ValidFile() {
+        // Arrange
+        Pain001 pain001 = new Pain001();
+        GroupHeaderDTO groupHeaderDTO = new GroupHeaderDTO();
+        groupHeaderDTO.setFilestatus("01"); // Set file status to VALID
+        groupHeaderDTO.setFilereference("12345");
+        pain001.setBusinessDocument(new BusinessDocument());
+        pain001.getBusinessDocument().setCustomerCreditTransferInitiation(new CustomerCreditTransferInitiation());
+        pain001.getBusinessDocument().getCustomerCreditTransferInitiation().setGroupHeader(groupHeaderDTO);
+
+        PwsFileUpload fileUpload = new PwsFileUpload();
+        fileUpload.setResourceId(1L);
+
+        Mockito.when(paymentQueryService.getFileUpload("12345")).thenReturn(fileUpload);
+
+        // Act
+        SourceProcessStatus result = pain001ProcessService.processPain001GroupHeader(pain001);
+
+        // Assert
+        assertThat(result.getStatus()).isEqualTo(SourceOK);
+        assertThat(result.getMessage()).isEqualTo("Pain001 group header processed OK");
+    }
+}
+
+@Test
+void testProcessPrePain001BoMapping_CompanyIdNotFound() {
+    // Arrange
+    Pain001 pain001 = new Pain001();
+    pain001.setBusinessDocument(new BusinessDocument());
+    pain001.getBusinessDocument().setCustomerCreditTransferInitiation(new CustomerCreditTransferInitiation());
+    pain001.getBusinessDocument().getCustomerCreditTransferInitiation().setPaymentInformation(Collections.emptyList());
+
+    Mockito.when(appConfig.getUploadSourceFormatNoCompany()).thenReturn(Collections.singletonList("JSON"));
+
+    // Act
+    SourceProcessStatus result = pain001ProcessService.processPrePain001BoMapping(pain001);
+
+    // Assert
+    assertThat(result.getStatus()).isEqualTo(SourceError);
+    assertThat(result.getMessage()).isEqualTo("Failed to find company id");
+}
+
+@Test
+void testProcessPain001BoMapping_RejectedPayments() {
+    // Arrange
+    Pain001 pain001 = new Pain001();
+    GroupHeaderDTO groupHeaderDTO = new GroupHeaderDTO();
+    pain001.setBusinessDocument(new BusinessDocument());
+    pain001.getBusinessDocument().setCustomerCreditTransferInitiation(new CustomerCreditTransferInitiation());
+    pain001.getBusinessDocument().getCustomerCreditTransferInitiation().setGroupHeader(groupHeaderDTO);
+
+    PaymentInformationDTO paymentDTO = new PaymentInformationDTO();
+    paymentDTO.setDebtor(new Debtor("DebtorName"));
+
+    pain001.getBusinessDocument().getCustomerCreditTransferInitiation().setPaymentInformation(Collections.singletonList(paymentDTO));
+
+    PaymentInformation paymentInfo = new PaymentInformation();
+    paymentInfo.setDmpRejected(true);
+
+    Mockito.when(paymentMappingService.pain001PaymentToBo(Mockito.any(), Mockito.any())).thenReturn(paymentInfo);
+
+    // Act
+    List<PaymentInformation> result = pain001ProcessService.processPain001BoMapping(pain001);
+
+    // Assert
+    assertThat(result).isEmpty();
+    Mockito.verify(paymentSaveService).createRejectedRecord(Mockito.any(PwsRejectedRecord.class));
+}
+
+@Test
+void testProcessPostPain001BoMapping_Success() {
+    // Arrange
+    Pain001 pain001 = new Pain001();
+    List<PaymentInformation> paymentInfos = Collections.emptyList();
+
+    // Act
+    SourceProcessStatus result = pain001ProcessService.processPostPain001BoMapping(pain001, paymentInfos);
+
+    // Assert
+    assertThat(result.getStatus()).isEqualTo(SourceOK);
+    assertThat(result.getMessage()).isEqualTo("PostPain001BoMapping processed OK");
+}
+
 ```
 
 ## mapping
@@ -1897,6 +2239,221 @@ class PaymentDebulkServiceTest {
 ```
 
 ## validation 
+
+### helper
+```java
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+
+import java.math.BigDecimal;
+import java.util.Collections;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+public class PaymentValidationHelperTest {
+
+    @InjectMocks
+    private PaymentValidationHelperImpl paymentValidationHelper;
+
+    @Mock
+    private StepAwareService stepAwareService;
+
+    @BeforeEach
+    void setUp() {
+        MockitoAnnotations.openMocks(this);
+    }
+
+    @Test
+    void testValidateSourceAndFeature_Valid() {
+        // Mock StepAwareService methods
+        when(paymentValidationHelper.getResourceId()).thenReturn("PRODUCT_A");
+        when(paymentValidationHelper.getFeatureId()).thenReturn("FEATURE_X");
+
+        // Act
+        PaymentValidationResult result = paymentValidationHelper.validateSourceAndFeature("PRODUCT_A", "FEATURE_X");
+
+        // Assert
+        assertNull(result); // Expected to be valid (no error)
+    }
+
+    @Test
+    void testValidateSourceAndFeature_Invalid() {
+        // Mock StepAwareService methods
+        when(paymentValidationHelper.getResourceId()).thenReturn("PRODUCT_B");
+        when(paymentValidationHelper.getFeatureId()).thenReturn("FEATURE_Y");
+
+        // Act
+        PaymentValidationResult result = paymentValidationHelper.validateSourceAndFeature("PRODUCT_A", "FEATURE_X");
+
+        // Assert
+        assertNotNull(result);
+        assertEquals(ErrorCode.CEW_0001, result.getErrorCode());
+        assertEquals(ErrorCode.CEW_0001_MESSAGE, result.getErrorMessage());
+    }
+
+    @Test
+    void testValidateAccountNRA_Valid() {
+        AccountResource accountResource = new AccountResource();
+        accountResource.setIsNRA("NO");
+        when(paymentValidationHelper.getAccountResource("12345")).thenReturn(accountResource);
+
+        PaymentValidationResult result = paymentValidationHelper.validateAccountNRA("12345");
+
+        assertNull(result); // Expected to be valid
+    }
+
+    @Test
+    void testValidateAccountNRA_Invalid() {
+        AccountResource accountResource = new AccountResource();
+        accountResource.setIsNRA("YES");
+        when(paymentValidationHelper.getAccountResource("12345")).thenReturn(accountResource);
+
+        PaymentValidationResult result = paymentValidationHelper.validateAccountNRA("12345");
+
+        assertNotNull(result);
+        assertEquals(ErrorCode.CEW_0003, result.getErrorCode());
+        assertEquals(ErrorCode.CEW_0003_MESSAGE, result.getErrorMessage());
+    }
+
+    @Test
+    void testValidateBatchBookingItemized_Valid() {
+        PaymentInformation paymentInformation = new PaymentInformation();
+        paymentInformation.setCreditTransferTransactionList(Collections.emptyList());
+
+        PaymentValidationResult result = paymentValidationHelper.validateBatchBookingItemized(paymentInformation, 10);
+
+        assertNull(result); // No validation error
+    }
+
+    @Test
+    void testValidateBatchBookingItemized_Invalid() {
+        PaymentInformation paymentInformation = new PaymentInformation();
+        paymentInformation.setCreditTransferTransactionList(Collections.nCopies(11, new CreditTransferTransaction()));
+
+        PaymentValidationResult result = paymentValidationHelper.validateBatchBookingItemized(paymentInformation, 10);
+
+        assertNotNull(result);
+        assertEquals(ErrorCode.CEW_0004, result.getErrorCode());
+        assertEquals(ErrorCode.CEW_0004_MESSAGE, result.getErrorMessage());
+    }
+
+    @Test
+    void testValidateBatchBookingLumsum_Valid() {
+        PaymentInformation paymentInformation = new PaymentInformation();
+        CreditTransferTransaction transaction = new CreditTransferTransaction();
+        PwsBulkTransactionInstructions instructions = new PwsBulkTransactionInstructions();
+        instructions.setTransactionAmount(BigDecimal.valueOf(50));
+        transaction.setPwsBulkTransactionInstructions(instructions);
+        paymentInformation.setCreditTransferTransactionList(Collections.singletonList(transaction));
+
+        PaymentValidationResult result = paymentValidationHelper.validateBatchBookingLumsum(paymentInformation, 100);
+
+        assertNull(result); // No validation error
+    }
+
+    @Test
+    void testValidateBatchBookingLumsum_Invalid() {
+        PaymentInformation paymentInformation = new PaymentInformation();
+        CreditTransferTransaction transaction = new CreditTransferTransaction();
+        PwsBulkTransactionInstructions instructions = new PwsBulkTransactionInstructions();
+        instructions.setTransactionAmount(BigDecimal.valueOf(150));
+        transaction.setPwsBulkTransactionInstructions(instructions);
+        paymentInformation.setCreditTransferTransactionList(Collections.singletonList(transaction));
+
+        PaymentValidationResult result = paymentValidationHelper.validateBatchBookingLumsum(paymentInformation, 100);
+
+        assertNotNull(result);
+        assertEquals(ErrorCode.CEW_0005, result.getErrorCode());
+        assertEquals(ErrorCode.CEW_0005_MESSAGE, result.getErrorMessage());
+    }
+}
+
+```
+
+### suggestion
+
+```java
+private void handleError(PaymentInformation paymentInfo, String errMsg, Exception e) {
+    log.error(errMsg, e);
+    paymentInfo.addValidationError(ErrorCode.CEW_9000, ErrorCode.CEW_9000_MESSAGE);
+    updateProcessingStatus(Pain001InboundProcessingStatus.PostValidationEnrichmentWithException, errMsg);
+}
+
+paymentInfos.parallelStream().forEach(paymentInfo -> {
+    try {
+        validateEntitlement(paymentInfo);
+    } catch (Exception e) {
+        handleError(paymentInfo, "Entitlement validation failed", e);
+    }
+});
+
+private PaymentValidationResult validateBatchBooking(PaymentInformation paymentInfo, BatchBookingIndicator indicator) {
+    return paymentValidationHelper.validateBatchBooking(paymentInfo, indicator, getCompanySettings().getMaxCountOfBatchBooking());
+}
+```
+
+```java
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.Mockito;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+class PaymentValidationServiceImplTest {
+
+    @Mock
+    private TransactionUtils transactionUtils;
+
+    @Mock
+    private PaymentIntegrationservice paymentIntegrationservice;
+
+    @Mock
+    private PaymentValidationHelper paymentValidationHelper;
+
+    @Mock
+    private DecisionMatrixService<TransactionValidationRecord> txnValidationService;
+
+    @InjectMocks
+    private PaymentValidationServiceImpl paymentValidationService;
+
+    private List<PaymentInformation> paymentInfos;
+
+    @BeforeEach
+    void setUp() {
+        paymentInfos = new ArrayList<>();
+        PaymentInformation paymentInfo = new PaymentInformation();
+        paymentInfo.setPwsTransactions(new PwsTransactions());
+        paymentInfos.add(paymentInfo);
+    }
+
+    @Test
+    void testDoEntitlementValidation_Success() {
+        // Arrange
+        when(paymentIntegrationservice.getCompanyAndAccounts(anyString(), anyString(), anyString()))
+                .thenReturn(new CompanyAndAccountsForResourceFeaturesResp());
+
+        // Act
+        List<PaymentInformation> result = paymentValidationService.doEntitlementValidation(paymentInfos);
+
+        // Assert
+        assertNotNull(result);
+        assertEquals(1, result.size());
+        verify(paymentIntegrationser
+```
+
 
 
 ## save 
