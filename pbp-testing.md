@@ -1,5 +1,8 @@
 org.springframework.beans.factory.support.BeanDefinitionOverrideException: Invalid bean definition with name 'defaultDataSource' defined in class path resource [com/uob/gwb/pbp/config/DataSourceConfig.class]: Cannot register bean definition [Root bean: class [null]; scope=; abstract=false; lazyInit=null; autowireMode=3; dependencyCheck=0; autowireCandidate=true; primary=true; factoryBeanName=dataSourceConfig; factoryMethodName=defaultDataSource; initMethodNames=null; destroyMethodNames=[(inferred)]; defined in class path resource [com/uob/gwb/pbp/config/DataSourceConfig.class]] for bean 'defaultDataSource' since there is already [Root bean: class [null]; scope=; abstract=false; lazyInit=null; autowireMode=3; dependencyCheck=0; autowireCandidate=true; primary=true; factoryBeanName=testConfig; factoryMethodName=defaultDataSource; initMethodNames=null; destroyMethodNames=[(inferred)]; defined in class path resource [com/uob/gwb/pbp/componenttest/th/TestConfig.class]] bound.
 
+@ComponentScan(
+    excludeFilters = @ComponentScan.Filter(type = FilterType.ASSIGNABLE_TYPE, classes = DataSourceConfig.class)
+)
 
 # E2E
 
