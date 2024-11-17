@@ -134,240 +134,134 @@ public class TestConfig {
 }
 ```
 
-## Init
+## DataSource test
 
 ```java
-@SpringBootTest
-@ActiveProfiles("test")
-@TestPropertySource(properties = {
-    "spring.main.allow-bean-definition-overriding=true",
-    "spring.batch.job.enabled=false"
-})
-@Import(Pain001IntegrationTestConfig.class)
-class Pain001ProcessingIntegrationTest {
+@ExtendWith(MockitoExtension.class)
+class DataSourceConfigTest {
 
-    private static final String TEST_INPUT_DIR = "test-input";
-    private static final String TEST_OUTPUT_DIR = "test-output";
-    private static final String TEST_ERROR_DIR = "test-error";
-    private static final String TEST_BACKUP_DIR = "test-backup";
+    @Mock
+    private Environment env;
 
-    @Autowired
-    private Pain001ServiceImpl pain001Service;
-
-    @Autowired
-    private CamelContext camelContext;
-
-    @Autowired
-    private ProducerTemplate producerTemplate;
-
-    @Autowired
-    private DataSource dataSource;
-
-    @MockBean
-    private PaymentIntegrationservice paymentIntegrationservice;
-
-    private Path testRootDir;
-    private Path inputDir;
-    private Path outputDir;
-    private Path errorDir;
-    private Path backupDir;
-
-    @BeforeAll
-    static void initAll() throws IOException {
-        // Create test directories structure
-        createTestDirectories();
-    }
+    @InjectMocks
+    private DataSourceConfig dataSourceConfig;
 
     @BeforeEach
-    void setUp() throws Exception {
-        // Setup directories
-        setupTestDirectories();
-        
-        // Initialize H2 database
-        initializeH2Database();
-        
-        // Setup test files
-        setupTestFiles();
-        
-        // Setup mock responses
-        setupMockResponses();
-
-        // Start Camel context
-        camelContext.start();
-    }
-
-    @AfterEach
-    void tearDown() throws Exception {
-        // Clean up test directories
-        cleanupTestDirectories();
-        
-        // Clean up database
-        cleanupDatabase();
-        
-        // Stop Camel context
-        camelContext.stop();
-    }
-
-    private static void createTestDirectories() throws IOException {
-        Path testRoot = Files.createTempDirectory("pain001-test");
-        Files.createDirectories(testRoot.resolve(TEST_INPUT_DIR));
-        Files.createDirectories(testRoot.resolve(TEST_OUTPUT_DIR));
-        Files.createDirectories(testRoot.resolve(TEST_ERROR_DIR));
-        Files.createDirectories(testRoot.resolve(TEST_BACKUP_DIR));
-    }
-
-    private void setupTestDirectories() throws IOException {
-        testRootDir = Files.createTempDirectory("pain001-test");
-        inputDir = testRootDir.resolve(TEST_INPUT_DIR);
-        outputDir = testRootDir.resolve(TEST_OUTPUT_DIR);
-        errorDir = testRootDir.resolve(TEST_ERROR_DIR);
-        backupDir = testRootDir.resolve(TEST_BACKUP_DIR);
-        
-        Files.createDirectories(inputDir);
-        Files.createDirectories(outputDir);
-        Files.createDirectories(errorDir);
-        Files.createDirectories(backupDir);
-    }
-
-    private void initializeH2Database() {
-        try (Connection conn = dataSource.getConnection()) {
-            // Execute schema scripts
-            executeSqlScript(conn, "schema/h2-schema.sql");
-            executeSqlScript(conn, "schema/h2-triggers.sql");
-            
-            // Execute initial data scripts
-            executeSqlScript(conn, "data/test-data.sql");
-            executeSqlScript(conn, "data/reference-data.sql");
-        } catch (SQLException e) {
-            throw new RuntimeException("Failed to initialize H2 database", e);
-        }
-    }
-
-    private void executeSqlScript(Connection conn, String scriptPath) {
-        try {
-            String script = new String(getClass().getResourceAsStream(scriptPath).readAllBytes());
-            ScriptUtils.executeSqlScript(conn, new ByteArrayResource(script.getBytes()));
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to read SQL script: " + scriptPath, e);
-        }
-    }
-
-    private void setupTestFiles() throws IOException {
-        // Copy pain001 test files to input directory
-        copyTestFile("/test-files/pain001-withholding-tax.json", 
-            inputDir.resolve("THISE14119200007_Auth.json"));
-        copyTestFile("/test-files/pain001-payroll.json", 
-            inputDir.resolve("THISE02508202406_Auth.json"));
-        
-        // Create .done files if needed
-        createDoneFile("THISE14119200007_Auth.json");
-        createDoneFile("THISE02508202406_Auth.json");
-    }
-
-    private void copyTestFile(String resourcePath, Path targetPath) throws IOException {
-        try (InputStream is = getClass().getResourceAsStream(resourcePath)) {
-            Files.copy(is, targetPath, StandardCopyOption.REPLACE_EXISTING);
-        }
-    }
-
-    private void createDoneFile(String fileName) throws IOException {
-        Path donePath = inputDir.resolve(fileName + ".done");
-        Files.writeString(donePath, "");
-    }
-
-    private void cleanupTestDirectories() {
-        try {
-            FileUtils.deleteDirectory(testRootDir.toFile());
-        } catch (IOException e) {
-            // Log warning but don't fail test
-            log.warn("Failed to cleanup test directories", e);
-        }
-    }
-
-    private void cleanupDatabase() {
-        try (Connection conn = dataSource.getConnection()) {
-            // Clean up tables in correct order
-            executeSqlScript(conn, "cleanup/cleanup-tables.sql");
-        } catch (SQLException e) {
-            log.warn("Failed to cleanup database", e);
-        }
+    void setUp() {
+        // Mock common properties
+        when(env.getProperty("spring.datasource.common.driver-class-name")).thenReturn("org.h2.Driver");
+        when(env.getProperty("spring.datasource.common.hikari.maximum-pool-size", Integer.class)).thenReturn(5);
+        when(env.getProperty("spring.datasource.common.hikari.minimum-idle", Integer.class)).thenReturn(2);
+        when(env.getProperty("spring.datasource.common.hikari.idle-timeout", Long.class)).thenReturn(600000L);
+        when(env.getProperty("spring.datasource.common.hikari.connection-timeout", Long.class)).thenReturn(30000L);
+        when(env.getProperty("spring.datasource.common.hikari.max-lifetime", Long.class)).thenReturn(1800000L);
+        when(env.getProperty("spring.datasource.common.vault.enabled")).thenReturn("false");
     }
 
     @Test
-    void testEndToEndPayrollProcessing() throws Exception {
-        // Arrange
-        String fileName = "THISE02508202406_Auth.json";
-        Path sourceFile = inputDir.resolve(fileName);
-        assertTrue(Files.exists(sourceFile), "Test file should exist");
+    @DisplayName("Should create default datasource correctly")
+    void testDefaultDataSource() {
+        // Given
+        mockDatasourceProperties("spring.datasource.default", "jdbc:h2:mem:testdb", "test_user", "test_pass");
 
-        // Act - Trigger file processing
-        MockEndpoint mockEndpoint = camelContext.getEndpoint("mock:result", MockEndpoint.class);
-        mockEndpoint.expectedMessageCount(1);
-        mockEndpoint.expectedHeaderReceived("CamelFileName", fileName);
+        // When
+        HikariDataSource dataSource = (HikariDataSource) dataSourceConfig.defaultDataSource();
 
-        // Wait for processing
-        mockEndpoint.assertIsSatisfied(30, TimeUnit.SECONDS);
-
-        // Assert - Verify processing results
-        verifyPayrollProcessingResults(fileName);
-        verifyFileMovement(fileName);
+        // Then
+        verifyDataSourceProperties(dataSource, "spring.datasource.default");
     }
 
     @Test
-    void testEndToEndWithholdingTaxProcessing() throws Exception {
-        // Similar to payroll test but for withholding tax file
-        String fileName = "THISE14119200007_Auth.json";
-        // ... test implementation
+    @DisplayName("Should create AES datasource correctly")
+    void testAesDataSource() {
+        // Given
+        mockDatasourceProperties("spring.datasource.aes", "jdbc:h2:mem:aesdb", "aes_user", "aes_pass");
+
+        // When
+        HikariDataSource dataSource = (HikariDataSource) dataSourceConfig.aesDataSource();
+
+        // Then
+        verifyDataSourceProperties(dataSource, "spring.datasource.aes");
     }
 
-    private void verifyPayrollProcessingResults(String fileName) {
-        // Verify database state
-        verifyTransactionsSaved();
-        verifyBulkTransactionsSaved();
-        verifyChildTransactionsSaved();
-        
-        // Verify processing status
-        verifyProcessingStatus(fileName);
-        
-        // Verify transit message
-        verifyTransitMessage(fileName);
+    @Test
+    @DisplayName("Should create RDS datasource correctly")
+    void testRdsDataSource() {
+        // Given
+        mockDatasourceProperties("spring.datasource.rds", "jdbc:h2:mem:rdsdb", "rds_user", "rds_pass");
+
+        // When
+        HikariDataSource dataSource = (HikariDataSource) dataSourceConfig.rdsDataSource();
+
+        // Then
+        verifyDataSourceProperties(dataSource, "spring.datasource.rds");
     }
 
-    private void verifyFileMovement(String fileName) {
-        // Verify original file moved to backup
-        assertTrue(Files.exists(backupDir.resolve(fileName)));
-        assertFalse(Files.exists(inputDir.resolve(fileName)));
-        
-        // Verify done file handled
-        assertFalse(Files.exists(inputDir.resolve(fileName + ".done")));
+    @Test
+    @DisplayName("Should create PWS datasource correctly")
+    void testPwsDataSource() {
+        // Given
+        mockDatasourceProperties("spring.datasource.pws", "jdbc:h2:mem:pwsdb", "pws_user", "pws_pass");
+
+        // When
+        HikariDataSource dataSource = (HikariDataSource) dataSourceConfig.paymentSaveDataSource();
+
+        // Then
+        verifyDataSourceProperties(dataSource, "spring.datasource.pws");
     }
 
-    @TestConfiguration
-    static class TestConfig {
-        @Bean
-        public ResourcePatternResolver resourcePatternResolver() {
-            return new PathMatchingResourcePatternResolver();
-        }
+    @Test
+    @DisplayName("Should configure vault when enabled")
+    void testVaultConfiguration() {
+        // Given
+        mockDatasourceProperties("spring.datasource.default", "jdbc:h2:mem:testdb", "test_user", "test_pass");
+        when(env.getProperty("spring.datasource.common.vault.enabled")).thenReturn("true");
+        mockVaultProperties();
+
+        // When
+        HikariDataSource dataSource = (HikariDataSource) dataSourceConfig.defaultDataSource();
+
+        // Then
+        Properties props = dataSource.getDataSourceProperties();
+        assertNotNull(props);
+        assertEquals("/wallet/path", props.getProperty("oracle.net.wallet_location"));
+        assertEquals("/keystore/path", props.getProperty("javax.net.ssl.keyStore"));
+        assertEquals("keystorePass", props.getProperty("javax.net.ssl.keyStorePassword"));
+        assertEquals("JKS", props.getProperty("javax.net.ssl.keyStoreType"));
+        assertEquals("/truststore/path", props.getProperty("javax.net.ssl.trustStore"));
+        assertEquals("truststorePass", props.getProperty("javax.net.ssl.trustStorePassword"));
+    }
+
+    private void mockDatasourceProperties(String prefix, String jdbcUrl, String username, String password) {
+        when(env.getProperty(prefix + ".jdbc-url")).thenReturn(jdbcUrl);
+        when(env.getProperty(prefix + ".username")).thenReturn(username);
+        when(env.getProperty(prefix + ".password")).thenReturn(password);
+    }
+
+    private void mockVaultProperties() {
+        when(env.getProperty("spring.datasource.common.vault.wallet-location")).thenReturn("/wallet/path");
+        when(env.getProperty("spring.datasource.common.vault.key-store")).thenReturn("/keystore/path");
+        when(env.getProperty("spring.datasource.common.vault.key-store-password")).thenReturn("keystorePass");
+        when(env.getProperty("spring.datasource.common.vault.key-store-type")).thenReturn("JKS");
+        when(env.getProperty("spring.datasource.common.vault.trust-store")).thenReturn("/truststore/path");
+        when(env.getProperty("spring.datasource.common.vault.trust-store-password")).thenReturn("truststorePass");
+    }
+
+    private void verifyDataSourceProperties(HikariDataSource dataSource, String prefix) {
+        assertNotNull(dataSource);
+        assertEquals(env.getProperty(prefix + ".jdbc-url"), dataSource.getJdbcUrl());
+        assertEquals(env.getProperty(prefix + ".username"), dataSource.getUsername());
+        assertEquals(env.getProperty(prefix + ".password"), dataSource.getPassword());
+        assertEquals(env.getProperty("spring.datasource.common.driver-class-name"), dataSource.getDriverClassName());
+        
+        // Verify Hikari pool properties
+        assertEquals(5, dataSource.getMaximumPoolSize());
+        assertEquals(2, dataSource.getMinimumIdle());
+        assertEquals(600000L, dataSource.getIdleTimeout());
+        assertEquals(30000L, dataSource.getConnectionTimeout());
+        assertEquals(1800000L, dataSource.getMaxLifetime());
     }
 }
-```
-
-And here are the necessary resources:
-
-1. SQL Scripts Structure:
-```
-src/test/resources/
-├── schema/
-│   ├── h2-schema.sql
-│   └── h2-triggers.sql
-├── data/
-│   ├── test-data.sql
-│   └── reference-data.sql
-├── cleanup/
-│   └── cleanup-tables.sql
-└── test-files/
-    ├── pain001-withholding-tax.json
-    └── pain001-payroll.json
 ```
 
 2. Cleanup SQL:
@@ -649,6 +543,241 @@ CREATE INDEX IDX_BULK_TXN_STATUS ON PWS_BULK_TRANSACTIONS(STATUS);
 CREATE INDEX IDX_PARTY_BANK_REF ON PWS_PARTIES(BANK_REFERENCE_ID);
 ```
 ## test 
+
+
+```java
+@SpringBootTest
+@ActiveProfiles("test")
+@TestPropertySource(properties = {
+    "spring.main.allow-bean-definition-overriding=true",
+    "spring.batch.job.enabled=false"
+})
+@Import(Pain001IntegrationTestConfig.class)
+class Pain001ProcessingIntegrationTest {
+
+    private static final String TEST_INPUT_DIR = "test-input";
+    private static final String TEST_OUTPUT_DIR = "test-output";
+    private static final String TEST_ERROR_DIR = "test-error";
+    private static final String TEST_BACKUP_DIR = "test-backup";
+
+    @Autowired
+    private Pain001ServiceImpl pain001Service;
+
+    @Autowired
+    private CamelContext camelContext;
+
+    @Autowired
+    private ProducerTemplate producerTemplate;
+
+    @Autowired
+    private DataSource dataSource;
+
+    @MockBean
+    private PaymentIntegrationservice paymentIntegrationservice;
+
+    private Path testRootDir;
+    private Path inputDir;
+    private Path outputDir;
+    private Path errorDir;
+    private Path backupDir;
+
+    @BeforeAll
+    static void initAll() throws IOException {
+        // Create test directories structure
+        createTestDirectories();
+    }
+
+    @BeforeEach
+    void setUp() throws Exception {
+        // Setup directories
+        setupTestDirectories();
+        
+        // Initialize H2 database
+        initializeH2Database();
+        
+        // Setup test files
+        setupTestFiles();
+        
+        // Setup mock responses
+        setupMockResponses();
+
+        // Start Camel context
+        camelContext.start();
+    }
+
+    @AfterEach
+    void tearDown() throws Exception {
+        // Clean up test directories
+        cleanupTestDirectories();
+        
+        // Clean up database
+        cleanupDatabase();
+        
+        // Stop Camel context
+        camelContext.stop();
+    }
+
+    private static void createTestDirectories() throws IOException {
+        Path testRoot = Files.createTempDirectory("pain001-test");
+        Files.createDirectories(testRoot.resolve(TEST_INPUT_DIR));
+        Files.createDirectories(testRoot.resolve(TEST_OUTPUT_DIR));
+        Files.createDirectories(testRoot.resolve(TEST_ERROR_DIR));
+        Files.createDirectories(testRoot.resolve(TEST_BACKUP_DIR));
+    }
+
+    private void setupTestDirectories() throws IOException {
+        testRootDir = Files.createTempDirectory("pain001-test");
+        inputDir = testRootDir.resolve(TEST_INPUT_DIR);
+        outputDir = testRootDir.resolve(TEST_OUTPUT_DIR);
+        errorDir = testRootDir.resolve(TEST_ERROR_DIR);
+        backupDir = testRootDir.resolve(TEST_BACKUP_DIR);
+        
+        Files.createDirectories(inputDir);
+        Files.createDirectories(outputDir);
+        Files.createDirectories(errorDir);
+        Files.createDirectories(backupDir);
+    }
+
+    private void initializeH2Database() {
+        try (Connection conn = dataSource.getConnection()) {
+            // Execute schema scripts
+            executeSqlScript(conn, "schema/h2-schema.sql");
+            executeSqlScript(conn, "schema/h2-triggers.sql");
+            
+            // Execute initial data scripts
+            executeSqlScript(conn, "data/test-data.sql");
+            executeSqlScript(conn, "data/reference-data.sql");
+        } catch (SQLException e) {
+            throw new RuntimeException("Failed to initialize H2 database", e);
+        }
+    }
+
+    private void executeSqlScript(Connection conn, String scriptPath) {
+        try {
+            String script = new String(getClass().getResourceAsStream(scriptPath).readAllBytes());
+            ScriptUtils.executeSqlScript(conn, new ByteArrayResource(script.getBytes()));
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to read SQL script: " + scriptPath, e);
+        }
+    }
+
+    private void setupTestFiles() throws IOException {
+        // Copy pain001 test files to input directory
+        copyTestFile("/test-files/pain001-withholding-tax.json", 
+            inputDir.resolve("THISE14119200007_Auth.json"));
+        copyTestFile("/test-files/pain001-payroll.json", 
+            inputDir.resolve("THISE02508202406_Auth.json"));
+        
+        // Create .done files if needed
+        createDoneFile("THISE14119200007_Auth.json");
+        createDoneFile("THISE02508202406_Auth.json");
+    }
+
+    private void copyTestFile(String resourcePath, Path targetPath) throws IOException {
+        try (InputStream is = getClass().getResourceAsStream(resourcePath)) {
+            Files.copy(is, targetPath, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    private void createDoneFile(String fileName) throws IOException {
+        Path donePath = inputDir.resolve(fileName + ".done");
+        Files.writeString(donePath, "");
+    }
+
+    private void cleanupTestDirectories() {
+        try {
+            FileUtils.deleteDirectory(testRootDir.toFile());
+        } catch (IOException e) {
+            // Log warning but don't fail test
+            log.warn("Failed to cleanup test directories", e);
+        }
+    }
+
+    private void cleanupDatabase() {
+        try (Connection conn = dataSource.getConnection()) {
+            // Clean up tables in correct order
+            executeSqlScript(conn, "cleanup/cleanup-tables.sql");
+        } catch (SQLException e) {
+            log.warn("Failed to cleanup database", e);
+        }
+    }
+
+    @Test
+    void testEndToEndPayrollProcessing() throws Exception {
+        // Arrange
+        String fileName = "THISE02508202406_Auth.json";
+        Path sourceFile = inputDir.resolve(fileName);
+        assertTrue(Files.exists(sourceFile), "Test file should exist");
+
+        // Act - Trigger file processing
+        MockEndpoint mockEndpoint = camelContext.getEndpoint("mock:result", MockEndpoint.class);
+        mockEndpoint.expectedMessageCount(1);
+        mockEndpoint.expectedHeaderReceived("CamelFileName", fileName);
+
+        // Wait for processing
+        mockEndpoint.assertIsSatisfied(30, TimeUnit.SECONDS);
+
+        // Assert - Verify processing results
+        verifyPayrollProcessingResults(fileName);
+        verifyFileMovement(fileName);
+    }
+
+    @Test
+    void testEndToEndWithholdingTaxProcessing() throws Exception {
+        // Similar to payroll test but for withholding tax file
+        String fileName = "THISE14119200007_Auth.json";
+        // ... test implementation
+    }
+
+    private void verifyPayrollProcessingResults(String fileName) {
+        // Verify database state
+        verifyTransactionsSaved();
+        verifyBulkTransactionsSaved();
+        verifyChildTransactionsSaved();
+        
+        // Verify processing status
+        verifyProcessingStatus(fileName);
+        
+        // Verify transit message
+        verifyTransitMessage(fileName);
+    }
+
+    private void verifyFileMovement(String fileName) {
+        // Verify original file moved to backup
+        assertTrue(Files.exists(backupDir.resolve(fileName)));
+        assertFalse(Files.exists(inputDir.resolve(fileName)));
+        
+        // Verify done file handled
+        assertFalse(Files.exists(inputDir.resolve(fileName + ".done")));
+    }
+
+    @TestConfiguration
+    static class TestConfig {
+        @Bean
+        public ResourcePatternResolver resourcePatternResolver() {
+            return new PathMatchingResourcePatternResolver();
+        }
+    }
+}
+```
+
+And here are the necessary resources:
+
+1. SQL Scripts Structure:
+```
+src/test/resources/
+├── schema/
+│   ├── h2-schema.sql
+│   └── h2-triggers.sql
+├── data/
+│   ├── test-data.sql
+│   └── reference-data.sql
+├── cleanup/
+│   └── cleanup-tables.sql
+└── test-files/
+    ├── pain001-withholding-tax.json
+    └── pain001-payroll.json
+```
 
 ```java
 @SpringBootTest
