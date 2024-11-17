@@ -136,6 +136,14 @@ public class TestConfig {
 
 ## DataSource test
 
+java.lang.NullPointerException: Cannot invoke "java.lang.Integer.intValue()" because the return value of "org.springframework.core.env.Environment.getProperty(String, java.lang.Class, Object)" is null
+
+	at com.uob.gwb.pbp.config.DataSourceConfig.createDataSource(DataSourceConfig.java:63)
+	at com.uob.gwb.pbp.config.DataSourceConfig.defaultDataSource(DataSourceConfig.java:37)
+	at com.uob.gwb.pbp.config.DataSourceConfigTest.testDefaultDataSource(DataSourceConfigTest.java:54)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:568)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1511)
+
 ```java
 @ExtendWith(MockitoExtension.class)
 class DataSourceConfigTest {
