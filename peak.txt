@@ -25,3 +25,26 @@ No negative feedback from key stakeholders (e.g. T&O, Business, GBT/GMET Domains
 No missed housekeeping, monitoring alerts, VBM extracts for apps
 Additonal substantial contributions by creating re-usable assets in CEW which can alos be used by other apps, improvement in processes which help to cut down cost or increase quality, building a test framework that’s easy to maintain and can be used by other similar API based applications
 
+Engineering Excellence
+Convergence/single code base aligned with Engineering teams. Trunk-based branching strategy applied. No major issues in test phase or production due to code merging
+Minimum grade A across all Code Quality Index dimensions (Unit Testing Coverage, Maintainability, Security), for new and onboarded apps (legacy excluded). Minimum hard gate level 4
+Critical & High Defect ageing: refer metrics sheet
+Reduce defect density: refer metrics sheet
+Automate component testing for all APIs/Microservices - CEW, OPI, PDR. NPP-PIL, RTD
+99.5% env uptime for SIT and UAT, min 3 env per app, per country
+
+Managing Top Risks
+Closure of all project JIRAs, PenTest, Veracode items in 9 months of go-live
+All obsolescence and resiliency commitments met, no deferrals due to internal dependencies
+No missed deadlines for VRA, ISRA, IRF, GRC, Pentest fixes, AO
+No regulatory breach incidents due to app changes. Especially changes to auth matrix, data sync from GEB, and entitlement changes 
+Key vendor (FIS, Finastra, SWIFT, Suntec, Axway, HCL, Aleph, WIPRO) escalation matrix established. New vendor Endava onboarded
+
+Strengthening the Core
+aintain Sev 1 / Sev 2 incidents not exceeding 10
+Reduce YoY Sev 3 incidents by 20% (10,112)
+< 70 Open PBIs at end of 2024 (10% reduction from 2023)
+Maintain Problem TRO at 99% and 100% problems closed one quarter in advance
+Min. 85% Sev3 Incidents with Impact with assigned Problem Ticket
+Maintain expedited normal changes at 2023 level (106)
+No fix-forward incidents/no rollbacks during PI
