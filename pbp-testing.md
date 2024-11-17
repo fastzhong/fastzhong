@@ -82,21 +82,55 @@ bulk-processing:
 ```
 
 ```java
- @TestConfiguration
+@TestConfiguration
 @Profile("test")
 public class TestConfig {
 
-
-    @Bean
     @Primary
+    @Bean(name = "defaultDataSource")
     public DataSource defaultDataSource() {
-        return new EmbeddedDatabaseBuilder().setType(EmbeddedDatabaseType.H2)
-                .addScript("classpath:/sql/schema-h2.sql")
-                .addScript("classpath:/sql/schema-h2.sql")
-                .build();
+        return createTestDataSource();
     }
-    
 
+    @Bean(name = "aesDataSource")
+    public DataSource aesDataSource() {
+        return defaultDataSource();
+    }
+
+    @Bean(name = "rdsDataSource")
+    public DataSource rdsDataSource() {
+        return defaultDataSource();
+    }
+
+    @Bean(name = "pwsDataSource")
+    public DataSource pwsDataSource() {
+        return defaultDataSource();
+    }
+
+    private DataSource createTestDataSource() {
+        return new EmbeddedDatabaseBuilder()
+            .setType(EmbeddedDatabaseType.H2)
+            .setName("testdb")
+            .addScript("classpath:/sql/schema-h2.sql")
+            .addScript("classpath:/sql/data-h2.sql")
+            .build();
+    }
+
+    @PostConstruct
+    public void initializeTestDirectories() {
+        Arrays.asList(
+            "target/test-inbound",
+            "target/test-backup",
+            "target/test-error"
+        ).forEach(dir -> new File(dir).mkdirs());
+    }
+
+    @Primary
+    @Bean
+    public PlatformTransactionManager transactionManager(
+            @Qualifier("defaultDataSource") DataSource dataSource) {
+        return new DataSourceTransactionManager(dataSource);
+    }
 }
 ```
 
