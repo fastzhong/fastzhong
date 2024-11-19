@@ -15,5 +15,58 @@ THISE0511202492_Auth_CU10.xml.done
 
 
 ```yml
-
+bulk-processing:
+  bulk-routes:
+    - route-name: CUSTOMER_SUBMITTED_TRANSFORMED
+      processing-type: INBOUND
+      source-type: FILE
+      bank-entity: UOBT
+      channel: IDB
+      request-type: BulkUpload
+      enabled: true
+      steps:
+        - pain001-processing
+        - payment-debulk
+        - payment-validation
+        - payment-enrichment
+        - payment-save
+      file-source:
+        directoryName: c:/CEW/tmp/dmp/incoming
+        antInclude: "*_Auth_*.json"
+        antExclude:
+        charset: utf-8
+        doneFileName: "${file:name.noext}.xml.done"
+        delay: 6000
+        sortBy: file:modified
+        maxMessagesPerPoll: 1
+        noop: false
+        recursive: false
+        move: c:/CEW/tmp/dmp/backup
+        moveFailed: c:/CEW/tmp/dmp/error
+        readLock: rename
+        readLockTimeout: 60000
+        readLockInterval: 1000
+        readLockLoggingLevel: WARN
+    - route-name: CUSTOMER_AUTHORIZED
+      processing-type: OUTBOUND
+      destination-type: API
+      bank-entity: UOBT
+      channel: IDB
+      enabled: false
+      steps:
+        - payment-load
+        - pain001-transform
+      api-source:
+        http-uri: /path/to/api
+      file-destination:
+        directoryName: /path/to/outbound/processing
+        fileName: "${header.CamelFileName}"
+        tempFileName: "${file:name.noext}.tmp"
+        doneFileName: "${file:name.noext}.xml.done"
+        autoCreate: true
+        fileExist: Override
+        moveExisting:
+        eagerDeleteTargetFile: false
+        delete: true
+        chmod: rw-r--r--
 ```
