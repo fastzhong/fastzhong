@@ -1,10 +1,9 @@
 # flow builder
 
 ```txt
-2024-11-19 21:17:26.333 DEBUG [Camel (camel-1) thread #1 - file://c:/CEW/tmp/dmp/incoming] o.a.c.c.file.GenericFileConsumer - Took 3ms to poll: c:\CEW\tmp\dmp\incoming
-2024-11-19 21:17:32.342 DEBUG [Camel (camel-1) thread #1 - file://c:/CEW/tmp/dmp/incoming] o.a.c.c.file.GenericFileConsumer - Took 5ms to poll: c:\CEW\tmp\dmp\incoming
-
+file://c:/CEW/tmp/dmp/incoming?antInclude=*_Auth_*.json&charset=utf-8&delay=6000&doneFileName=${file:name.noext}.xml.done&maxMessagesPerPoll=1&move=c:/CEW/tmp/dmp/backup&moveFailed=c:/CEW/tmp/dmp/error&noop=false&readLock=rename&readLockTimeout=60000&sortBy=file:modified
 ```
+
 ```java
 public class BulkProcessingFlowBuilder extends RouteBuilder {
 
