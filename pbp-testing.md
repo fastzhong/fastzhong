@@ -1,6 +1,6 @@
 # E2E
 
-file:c:/CEW/tmp/dmp/incoming?antInclude=*_Auth.json&antExclude=&charset=utf-8&doneFileName=name:noext.xml.done&delay=6000&sortBy=file:modified&maxMessagesPerPoll=1&noop=false&recursive=false&move=c:/CEW/tmp/dmp/backup&moveFailed=c:/CEW/tmp/dmp/error&readLock=rename&readLockTimeout=60000&readLockCheckInterval=0&readLockLoggingLevel=WARN
+
 
 ## sql 
 
