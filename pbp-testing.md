@@ -9,6 +9,172 @@
 
 ## test 
 
+```java
+@Test
+    void configure_WithEnabledInboundRoute() throws Exception {
+        List<AppConfig.BulkRoute> routes = Collections.singletonList(bulkRoute);
+        lenient().when(appConfig.getBulkRoutes()).thenReturn(routes);
+        lenient().when(objectMapper.writeValueAsString(any())).thenReturn("{}");
+
+        flowBuilder.configure();
+
+        verify(appConfig).getBulkRoutes();
+    }
+
+    @Test
+    void configure_WithDisabledRoute() throws Exception {
+        // Arrange
+        bulkRoute.setEnabled(false);
+        List<AppConfig.BulkRoute> routes = Collections.singletonList(bulkRoute);
+        lenient().when(appConfig.getBulkRoutes()).thenReturn(routes);
+
+        // Act
+        flowBuilder.configure();
+
+        // Assert
+        verify(appConfig).getBulkRoutes();
+        // Verify no route was created
+    }
+
+    @Test
+    void buildInboundFromUri_FileSource() {
+        AppConfig.FileSource fileSource = bulkRoute.getFileSource();
+
+        String uri = flowBuilder.buildInboundFromUri(bulkRoute);
+
+        assertNotNull(uri);
+        assertTrue(uri.startsWith("file:"));
+        assertTrue(uri.contains(fileSource.getDirectoryName()));
+    }
+
+    @Test
+    void buildInboundFromUri_UnsupportedSource() {
+        bulkRoute.setSourceType(AppConfig.SourceDestinationType.JDBC);
+
+        assertThrows(BulkProcessingException.class, () ->
+                flowBuilder.buildInboundFromUri(bulkRoute)
+        );
+    }
+
+    @Test
+    void prepareInboundContext() {
+        lenient().when(message.getHeader(Exchange.FILE_PATH, String.class)).thenReturn("/test/path/file.json");
+        lenient().when(message.getHeader(Exchange.FILE_NAME, String.class)).thenReturn("file.json");
+
+        flowBuilder.prepareInboundContext(bulkRoute, exchange);
+
+        InboundContext context = exchange.getProperty(ContextKey.routeContext, InboundContext.class);
+        assertNotNull(context);
+        assertEquals("file.xml", context.getSourceName());
+        assertEquals("/test/path/file.xml", context.getSourcePath());
+    }
+
+    @Test
+    void createInboundJobParameters() throws Exception {
+        lenient().when(objectMapper.writeValueAsString(any())).thenReturn("{}");
+
+        JobParameters params = flowBuilder.createInboundJobParameters(bulkRoute, exchange);
+
+        // Assert
+        assertNotNull(params);
+        assertEquals("TH", params.getString(ContextKey.country));
+        assertEquals(bulkRoute.getRouteName(), params.getString(ContextKey.routeName));
+        assertEquals("/test/path/file.xml", params.getString(ContextKey.sourcePath));
+    }
+
+    @Test
+    void handleInboundJobExecution_Successful() {
+        // Act
+        flowBuilder.handleInboundJobExecution(bulkRoute, exchange, jobExecution);
+
+        // Assert
+        verify(message).setHeader("exitStatus", ExitStatus.COMPLETED);
+        assertEquals(routeContext.getInboundProcessingResult(), processingResult);
+    }
+
+    @Test
+    void createJob_WithValidSteps() {
+        Job job = flowBuilder.createJob(bulkRoute, exchange);
+
+        // Assert
+        assertNotNull(job);
+        assertEquals(bulkRoute.getRouteName() + "Job", job.getName());
+    }
+
+    @Test
+    void createJob_WithNoSteps() {
+        // Arrange
+        bulkRoute.setSteps(Collections.emptyList());
+
+        // Act & Assert
+        assertThrows(BulkProcessingException.class, () ->
+                flowBuilder.createJob(bulkRoute, exchange)
+        );
+    }
+
+    @Test
+    void testPain001ProcessingStep() throws Exception {
+        StepBuilder stepBuilder = new StepBuilder("pain001-processing", jobRepository);
+        List<PaymentInformation> testPayments = Collections.singletonList(new PaymentInformation());
+        lenient().when(pain001InboundService.processPain001(anyString())).thenReturn(testPayments);
+
+        MockedStatic<Files> filesMock = mockStatic(Files.class);
+        filesMock.lenient().when(() -> Files.readString(any(Path.class))).thenReturn("test content");
+
+        // Act
+        Step step = flowBuilder.createPain001ProcessingStep(stepBuilder, bulkRoute);
+
+        // Assert
+        assertNotNull(step);
+        assertEquals("pain001-processing", step.getName());
+        filesMock.close();
+    }
+
+    @Test
+    void testPaymentDebulkStep() {
+        // Arrange
+        StepBuilder stepBuilder = new StepBuilder("payment-debulk", jobRepository);
+        List<PaymentInformation> testPayments = Collections.singletonList(new PaymentInformation());
+        lenient().when(pain001InboundService.debulk(anyList())).thenReturn(testPayments);
+
+        // Act
+        Step step = flowBuilder.createPaymentDebulkStep(stepBuilder, bulkRoute);
+
+        // Assert
+        assertNotNull(step);
+        assertEquals("payment-debulk", step.getName());
+    }
+
+    @Test
+    void testPaymentValidationStep() {
+        // Arrange
+        StepBuilder stepBuilder = new StepBuilder("payment-validation", jobRepository);
+        List<PaymentInformation> testPayments = Collections.singletonList(new PaymentInformation());
+        lenient().when(pain001InboundService.validate(anyList())).thenReturn(testPayments);
+
+        // Act
+        Step step = flowBuilder.createPaymentValidationStep(stepBuilder, bulkRoute);
+
+        // Assert
+        assertNotNull(step);
+        assertEquals("payment-validation", step.getName());
+    }
+
+    @Test
+    void testPaymentEnrichmentStep() {
+        // Arrange
+        StepBuilder stepBuilder = new StepBuilder("payment-enrichment", jobRepository);
+        List<PaymentInformation> testPayments = Collections.singletonList(new PaymentInformation());
+        lenient().when(pain001InboundService.enrich(anyList())).thenReturn(testPayments);
+
+        // Act
+        Step step = flowBuilder.createPaymentEnrichmentStep(stepBuilder, bulkRoute);
+
+        // Assert
+        assertNotNull(step);
+        assertEquals("payment-enrichment", step.getName());
+    }
+```
 
 ```java
 @SpringBootTest
