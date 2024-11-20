@@ -1,120 +1,45 @@
-                    <argLin <dataFile>${project.build.directory}/jacoco.exec
-                            </dataFile>
-                            <outputDirectory>${project.reporting.outputDirectory}/jacoco
-                            </outputDirectory>
-                        </configuration>
-                    </execution>
-                    <execution>
-                        <id>check</id>
-                        <goals>
-                            <goal>check</goal>
-                        </goals>
-                        <configuration>
-                            <excludes>
-                                <exclude>**/cbp/data/mapper/*</exclude>
-                            </excludes>
-                            <rules>
-                                <rule>
-                                    <element>BUNDLE</element>
-                                    <limits>
-                                        <limit>
-                                            <counter>LINE</counter>
-                                            <value>COVEREDRATIO</value>
-                                            <minimum>0.0
-                                            </minimum> <!-- Adjust the code coverage percent as needed. Recommended entry to achieve 0.70 -->
-                                        </limit>
-                                    </limits>
-                                </rule>
-                            </rules>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
-            <plugin>
-                <groupId>com.diffplug.spotless</groupId>
-                <artifactId>spotless-maven-plugin</artifactId>
-                <version>${spotless.plugin.version}</version>
-                <configuration>
-                    <java>
-                        <eclipse>
-                            <version>${eclipse-java-format.version}</version>
-                            <file>${project.basedir}/eclipse-formatter.xml</file>
-                        </eclipse>
-                        <importOrder/>
-                        <removeUnusedImports/>
-                        <trimTrailingWhitespace/>
-                        <endWithNewline/>
-                        <indent> <!-- specify whether to use tabs or spaces for indentation -->
-                            <spaces>true</spaces> <!-- or <tabs>true</tabs> -->
-                            <spacesPerTab>4</spacesPerTab> <!-- optional, default is 4 -->
-                        </indent>
-                        <licenseHeader>
-                            <file>${project.basedir}/license-header</file>
-                        </licenseHeader>
-                    </java>
-                </configuration>
-                <executions>
-                    <execution>
-                        <phase>verify</phase>
-                        <goals>
-                            <goal>apply</goal>
-                        </goals>
-                    </execution>
-                </executions>
-            </plugin>
-        </plugins>
-    </build>
-    <distributionManagement>
-        <repository>
-            <id>central</id>
-            <name>Artifactory-releases</name>
-            <url>https://artifactoryp.sg.uobnet.com/artifactory/digibank-local2</url>
-        </repository>
-        <snapshotRepository>
-            <id>snapshots</id>
-            <name>Artifactory-snapshots</name>
-            <url>https://artifactoryp.sg.uobnet.com/artifactory/digibank-local2</url>
-        </snapshotRepository>
-    </distributionManagement>
-    <profiles>
-        <profile>
-            <id>BUILD_URL default value</id>
-            <activation>
-                <property>
-                    <name>!env.BUILD_URL</name>
-                </property>
-            </activation>
-            <properties>
-                <env.BUILD_URL>https://jenkinsp.sg.uobnet.com/jenkins/view/GBT_CNP_CEW</env.BUILD_URL>
-                <env.BUILD_NUMBER>1</env.BUILD_NUMBER>
-            </properties>
-        </profile>
+org.apache.camel.ResolveEndpointFailedException: Failed to resolve endpoint: https://172.29.229.126:18089/api/oauth/token?connectTimeout=30000&connectionClose=true&connectionRequestTimeout=30000&connectionTimeToLive=30000&connectionsPerRoute=30&maxTotalConnections=30&socketTimeout=30000&sort=asc&ssl=true&sslContextParameters=%23axwaysslContextParams&x509HostnameVerifier=%23axwayNoopHostnameVerifier due to: Cannot find a ResourceResolver in classpath supporting the scheme: C
+	at org.apache.camel.impl.engine.AbstractCamelContext.doGetEndpoint(AbstractCamelContext.java:839)
+	at org.apache.camel.impl.engine.DefaultCamelContextExtension.getEndpoint(DefaultCamelContextExtension.java:264)
+
+```xml
+
+<routes>
+    <route id="axwayResourcesFeatures">
+        <from uri="direct:axwayResourcesFeaturesUrl"/>
+        <log message="direct:axwayResourcesFeaturesUrl start" loggingLevel="INFO"/>
+        <setProperty name="request">
+            <simple>${body}</simple>
+        </setProperty>
+<!--        <to uri="bean:axwayResourcesFeaturesRequestProcessor"/>-->
+        <setHeader name="CamelHttpMethod">
+            <constant>POST</constant>
+        </setHeader>
+        <setProperty name="endPoint">
+            <simple>{{common-utils.axway.base-path}}</simple>
+        </setProperty>
+        <log message="endpoint:: ${exchangeProperty[endPoint]}" loggingLevel="INFO"/>
+        <setHeader name="CamelHttpUri">
+            <simple>
+                ${exchangeProperty[endPoint]}?connectTimeout={{common-utils.axway.connect.timeout}}&amp;connectionTimeToLive={{common-utils.axway.connect.time-to-live}}&amp;connectionClose={{common-utils.axway.connect.close}}&amp;socketTimeout={{common-utils.axway.socket.timeout}}&amp;sslContextParameters=#axwaysslContextParams&amp;ssl=true&amp;x509HostnameVerifier=#axwayNoopHostnameVerifier&amp;connectionRequestTimeout={{common-utils.axway.connect.request.timeout}}&amp;maxTotalConnections={{common-utils.axway.max.total.connections}}&amp;connectionsPerRoute={{common-utils.axway.connection.per.route}}&amp;sort={{common-utils.axway.sort.per.route}}
+            </simple>
+        </setHeader>
+        <setExchangePattern pattern="InOut"/>
+        <log message="Axway URI: ${header[CamelHttpUri]}" loggingLevel="info"/>
+
+        <recipientList stopOnException="true">
+            <header>CamelHttpUri</header>
+        </recipientList>
+        <to uri="bean:axwayResourcesFeaturesResponseProcessor"/>
+        <log message="direct:axwayResourcesFeaturesUrl end" loggingLevel="INFO"/>
+    </route>
+</routes>```
+ 
+                    
+                    
+                  
     </profiles>
 </project>
-```
-
-```shell
-[INFO] --------------------------------[ jar ]---------------------------------
-Downloading from virtual-maven: https://artifactoryp.sg.uobnet.com/artifactory/virtual-maven/com/apache/xmlrpc/isprint-xmlrpc/3.1.3.20190815/isprint-xmlrpc-3.1.3.2
-0190815.pom
-Downloading from central: https://repo.maven.apache.org/maven2/com/apache/xmlrpc/isprint-xmlrpc/3.1.3.20190815/isprint-xmlrpc-3.1.3.20190815.pom
-Downloading from virtual-maven: https://artifactoryp.sg.uobnet.com/artifactory/virtual-maven/org/apache/xmlrpc/xmlrpc/3.1.3-isprint-20190815/xmlrpc-3.1.3-isprint-2
-0190815.pom
-Downloading from central: https://repo.maven.apache.org/maven2/org/apache/xmlrpc/xmlrpc/3.1.3-isprint-20190815/xmlrpc-3.1.3-isprint-20190815.pom
-Downloading from virtual-maven: https://artifactoryp.sg.uobnet.com/artifactory/virtual-maven/commons-httpclient/commons-httpclient/3.1.0.1265/commons-httpclient-3.
-1.0.1265.pom
-Downloading from central: https://repo.maven.apache.org/maven2/commons-httpclient/commons-httpclient/3.1.0.1265/commons-httpclient-3.1.0.1265.pom
-[INFO] ------------------------------------------------------------------------
-[INFO] BUILD FAILURE
-[INFO] ------------------------------------------------------------------------
-[INFO] Total time:  12.791 s
-[INFO] Finished at: 2024-11-16T02:35:50+08:00
-[INFO] ------------------------------------------------------------------------
-[ERROR] Failed to execute goal on project payment-bulk-processing: Could not resolve dependencies for project com.uob.gwb.pws.pbp:payment-bulk-processing:jar:1.0-S
-NAPSHOT: Failed to collect dependencies at com.apache.xmlrpc:isprint-xmlrpc:jar:3.1.3.20190815: Failed to read artifact descriptor for com.apache.xmlrpc:isprint-xm
-lrpc:jar:3.1.3.20190815: The following artifacts could not be resolved: com.apache.xmlrpc:isprint-xmlrpc:pom:3.1.3.20190815 (absent): Could not transfer artifact c
-om.apache.xmlrpc:isprint-xmlrpc:pom:3.1.3.20190815 from/to central (https://repo.maven.apache.org/maven2): No such host is known (repo.maven.apache.org) -> [Help 1
-]
 ```
 
 # rbk
