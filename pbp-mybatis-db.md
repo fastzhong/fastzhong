@@ -133,6 +133,55 @@ spring.datasource.hikari.data-source-properties.defaultBatchValue=100
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.uob.gwb.pbp.dao.pws.PwsSaveDao">
+    <insert id="insertPwsFileUpload" parameterType="com.uob.gwb.pbp.po.PwsFileUpload"
+        statementType="PREPARED" useGeneratedKeys="true" keyProperty="fileUploadId"
+        keyColumn="file_upload_id">
+    INSERT INTO pws_file_upload (
+        file_reference_id,
+        transaction_id,
+        feature_id,
+        resource_id,
+        file_type_enum,
+        file_sub_type_enum,
+        upload_file_name,
+        upload_file_path,
+        file_size,
+        company_id,
+        account_id,
+        resource_category,
+        charge_option,
+        payroll_option,
+        file_upload_status,
+        status,
+        created_by,
+        created_date,
+        updated_by,
+        updated_date,
+        change_token
+    ) VALUES (
+        #{fileReferenceId},
+        #{transactionId},
+        #{featureId},
+        #{resourceId},
+        #{fileTypeEnum},
+        #{fileSubTypeEnum},
+        #{uploadFileName},
+        #{uploadFilePath},
+        #{fileSize},
+        #{companyId},
+        #{accountId},
+        #{resourceCategory},
+        #{chargeOption},
+        #{payrollOption},
+        #{fileUploadStatus},
+        #{status},
+        #{createdBy},
+        #{createdDate},
+        #{updatedBy},
+        #{updatedDate},
+        #{changeToken}
+    )
+</insert>
 
     <!-- Insert PwsTransactions -->
     <insert id="insertPwsTransactions" parameterType="com.uob.gwb.pbp.po.PwsTransactions"
@@ -194,55 +243,53 @@ spring.datasource.hikari.data-source-properties.defaultBatchValue=100
         ]]>
     </insert>
 
-    <!-- Insert PwsBulkTransactions -->
     <insert id="insertPwsBulkTransactions" parameterType="com.uob.gwb.pbp.po.PwsBulkTransactions"
-            statementType="PREPARED" useGeneratedKeys="true" keyProperty="bkTransactionId" keyColumn="bk_transaction_id">
-        <![CDATA[
-        INSERT INTO pws_bulk_transactions (
-            transaction_id,
-            file_upload_id,
-            recipients_reference,
-            recipients_description,
-            fate_file_name,
-            fate_file_path,
-            combine_debit,
-            status,
-            change_token,
-            error_detail,
-            final_fate_updated_date,
-            ack_file_path,
-            ack_updated_date,
-            transfer_date,
-            user_comments,
-            dmp_batch_number,
-            reject_code,
-            batch_booking,
-            charge_options,
-            payroll_options
-        ) VALUES (
-            #{transactionId},
-            #{fileUploadId},
-            #{recipientsReference},
-            #{recipientsDescription},
-            #{fateFileName},
-            #{fateFilePath},
-            #{combineDebit},
-            #{status},
-            #{changeToken},
-            #{errorDetail},
-            #{finalFateUpdatedDate},
-            #{ackFilePath},
-            #{ackUpdatedDate},
-            #{transferDate},
-            #{userComments},
-            #{dmpBatchNumber},
-            #{rejectCode},
-            #{batchBooking},
-            #{chargeOptions},
-            #{payrollOptions}
-        )
-        ]]>
-    </insert>
+        statementType="PREPARED" useGeneratedKeys="true" keyProperty="bkTransactionId"
+        keyColumn="bk_transaction_id">
+    INSERT INTO pws_bulk_transactions (
+        transaction_id,
+        file_upload_id,
+        recipients_reference,
+        recipients_description,
+        fate_file_name,
+        fate_file_path,
+        combine_debit,
+        status,
+        change_token,
+        error_detail,
+        final_fate_updated_date,
+        ack_file_path,
+        ack_updated_date,
+        transfer_date,
+        user_comments,
+        dmp_batch_number,
+        reject_code,
+        batch_booking,
+        charge_options,
+        payroll_options
+    ) VALUES (
+        #{transactionId},
+        #{fileUploadId},
+        #{recipientsReference},
+        #{recipientsDescription},
+        #{fateFileName},
+        #{fateFilePath},
+        #{combineDebit},
+        #{status},
+        #{changeToken},
+        #{errorDetail},
+        #{finalFateUpdatedDate},
+        #{ackFilePath},
+        #{ackUpdatedDate},
+        #{transferDate},
+        #{userComments},
+        #{dmpBatchNumber},
+        #{rejectCode},
+        #{batchBooking},
+        #{chargeOptions},
+        #{payrollOptions}
+    )
+</insert>
 
     <!-- Insert PwsBulkTransactionInstructions -->
     <insert id="insertPwsBulkTransactionInstructions" parameterType="com.uob.gwb.pbp.po.PwsBulkTransactionInstructions"
