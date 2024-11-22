@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.uob.gwb.pbp.dao.pws.PwsDeleteDao">
+
+    <delete id="deletePwsTransactions" statementType="PREPARED">
+        <![CDATA[
+            DELETE FROM pws_transactions 
+            WHERE transaction_id = #{transactionId}
+        ]]>
+    </delete>
+
+    <delete id="deletePwsBulkTransactions" statementType="PREPARED">
+        <![CDATA[
+            DELETE FROM pws_bulk_transactions 
+            WHERE transaction_id = #{transactionId}
+        ]]>
+    </delete>
+
+    <delete id="deletePwsBulkTransactionInstructions" statementType="PREPARED">
+        <![CDATA[
+            DELETE FROM pws_bulk_transaction_instructions 
+            WHERE transaction_id = #{transactionId}
+        ]]>
+    </delete>
+
+    <delete id="deletePwsParties" statementType="PREPARED">
+        <![CDATA[
+            DELETE FROM pws_parties 
+            WHERE transaction_id = #{transactionId}
+        ]]>
+    </delete>
+
+    <delete id="deletePwsPartyContacts" statementType="PREPARED">
+        <![CDATA[
+            DELETE FROM pws_party_contacts 
+            WHERE transaction_id = #{transactionId}
+        ]]>
+    </delete>
+
+    <delete id="deletePwsTransactionAdvices" statementType="PREPARED">
+        <![CDATA[
+            DELETE FROM pws_transaction_advices 
+            WHERE transaction_id = #{transactionId}
+        ]]>
+    </delete>
+
+    <delete id="deletePwsTaxInstructions" statementType="PREPARED">
+        <![CDATA[
+            DELETE FROM pws_tax_instructions 
+            WHERE transaction_id = #{transactionId}
+        ]]>
+    </delete>
+    
+</mapper>
