@@ -1,7 +1,154 @@
 org.apache.camel.ResolveEndpointFailedException: Failed to resolve endpoint: https://172.29.229.126:18089/api/oauth/token?connectTimeout=30000&connectionClose=true&connectionRequestTimeout=30000&connectionTimeToLive=30000&connectionsPerRoute=30&maxTotalConnections=30&socketTimeout=30000&sort=asc&ssl=true&sslContextParameters=%23axwaysslContextParams&x509HostnameVerifier=%23axwayNoopHostnameVerifier due to: Cannot find a ResourceResolver in classpath supporting the scheme: C
 	at org.apache.camel.impl.engine.AbstractCamelContext.doGetEndpoint(AbstractCamelContext.java:839)
 	at org.apache.camel.impl.engine.DefaultCamelContextExtension.getEndpoint(DefaultCamelContextExtension.java:264)
+public class MultiIndexRegistry<T> {
+    // Functional interface to extract key from entity
+    @FunctionalInterface
+    public interface KeyExtractor<T, K> {
+        K extractKey(T entity);
+    }
 
+    // Index class to maintain mapping for a specific key type
+    private class Index<K> {
+        private final Map<K, T> map = new HashMap<>();
+        private final KeyExtractor<T, K> keyExtractor;
+
+        public Index(KeyExtractor<T, K> keyExtractor) {
+            this.keyExtractor = keyExtractor;
+        }
+
+        public void add(T entity) {
+            K key = keyExtractor.extractKey(entity);
+            if (key != null) {
+                if (map.containsKey(key)) {
+                    throw new IllegalArgumentException("Duplicate key found: " + key);
+                }
+                map.put(key, entity);
+            }
+        }
+
+        public void remove(T entity) {
+            K key = keyExtractor.extractKey(entity);
+            if (key != null) {
+                map.remove(key);
+            }
+        }
+
+        public T get(K key) {
+            return map.get(key);
+        }
+
+        public void clear() {
+            map.clear();
+        }
+    }
+
+    private final Map<String, Index<?>> indexes = new HashMap<>();
+    private final Collection<T> allEntities = new HashSet<>();
+
+    // Register a new index with a name and key extractor
+    public <K> void addIndex(String indexName, KeyExtractor<T, K> keyExtractor) {
+        indexes.put(indexName, new Index<>(keyExtractor));
+    }
+
+    // Add entity to all indexes
+    public void addEntity(T entity) {
+        if (entity == null) {
+            throw new IllegalArgumentException("Entity cannot be null");
+        }
+
+        // Try to add to all indexes first to check for duplicates
+        for (Index<?> index : indexes.values()) {
+            validateNewEntity(entity, index);
+        }
+
+        // If validation passes, add to all indexes
+        indexes.values().forEach(index -> ((Index<Object>) index).add(entity));
+        allEntities.add(entity);
+    }
+
+    @SuppressWarnings("unchecked")
+    private void validateNewEntity(T entity, Index<?> index) {
+        Index<Object> typedIndex = (Index<Object>) index;
+        Object key = typedIndex.keyExtractor.extractKey(entity);
+        if (key != null && typedIndex.map.containsKey(key)) {
+            throw new IllegalArgumentException("Duplicate key found: " + key);
+        }
+    }
+
+    // Find entity by index and key
+    @SuppressWarnings("unchecked")
+    public <K> T findBy(String indexName, K key) {
+        Index<K> index = (Index<K>) indexes.get(indexName);
+        if (index == null) {
+            throw new IllegalArgumentException("Index not found: " + indexName);
+        }
+        return index.get(key);
+    }
+
+    // Remove entity from all indexes
+    public void removeEntity(T entity) {
+        if (entity == null) {
+            throw new IllegalArgumentException("Entity cannot be null");
+        }
+        indexes.values().forEach(index -> ((Index<Object>) index).remove(entity));
+        allEntities.remove(entity);
+    }
+
+    // Get all entities
+    public Collection<T> getAllEntities() {
+        return new ArrayList<>(allEntities);
+    }
+
+    // Example usage with a Bank entity
+    public static void main(String[] args) {
+        // Define Bank entity
+        class Bank {
+            private final String code;
+            private final String name;
+            private final String swiftCode;
+
+            public Bank(String code, String name, String swiftCode) {
+                this.code = code;
+                this.name = name;
+                this.swiftCode = swiftCode;
+            }
+
+            public String getCode() { return code; }
+            public String getName() { return name; }
+            public String getSwiftCode() { return swiftCode; }
+
+            @Override
+            public String toString() {
+                return "Bank{code='" + code + "', name='" + name + "', swiftCode='" + swiftCode + "'}";
+            }
+        }
+
+        // Create registry and define indexes
+        MultiIndexRegistry<Bank> registry = new MultiIndexRegistry<>();
+        registry.addIndex("code", Bank::getCode);
+        registry.addIndex("name", Bank::getName);
+        registry.addIndex("swiftCode", Bank::getSwiftCode);
+
+        // Add some banks
+        registry.addEntity(new Bank("CITI01", "Citibank", "CITIUS33"));
+        registry.addEntity(new Bank("HSBC01", "HSBC Bank", "HSBCUS33"));
+
+        // Look up banks using different indexes
+        Bank bankByCode = registry.findBy("code", "CITI01");
+        System.out.println("Found by code: " + bankByCode);
+
+        Bank bankByName = registry.findBy("name", "HSBC Bank");
+        System.out.println("Found by name: " + bankByName);
+
+        Bank bankBySwift = registry.findBy("swiftCode", "CITIUS33");
+        System.out.println("Found by SWIFT: " + bankBySwift);
+
+        // Get all banks
+        System.out.println("\nAll banks:");
+        registry.getAllEntities().forEach(System.out::println);
+    }
+}
 ```xml
 
 <routes>
