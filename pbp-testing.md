@@ -963,8 +963,7 @@ class BulkProcessingFlowBuilderTest {
 }
 ```
 
-## verifycation
-```java
+## verification
 ```java
     // Mapping Verifications
     private void verifyPayrollMapping(PaymentInformation payment) {
@@ -1815,6 +1814,169 @@ class PaymentUtilsTest {
 # Flow
 
 ```java
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class BulkProcessingFlowBuilder extends RouteBuilder {
+
+    private final AppConfig appConfig;
+    private final ObjectMapper objectMapper;
+    private final JobRepository jobRepository;
+    private final JobLauncher jobLauncher;
+    private final PlatformTransactionManager platformTransactionManager;
+    private final PaymentContext paymentContext;
+    private final Pain001InboundService pain001InboundService;
+
+    @Override
+    public void configure() {
+        appConfig.getBulkRoutes().stream()
+                .filter(AppConfig.BulkRoute::isEnabled)
+                .forEach(this::configureRoute);
+    }
+
+    private void configureRoute(AppConfig.BulkRoute bulkRoute) {
+        log.info("Creating processing flow: {}", bulkRoute);
+        
+        if (bulkRoute.getProcessingType() != AppConfig.ProcessingType.INBOUND) {
+            throw new BulkProcessingException("Unsupported flow type", 
+                new IllegalArgumentException("Unsupported flow: " + bulkRoute.getProcessingType()));
+        }
+
+        // Configure error handling
+        configureErrorHandling(bulkRoute);
+        
+        // Define the main route
+        from(buildInboundFromUri(bulkRoute))
+            .routeId(bulkRoute.getRouteName())
+            .process(exchange -> handleInboundProcessing(bulkRoute, exchange));
+    }
+
+    private void configureErrorHandling(AppConfig.BulkRoute bulkRoute) {
+        onException(Exception.class)
+            .handled(true)
+            .process(exchange -> {
+                Exception cause = exchange.getProperty(Exchange.EXCEPTION_CAUGHT, Exception.class);
+                String fileName = exchange.getIn().getHeader(Exchange.FILE_NAME, String.class);
+                log.error("Processing failed for file: {}. Error: {}", fileName, cause.getMessage(), cause);
+                handleInboundClose(bulkRoute, exchange, ExitStatus.FAILED);
+            });
+    }
+
+    private void handleInboundProcessing(AppConfig.BulkRoute bulkRoute, Exchange exchange) throws Exception {
+        createInboundContext(bulkRoute, exchange);
+        JobParameters jobParameters = createInboundJobParameters(bulkRoute, exchange);
+        Job job = createJob(bulkRoute, exchange);
+        
+        JobExecution jobExecution = jobLauncher.run(job, jobParameters);
+        waitForJobCompletion(jobExecution);
+        handleInboundJobExecution(bulkRoute, exchange, jobExecution);
+    }
+
+    private void waitForJobCompletion(JobExecution jobExecution) throws InterruptedException {
+        while (jobExecution.isRunning()) {
+            Thread.sleep(1000); // Reduced sleep time, consider using more sophisticated waiting mechanism
+        }
+    }
+
+    private Job createJob(AppConfig.BulkRoute bulkRoute, Exchange exchange) {
+        return new JobBuilder("BatchJob_" + bulkRoute.getRouteName(), jobRepository)
+            .listener(createJobListener(bulkRoute, exchange))
+            .start(createInitialStep(bulkRoute))
+            .build();
+    }
+
+    private JobExecutionListener createJobListener(AppConfig.BulkRoute bulkRoute, Exchange exchange) {
+        return new JobExecutionListener() {
+            @Override
+            public void beforeJob(JobExecution jobExecution) {
+                initializeJobContext(jobExecution, bulkRoute, exchange);
+            }
+
+            @Override
+            public void afterJob(JobExecution jobExecution) {
+                logJobCompletion(jobExecution);
+            }
+        };
+    }
+
+    private Step createInitialStep(AppConfig.BulkRoute bulkRoute) {
+        List<String> stepNames = Optional.ofNullable(bulkRoute.getSteps())
+            .filter(steps -> !steps.isEmpty())
+            .orElseThrow(() -> new BulkProcessingException(
+                "No steps defined for route: " + bulkRoute.getRouteName()));
+
+        Step firstStep = createStepForName(stepNames.get(0), bulkRoute);
+        return stepNames.stream()
+            .skip(1)
+            .reduce(
+                firstStep,
+                (previousStep, stepName) -> new StepBuilder(stepName, jobRepository)
+                    .next(createStepForName(stepName, bulkRoute))
+                    .build(),
+                (step1, step2) -> step1
+            );
+    }
+
+    protected Step createStepForName(String stepName, AppConfig.BulkRoute bulkRoute) {
+        StepBuilder stepBuilder = new StepBuilder(stepName, jobRepository);
+        
+        return switch (stepName) {
+            case "pain001-processing" -> createPain001ProcessingStep(stepBuilder);
+            case "payment-debulk" -> createPaymentDebulkStep(stepBuilder);
+            case "payment-validation" -> createPaymentValidationStep(stepBuilder);
+            case "payment-enrichment" -> createPaymentEnrichmentStep(stepBuilder);
+            case "payment-save" -> createPaymentSaveStep(stepBuilder);
+            default -> throw new BulkProcessingException("Unknown step: " + stepName);
+        };
+    }
+
+    // Example of one refactored step implementation
+    protected Step createPain001ProcessingStep(StepBuilder stepBuilder) {
+        return stepBuilder
+            .tasklet((contribution, chunkContext) -> {
+                ExecutionContext jobContext = getJobContext(chunkContext);
+                pain001InboundService.beforeStep(chunkContext.getStepContext().getStepExecution());
+
+                String sourcePath = getSourcePath(jobContext, chunkContext);
+                String fileContent = readFileContent(sourcePath);
+                
+                List<PaymentInformation> paymentInformations = processPain001File(fileContent);
+                validateAndUpdateContext(paymentInformations, jobContext, contribution);
+                
+                return RepeatStatus.FINISHED;
+            }, platformTransactionManager)
+            .build();
+    }
+
+    private List<PaymentInformation> processPain001File(String fileContent) {
+        return Optional.ofNullable(pain001InboundService.processPain001(fileContent))
+            .filter(payments -> !payments.isEmpty())
+            .orElseThrow(() -> new JobExecutionException("Pain001 processing returned no valid payments"));
+    }
+
+    private void validateAndUpdateContext(
+            List<PaymentInformation> paymentInformations,
+            ExecutionContext jobContext,
+            StepContribution contribution) {
+        
+        if (CollectionUtils.isEmpty(paymentInformations)) {
+            Pain001InboundProcessingResult result = jobContext.get(
+                ContextKey.result, 
+                Pain001InboundProcessingResult.class
+            );
+            contribution.setExitStatus(ExitStatus.FAILED);
+            throw new JobExecutionException(
+                String.format("%s: %s", 
+                    result.getProcessingStatus(), 
+                    Optional.ofNullable(result.getMessage()).orElse("No message"))
+            );
+        }
+        
+        paymentContext.setPaymentInformations(paymentInformations);
+    }
+}
+```
+
 ```java
 @ExtendWith(MockitoExtension.class)
 class BulkProcessingFlowBuilderTest {
@@ -2089,6 +2251,598 @@ class BulkProcessingTestConfig {
 ```
 
 # Service
+
+## validation helper
+```java
+@ExtendWith(MockitoExtension.class)
+class PaymentValidationHelperImplTest {
+
+    @Mock
+    protected StepExecution stepExecution;
+
+    @Mock
+    protected JobExecution jobExecution;
+
+    @Mock
+    protected ExecutionContext jobContext;
+
+    @Mock
+    private CompanySettings companySettings;
+
+    @InjectMocks
+    private PaymentValidationHelperImpl paymentValidationHelper;
+
+    private static final String TEST_RESOURCE_ID = "SMART";
+    private static final String TEST_FEATURE_ID = "BFU";
+    private static final String TEST_ACCOUNT = "123456789";
+
+    @BeforeEach
+    void setUp() {
+        // Setup execution context
+        when(stepExecution.getJobExecution()).thenReturn(jobExecution);
+        when(jobExecution.getExecutionContext()).thenReturn(jobContext);
+        
+        // Initialize validation helper
+        paymentValidationHelper.beforeStep(stepExecution);
+    }
+
+    @Nested
+    class SourceAndFeatureValidationTests {
+        @BeforeEach
+        void setUp() {
+            when(jobContext.get(ContextKey.resourceId)).thenReturn(TEST_RESOURCE_ID);
+            when(jobContext.get(ContextKey.featureId)).thenReturn(TEST_FEATURE_ID);
+        }
+
+        @Test
+        void whenValidSourceAndFeature_shouldReturnNull() {
+            // Act
+            PaymentValidationResult result = paymentValidationHelper
+                .validateSourceAndFeature(TEST_RESOURCE_ID, TEST_FEATURE_ID);
+
+            // Assert
+            assertNull(result);
+        }
+
+        @Test
+        void whenInvalidSource_shouldReturnError() {
+            // Act
+            PaymentValidationResult result = paymentValidationHelper
+                .validateSourceAndFeature("INVALID", TEST_FEATURE_ID);
+
+            // Assert
+            assertNotNull(result);
+            assertEquals(ErrorCode.PBP_4001, result.getErrorCode());
+        }
+
+        @Test
+        void whenInvalidFeature_shouldReturnError() {
+            // Act
+            PaymentValidationResult result = paymentValidationHelper
+                .validateSourceAndFeature(TEST_RESOURCE_ID, "INVALID");
+
+            // Assert
+            assertNotNull(result);
+            assertEquals(ErrorCode.PBP_4001, result.getErrorCode());
+        }
+    }
+
+    @Nested
+    class AccountNRAValidationTests {
+        @BeforeEach
+        void setupAccountResource() {
+            Map<String, AccountResource> accountResources = new HashMap<>();
+            accountResources.put(TEST_ACCOUNT, createMockAccountResource(false));
+            when(jobContext.get(eq(ContextKey.accountResources), any())).thenReturn(accountResources);
+        }
+
+        @Test
+        void whenNonNRAAccount_shouldReturnNull() {
+            // Act
+            PaymentValidationResult result = paymentValidationHelper
+                .validateAccountNonNRA(TEST_ACCOUNT);
+
+            // Assert
+            assertNull(result);
+        }
+
+        @Test
+        void whenNRAAccount_shouldReturnError() {
+            // Arrange
+            Map<String, AccountResource> accountResources = new HashMap<>();
+            accountResources.put(TEST_ACCOUNT, createMockAccountResource(true));
+            when(jobContext.get(eq(ContextKey.accountResources), any())).thenReturn(accountResources);
+
+            // Act
+            PaymentValidationResult result = paymentValidationHelper
+                .validateAccountNonNRA(TEST_ACCOUNT);
+
+            // Assert
+            assertNotNull(result);
+            assertEquals(ErrorCode.PBP_4003, result.getErrorCode());
+        }
+
+        private AccountResource createMockAccountResource(boolean isNRA) {
+            AccountResource resource = new AccountResource();
+            resource.setIsNRA(isNRA ? PaymentValidationHelperImpl.NRA_YES : "N");
+            return resource;
+        }
+    }
+
+    @Nested
+    class BatchBookingValidationTests {
+        @Test
+        void whenItemizedBatchUnderLimit_shouldReturnNull() {
+            // Arrange
+            PaymentInformation payment = createPaymentInfo(5);
+
+            // Act
+            PaymentValidationResult result = paymentValidationHelper
+                .validateBatchBookingItemized(payment, 10);
+
+            // Assert
+            assertNull(result);
+        }
+
+        @Test
+        void whenItemizedBatchOverLimit_shouldReturnError() {
+            // Arrange
+            PaymentInformation payment = createPaymentInfo(15);
+
+            // Act
+            PaymentValidationResult result = paymentValidationHelper
+                .validateBatchBookingItemized(payment, 10);
+
+            // Assert
+            assertNotNull(result);
+            assertEquals(ErrorCode.PBP_4004, result.getErrorCode());
+        }
+
+        @Test
+        void whenLumsumBatchUnderLimit_shouldReturnNull() {
+            // Arrange
+            PaymentInformation payment = createPaymentInfoWithAmount(
+                Arrays.asList(
+                    new BigDecimal("100.00"),
+                    new BigDecimal("200.00")
+                )
+            );
+
+            // Act
+            PaymentValidationResult result = paymentValidationHelper
+                .validateBatchBookingLumsum(payment, 1000);
+
+            // Assert
+            assertNull(result);
+        }
+
+        @Test
+        void whenLumsumBatchOverLimit_shouldReturnError() {
+            // Arrange
+            PaymentInformation payment = createPaymentInfoWithAmount(
+                Arrays.asList(
+                    new BigDecimal("500.00"),
+                    new BigDecimal("600.00")
+                )
+            );
+
+            // Act
+            PaymentValidationResult result = paymentValidationHelper
+                .validateBatchBookingLumsum(payment, 1000);
+
+            // Assert
+            assertNotNull(result);
+            assertEquals(ErrorCode.PBP_4005, result.getErrorCode());
+        }
+
+        private PaymentInformation createPaymentInfo(int transactionCount) {
+            PaymentInformation payment = new PaymentInformation();
+            List<CreditTransferTransaction> transactions = new ArrayList<>();
+            for (int i = 0; i < transactionCount; i++) {
+                transactions.add(createTransaction(new BigDecimal("100.00")));
+            }
+            payment.setCreditTransferTransactionList(transactions);
+            return payment;
+        }
+
+        private PaymentInformation createPaymentInfoWithAmount(List<BigDecimal> amounts) {
+            PaymentInformation payment = new PaymentInformation();
+            List<CreditTransferTransaction> transactions = amounts.stream()
+                .map(this::createTransaction)
+                .collect(Collectors.toList());
+            payment.setCreditTransferTransactionList(transactions);
+            return payment;
+        }
+
+        private CreditTransferTransaction createTransaction(BigDecimal amount) {
+            CreditTransferTransaction transaction = new CreditTransferTransaction();
+            PwsBulkTransactionInstructions instructions = new PwsBulkTransactionInstructions();
+            instructions.setTransactionAmount(amount);
+            transaction.setPwsBulkTransactionInstructions(instructions);
+            return transaction;
+        }
+    }
+
+    @Nested
+    class ValueDateValidationTests {
+        @Test
+        void whenValueDateAfterEarliestDate_shouldReturnNull() {
+            // Arrange
+            PaymentInformation payment = createPaymentInfoWithDate(
+                LocalDate.now().plusDays(1));
+            LocalDate earliestDate = LocalDate.now();
+
+            // Act
+            PaymentValidationResult result = paymentValidationHelper
+                .validateValueDate(payment, earliestDate);
+
+            // Assert
+            assertNull(result);
+        }
+
+        @Test
+        void whenValueDateEqualsEarliestDate_shouldReturnNull() {
+            // Arrange
+            LocalDate testDate = LocalDate.now();
+            PaymentInformation payment = createPaymentInfoWithDate(testDate);
+
+            // Act
+            PaymentValidationResult result = paymentValidationHelper
+                .validateValueDate(payment, testDate);
+
+            // Assert
+            assertNull(result);
+        }
+
+        @Test
+        void whenValueDateBeforeEarliestDate_shouldReturnError() {
+            // Arrange
+            PaymentInformation payment = createPaymentInfoWithDate(
+                LocalDate.now().minusDays(1));
+            LocalDate earliestDate = LocalDate.now();
+
+            // Act
+            PaymentValidationResult result = paymentValidationHelper
+                .validateValueDate(payment, earliestDate);
+
+            // Assert
+            assertNotNull(result);
+            assertEquals(ErrorCode.PBP_4006, result.getErrorCode());
+        }
+
+        private PaymentInformation createPaymentInfoWithDate(LocalDate date) {
+            PaymentInformation payment = new PaymentInformation();
+            PwsBulkTransactions bulkTxn = new PwsBulkTransactions();
+            bulkTxn.setTransferDate(Date.valueOf(date));
+            payment.setPwsBulkTransactions(bulkTxn);
+            return payment;
+        }
+    }
+}
+```
+
+## stepaware service
+
+``java
+@ExtendWith(MockitoExtension.class)
+class StepAwareServiceTest {
+
+    @Mock
+    private JobExecution jobExecution;
+
+    @Mock
+    private StepExecution stepExecution;
+
+    @Mock
+    private ExecutionContext jobContext;
+
+    @Mock
+    private ExecutionContext stepContext;
+
+    @Mock
+    private ObjectMapper objectMapper;
+
+    private StepAwareService service;
+    private AutoCloseable closeable;
+
+    @BeforeEach
+    void setUp() {
+        closeable = MockitoAnnotations.openMocks(this);
+        service = new TestStepAwareService();
+        
+        // Setup common mock behaviors
+        when(stepExecution.getJobExecution()).thenReturn(jobExecution);
+        when(stepExecution.getExecutionContext()).thenReturn(stepContext);
+        when(jobExecution.getExecutionContext()).thenReturn(jobContext);
+    }
+
+    @AfterEach
+    void tearDown() throws Exception {
+        closeable.close();
+    }
+
+    // Test implementation class
+    private static class TestStepAwareService extends StepAwareService {
+        // Concrete implementation for testing
+    }
+
+    @Nested
+    @DisplayName("Step Lifecycle Tests")
+    class StepLifecycleTest {
+        
+        @Test
+        @DisplayName("beforeStep should initialize step execution")
+        void beforeStep_ShouldInitializeStepExecution() {
+            // Act
+            service.beforeStep(stepExecution);
+            
+            // Assert
+            assertThat(service.getStepExecution())
+                .as("Step execution should be initialized")
+                .isEqualTo(stepExecution);
+        }
+
+        @Test
+        @DisplayName("beforeStep with null should throw exception")
+        void beforeStep_WithNull_ShouldThrowException() {
+            assertThatThrownBy(() -> service.beforeStep(null))
+                .as("Should throw exception for null step execution")
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Step execution cannot be null");
+        }
+
+        @Test
+        @DisplayName("afterStep should clean up resources")
+        void afterStep_ShouldCleanUpResources() {
+            // Arrange
+            service.beforeStep(stepExecution);
+            
+            // Act
+            service.afterStep(stepExecution);
+            
+            // Assert
+            assertThat(service.getStepExecution())
+                .as("Step execution should be cleaned up")
+                .isNull();
+        }
+    }
+
+    @Nested
+    @DisplayName("Context Access Tests")
+    class ContextAccessTest {
+
+        @BeforeEach
+        void init() {
+            service.beforeStep(stepExecution);
+        }
+
+        @Test
+        @DisplayName("getJobContext should return valid context")
+        void getJobContext_ShouldReturnValidContext() {
+            assertThat(service.getJobContext())
+                .as("Job context should be accessible")
+                .isNotNull()
+                .isEqualTo(jobContext);
+        }
+
+        @Test
+        @DisplayName("getStepContext should return valid context")
+        void getStepContext_ShouldReturnValidContext() {
+            assertThat(service.getStepContext())
+                .as("Step context should be accessible")
+                .isNotNull()
+                .isEqualTo(stepContext);
+        }
+
+        @Test
+        @DisplayName("getJobContext without initialization should throw exception")
+        void getJobContext_WithoutInit_ShouldThrowException() {
+            // Arrange
+            StepAwareService uninitializedService = new TestStepAwareService();
+            
+            // Assert
+            assertThatThrownBy(() -> uninitializedService.getJobContext())
+                .as("Should throw exception when accessing uninitialized context")
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Service not initialized");
+        }
+    }
+
+    @Nested
+    @DisplayName("Route Configuration Tests")
+    class RouteConfigurationTest {
+
+        @BeforeEach
+        void init() {
+            service.beforeStep(stepExecution);
+        }
+
+        @ParameterizedTest
+        @DisplayName("getRouteName should return correct route name")
+        @ValueSource(strings = {"route1", "route2", "route3"})
+        void getRouteName_ShouldReturnCorrectRouteName(String routeName) {
+            // Arrange
+            AppConfig.BulkRoute bulkRoute = mock(AppConfig.BulkRoute.class);
+            when(bulkRoute.getRouteName()).thenReturn(routeName);
+            when(jobContext.get(ContextKey.routeConfig, AppConfig.BulkRoute.class))
+                .thenReturn(bulkRoute);
+
+            // Act & Assert
+            assertThat(service.getRouteName())
+                .as("Route name should match configured value")
+                .isEqualTo(routeName);
+        }
+
+        @Test
+        @DisplayName("getRouteConfig with missing configuration should throw exception")
+        void getRouteConfig_WithMissingConfig_ShouldThrowException() {
+            // Arrange
+            when(jobContext.get(ContextKey.routeConfig, AppConfig.BulkRoute.class))
+                .thenReturn(null);
+
+            // Act & Assert
+            assertThatThrownBy(() -> service.getRouteName())
+                .as("Should throw exception for missing route configuration")
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Route configuration not found");
+        }
+    }
+
+    @Nested
+    @DisplayName("Processing Status Tests")
+    class ProcessingStatusTest {
+
+        @BeforeEach
+        void init() {
+            service.beforeStep(stepExecution);
+        }
+
+        @Test
+        @DisplayName("updateProcessingStatus should update status correctly")
+        void updateProcessingStatus_ShouldUpdateCorrectly() {
+            // Arrange
+            Pain001InboundProcessingResult result = mock(Pain001InboundProcessingResult.class);
+            when(jobContext.get(ContextKey.result, Pain001InboundProcessingResult.class))
+                .thenReturn(result);
+
+            // Act
+            service.updateProcessingStatus(
+                Pain001InboundProcessingStatus.COMPLETED,
+                "Success",
+                objectMapper
+            );
+
+            // Assert
+            verify(result).setProcessingStatus(Pain001InboundProcessingStatus.COMPLETED);
+            verify(result).setMessage("Success");
+        }
+
+        @Test
+        @DisplayName("updateProcessingStatus with null result should throw exception")
+        void updateProcessingStatus_WithNullResult_ShouldThrowException() {
+            // Arrange
+            when(jobContext.get(ContextKey.result, Pain001InboundProcessingResult.class))
+                .thenReturn(null);
+
+            // Act & Assert
+            assertThatThrownBy(() -> 
+                service.updateProcessingStatus(
+                    Pain001InboundProcessingStatus.COMPLETED,
+                    "Success",
+                    objectMapper
+                ))
+                .as("Should throw exception for null processing result")
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Processing result not found");
+        }
+    }
+
+    @Nested
+    @DisplayName("Bank Settings Tests")
+    class BankSettingsTest {
+
+        @BeforeEach
+        void init() {
+            service.beforeStep(stepExecution);
+        }
+
+        @Test
+        @DisplayName("setBankSettings should store settings correctly")
+        void setBankSettings_ShouldStoreCorrectly() {
+            // Arrange
+            BankSettings bankSettings = mock(BankSettings.class);
+            when(jobContext.get(ContextKey.bankSettings, BankSettings.class))
+                .thenReturn(bankSettings);
+
+            // Act
+            service.setBankSettings(
+                "resourceId",
+                "featureId",
+                BankSettings.SettingsName.GENERAL,
+                "value"
+            );
+
+            // Assert
+            verify(bankSettings).setBankSettings(
+                eq("resourceId"),
+                eq("featureId"),
+                eq(BankSettings.SettingsName.GENERAL),
+                eq("value")
+            );
+        }
+
+        @Test
+        @DisplayName("getAllBankSettings should return settings map")
+        void getAllBankSettings_ShouldReturnMap() {
+            // Arrange
+            BankSettings bankSettings = mock(BankSettings.class);
+            Map<BankSettings.SettingsName, Object> settingsMap = new HashMap<>();
+            settingsMap.put(BankSettings.SettingsName.GENERAL, "value");
+            
+            when(jobContext.get(ContextKey.bankSettings, BankSettings.class))
+                .thenReturn(bankSettings);
+            when(bankSettings.getAllBankSettings(anyString(), anyString()))
+                .thenReturn(settingsMap);
+
+            // Act
+            Map<BankSettings.SettingsName, Object> result = 
+                service.getAllBankSettings("resourceId", "featureId");
+
+            // Assert
+            assertThat(result)
+                .as("Settings map should contain expected values")
+                .isNotEmpty()
+                .containsEntry(BankSettings.SettingsName.GENERAL, "value");
+        }
+    }
+
+    @Nested
+    @DisplayName("Debug Context Tests")
+    @ExtendWith(CaptureLogExtension.class)
+    class DebugContextTest {
+
+        @BeforeEach
+        void init() {
+            service.beforeStep(stepExecution);
+        }
+
+        @Test
+        @DisplayName("debugContext should log all required information")
+        void debugContext_ShouldLogAllInfo(@CapturedLog CapturedLog log) {
+            // Arrange
+            setupMockContextData();
+
+            // Act
+            service.debugContext(objectMapper);
+
+            // Assert
+            assertThat(log.getAll())
+                .as("Debug logs should contain all required information")
+                .anyMatch(line -> line.contains("Route Name"))
+                .anyMatch(line -> line.contains("Country Code"))
+                .anyMatch(line -> line.contains("Channel"))
+                .anyMatch(line -> line.contains("Bank Entity"));
+        }
+
+        private void setupMockContextData() {
+            // Setup mock data for context debugging
+            AppConfig.BulkRoute bulkRoute = mock(AppConfig.BulkRoute.class);
+            when(bulkRoute.getRouteName()).thenReturn("testRoute");
+            when(jobContext.get(ContextKey.routeConfig, AppConfig.BulkRoute.class))
+                .thenReturn(bulkRoute);
+
+            Country country = mock(Country.class);
+            when(country.getCountryCode()).thenReturn("US");
+            when(jobContext.get(ContextKey.country, Country.class))
+                .thenReturn(country);
+
+            // Add more mock data as needed
+        }
+    }
+}
+```
+
+## inbound service
 
 ## pain001 service 
 
@@ -2735,253 +3489,6 @@ void testProcessPostPain001BoMapping_Success() {
 
 ## mapping
 
-```java
-@ExtendWith(MockitoExtension.class)
-class PaymentMappingServiceImplTest {
-
-    @InjectMocks
-    private PaymentMappingServiceImpl paymentMappingService;
-
-    @Mock
-    private Pain001ToBoMapper pain001ToBoMapper;
-
-    @Spy
-    private ObjectMapper objectMapper = new ObjectMapper();
-
-    @Test
-    @DisplayName("Should successfully map pain001 payment to BO")
-    void testPain001PaymentToBo() throws Exception {
-        // Given
-        GroupHeaderDTO groupHeaderDTO = createGroupHeaderDTO();
-        PaymentInformationDTO paymentDTO = createPaymentInformationDTO();
-        PwsFileUpload fileUpload = createMockFileUpload();
-        
-        // Mock service method responses
-        when(paymentMappingService.getBankEntityId()).thenReturn("TESTBANK");
-        when(paymentMappingService.getCompanyId()).thenReturn(12345L);
-        when(paymentMappingService.getUserId()).thenReturn(67890L);
-        when(paymentMappingService.getFileUpload()).thenReturn(fileUpload);
-
-        // Mock mapper responses
-        PaymentInformation mockPaymentInfo = new PaymentInformation();
-        mockPaymentInfo.setDmpBulkStatus(DmpBulkStatus.fromValue("01"));
-        when(pain001ToBoMapper.mapToPaymentInformation(paymentDTO)).thenReturn(mockPaymentInfo);
-
-        PwsTransactions mockPwsTransactions = new PwsTransactions();
-        when(pain001ToBoMapper.mapToPwsTransactions(paymentDTO)).thenReturn(mockPwsTransactions);
-
-        PwsBulkTransactions mockPwsBulkTransactions = new PwsBulkTransactions();
-        when(pain001ToBoMapper.mapToPwsBulkTransactions(eq(paymentDTO), any(PwsFileUpload.class)))
-            .thenReturn(mockPwsBulkTransactions);
-
-        // Mock child transaction mappings
-        PwsBulkTransactionInstructions mockInstructions = new PwsBulkTransactionInstructions();
-        when(pain001ToBoMapper.mapToPwsBulkTransactionInstructions(any(CreditTransferTransactionInformationDTO.class), any(PwsFileUpload.class)))
-            .thenReturn(mockInstructions);
-
-        Creditor mockCreditor = new Creditor();
-        when(pain001ToBoMapper.mapToCreditor(any(CreditTransferTransactionInformationDTO.class)))
-            .thenReturn(mockCreditor);
-
-        PwsTransactionAdvices mockAdvice = new PwsTransactionAdvices();
-        when(pain001ToBoMapper.mapToPwsTransactionAdvices(any(CreditTransferTransactionInformationDTO.class)))
-            .thenReturn(mockAdvice);
-
-        TaxInformation mockTaxInfo = new TaxInformation();
-        when(pain001ToBoMapper.mapToTaxInformation(any(CreditTransferTransactionInformationDTO.class)))
-            .thenReturn(mockTaxInfo);
-
-        // When
-        PaymentInformation result = paymentMappingService.pain001PaymentToBo(groupHeaderDTO, paymentDTO);
-
-        // Then
-        assertNotNull(result);
-        assertEquals(DmpBulkStatus.fromValue("01"), result.getDmpBulkStatus());
-        
-        // Verify PwsTransactions setup
-        PwsTransactions resultTxn = result.getPwsTransactions();
-        assertNotNull(resultTxn);
-        assertEquals("TESTBANK", resultTxn.getBankEntityId());
-        assertEquals(12345L, resultTxn.getCompanyId());
-        assertEquals(67890L, resultTxn.getInitiatedBy());
-        assertNotNull(resultTxn.getInitiationTime());
-
-        // Verify PwsBulkTransactions setup
-        PwsBulkTransactions resultBulkTxn = result.getPwsBulkTransactions();
-        assertNotNull(resultBulkTxn);
-        assertNotNull(resultBulkTxn.getTransferDate());
-        assertEquals("2007-02-23", new SimpleDateFormat("yyyy-MM-dd").format(resultBulkTxn.getTransferDate()));
-
-        // Verify credit transfer transactions
-        assertNotNull(result.getCreditTransferTransactionList());
-        assertFalse(result.getCreditTransferTransactionList().isEmpty());
-        assertEquals(5, result.getCreditTransferTransactionList().size());
-
-        // Verify method invocations
-        verify(pain001ToBoMapper).mapToPaymentInformation(paymentDTO);
-        verify(pain001ToBoMapper).mapToPwsTransactions(paymentDTO);
-        verify(pain001ToBoMapper).mapToPwsBulkTransactions(eq(paymentDTO), any(PwsFileUpload.class));
-        
-        verify(pain001ToBoMapper, times(5))
-            .mapToPwsBulkTransactionInstructions(any(CreditTransferTransactionInformationDTO.class), any(PwsFileUpload.class));
-        verify(pain001ToBoMapper, times(5))
-            .mapToCreditor(any(CreditTransferTransactionInformationDTO.class));
-        verify(pain001ToBoMapper, times(5))
-            .mapToPwsTransactionAdvices(any(CreditTransferTransactionInformationDTO.class));
-        verify(pain001ToBoMapper, times(5))
-            .mapToTaxInformation(any(CreditTransferTransactionInformationDTO.class));
-    }
-
-    @Test
-    @DisplayName("Should handle empty credit transfer transaction list")
-    void testPain001PaymentToBo_EmptyTransactions() throws Exception {
-        // Given
-        GroupHeaderDTO groupHeaderDTO = createGroupHeaderDTO();
-        PaymentInformationDTO paymentDTO = createPaymentInformationDTO();
-        paymentDTO.setCreditTransferTransactionInformation(Collections.emptyList());
-        
-        PwsFileUpload fileUpload = createMockFileUpload();
-        when(paymentMappingService.getFileUpload()).thenReturn(fileUpload);
-
-        // Mock basic mappings
-        when(pain001ToBoMapper.mapToPaymentInformation(paymentDTO))
-            .thenReturn(new PaymentInformation());
-        when(pain001ToBoMapper.mapToPwsTransactions(paymentDTO))
-            .thenReturn(new PwsTransactions());
-        when(pain001ToBoMapper.mapToPwsBulkTransactions(eq(paymentDTO), any(PwsFileUpload.class)))
-            .thenReturn(new PwsBulkTransactions());
-
-        // When
-        PaymentInformation result = paymentMappingService.pain001PaymentToBo(groupHeaderDTO, paymentDTO);
-
-        // Then
-        assertNotNull(result);
-        assertNotNull(result.getCreditTransferTransactionList());
-        assertTrue(result.getCreditTransferTransactionList().isEmpty());
-    }
-
-    @Test
-    @DisplayName("Should handle null payment instructions")
-    void testPain001PaymentToBo_NullInstructions() throws Exception {
-        // Given
-        GroupHeaderDTO groupHeaderDTO = createGroupHeaderDTO();
-        PaymentInformationDTO paymentDTO = createPaymentInformationDTO();
-        CreditTransferTransactionInformationDTO txnDTO = paymentDTO.getCreditTransferTransactionInformation().get(0);
-        txnDTO.setInstructionForCreditorAgent(null);
-        
-        PwsFileUpload fileUpload = createMockFileUpload();
-        when(paymentMappingService.getFileUpload()).thenReturn(fileUpload);
-
-        // Mock mapper responses with basic objects
-        when(pain001ToBoMapper.mapToPaymentInformation(paymentDTO))
-            .thenReturn(new PaymentInformation());
-        when(pain001ToBoMapper.mapToPwsTransactions(paymentDTO))
-            .thenReturn(new PwsTransactions());
-        when(pain001ToBoMapper.mapToPwsBulkTransactions(eq(paymentDTO), any(PwsFileUpload.class)))
-            .thenReturn(new PwsBulkTransactions());
-        when(pain001ToBoMapper.mapToPwsBulkTransactionInstructions(any(), any()))
-            .thenReturn(new PwsBulkTransactionInstructions());
-        when(pain001ToBoMapper.mapToCreditor(any()))
-            .thenReturn(new Creditor());
-        when(pain001ToBoMapper.mapToPwsTransactionAdvices(any()))
-            .thenReturn(new PwsTransactionAdvices());
-        when(pain001ToBoMapper.mapToTaxInformation(any()))
-            .thenReturn(new TaxInformation());
-
-        // When
-        PaymentInformation result = paymentMappingService.pain001PaymentToBo(groupHeaderDTO, paymentDTO);
-
-        // Then
-        assertNotNull(result);
-        assertNotNull(result.getCreditTransferTransactionList());
-        assertFalse(result.getCreditTransferTransactionList().isEmpty());
-        
-        PwsBulkTransactionInstructions instructions = result.getCreditTransferTransactionList()
-            .get(0).getPwsBulkTransactionInstructions();
-        assertNotNull(instructions);
-        assertNull(instructions.getPaymentDetails());
-    }
-
-    private GroupHeaderDTO createGroupHeaderDTO() {
-        GroupHeaderDTO header = new GroupHeaderDTO();
-        header.setMessageIdentification("TESTMSG123");
-        header.setCreationDateTime("2024-02-23T10:00:00");
-        return header;
-    }
-
-    private PaymentInformationDTO createPaymentInformationDTO() throws Exception {
-        // Load from test JSON file
-        ClassPathResource jsonResource = new ClassPathResource("pain001-sample.json");
-        String jsonContent = Files.readString(Path.of(jsonResource.getURI()));
-        
-        Pain001 pain001 = objectMapper.readValue(jsonContent, Pain001.class);
-        return pain001.getBusinessDocument()
-                     .getCustomerCreditTransferInitiation()
-                     .getPaymentInformation()
-                     .get(0);
-    }
-
-    private PwsFileUpload createMockFileUpload() {
-        PwsFileUpload fileUpload = new PwsFileUpload();
-        fileUpload.setFileUploadId(1L);
-        fileUpload.setFileReferenceId("TEST123");
-        fileUpload.setChargeOption("OUR");
-        fileUpload.setPayrollOption("STANDARD");
-        return fileUpload;
-    }
-
-    @Test
-    @DisplayName("Should throw ParseException for invalid date format")
-    void testPain001PaymentToBo_InvalidDate() {
-        // Given
-        GroupHeaderDTO groupHeaderDTO = createGroupHeaderDTO();
-        PaymentInformationDTO paymentDTO = new PaymentInformationDTO();
-        RequestedExecutionDateDTO dateDTO = new RequestedExecutionDateDTO();
-        dateDTO.setDate("invalid-date");
-        paymentDTO.setRequestedExecutionDate(dateDTO);
-
-        // Then
-        assertThrows(ParseException.class, () -> 
-            paymentMappingService.pain001PaymentToBo(groupHeaderDTO, paymentDTO)
-        );
-    }
-
-    @Test
-    @DisplayName("Should handle null tax information")
-    void testPain001PaymentToBo_NullTaxInfo() throws Exception {
-        // Given
-        GroupHeaderDTO groupHeaderDTO = createGroupHeaderDTO();
-        PaymentInformationDTO paymentDTO = createPaymentInformationDTO();
-        paymentDTO.getCreditTransferTransactionInformation().get(0).setTax(null);
-        
-        PwsFileUpload fileUpload = createMockFileUpload();
-        when(paymentMappingService.getFileUpload()).thenReturn(fileUpload);
-
-        // Mock basic mappings
-        when(pain001ToBoMapper.mapToPaymentInformation(paymentDTO))
-            .thenReturn(new PaymentInformation());
-        when(pain001ToBoMapper.mapToPwsTransactions(paymentDTO))
-            .thenReturn(new PwsTransactions());
-        when(pain001ToBoMapper.mapToPwsBulkTransactions(eq(paymentDTO), any(PwsFileUpload.class)))
-            .thenReturn(new PwsBulkTransactions());
-        when(pain001ToBoMapper.mapToPwsBulkTransactionInstructions(any(), any()))
-            .thenReturn(new PwsBulkTransactionInstructions());
-        when(pain001ToBoMapper.mapToCreditor(any()))
-            .thenReturn(new Creditor());
-        when(pain001ToBoMapper.mapToPwsTransactionAdvices(any()))
-            .thenReturn(new PwsTransactionAdvices());
-
-        // When
-        PaymentInformation result = paymentMappingService.pain001PaymentToBo(groupHeaderDTO, paymentDTO);
-
-        // Then
-        assertNotNull(result);
-        assertNotNull(result.getCreditTransferTransactionList());
-        assertNull(result.getCreditTransferTransactionList().get(0).getTaxInformation());
-    }
-}
-```
-
 ## debulk
 
 ```java
@@ -3278,38 +3785,6 @@ class PaymentDebulkServiceTest {
 
 ## validation 
 
-### helper
-```java
-
-
-```
-
-### suggestion
-
-```java
-private void handleError(PaymentInformation paymentInfo, String errMsg, Exception e) {
-    log.error(errMsg, e);
-    paymentInfo.addValidationError(ErrorCode.CEW_9000, ErrorCode.CEW_9000_MESSAGE);
-    updateProcessingStatus(Pain001InboundProcessingStatus.PostValidationEnrichmentWithException, errMsg);
-}
-
-paymentInfos.parallelStream().forEach(paymentInfo -> {
-    try {
-        validateEntitlement(paymentInfo);
-    } catch (Exception e) {
-        handleError(paymentInfo, "Entitlement validation failed", e);
-    }
-});
-
-private PaymentValidationResult validateBatchBooking(PaymentInformation paymentInfo, BatchBookingIndicator indicator) {
-    return paymentValidationHelper.validateBatchBooking(paymentInfo, indicator, getCompanySettings().getMaxCountOfBatchBooking());
-}
-```
-
-## validation
-```java
-
-```
 
 
 ## save 
