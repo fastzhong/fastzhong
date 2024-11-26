@@ -1188,6 +1188,904 @@ class BulkProcessingFlowBuilderTest {
         }
     }
 ```
+
+# Util
+
+```java
+public final class CommonUtils {
+    private CommonUtils() {
+        // Prevent instantiation
+        throw new AssertionError("Utility class should not be instantiated");
+    }
+
+    // Thread-local DateFormat instances for thread safety
+    private static final ThreadLocal<DateFormat> ISO_DATE_FORMAT = ThreadLocal.withInitial(() -> {
+        DateFormat df = new SimpleDateFormat("yyyy-MM-dd");
+        df.setLenient(false);
+        return df;
+    });
+
+    private static final ThreadLocal<DateFormat> ISO_DATETIME_FORMAT = ThreadLocal.withInitial(() -> {
+        DateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS");
+        df.setLenient(false);
+        return df;
+    });
+
+    private static final ThreadLocal<DateFormat> ISO_DATETIME_ZONE_FORMAT = ThreadLocal.withInitial(() -> {
+        DateFormat df = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'");
+        df.setLenient(false);
+        df.setTimeZone(TimeZone.getTimeZone("UTC"));
+        return df;
+    });
+
+    private static final ZoneId DEFAULT_ZONE_ID = ZoneId.systemDefault();
+
+    public static String isoZoneFormatDateTime(Date date) {
+        if (date == null) {
+            throw new IllegalArgumentException("Date cannot be null");
+        }
+        return ISO_DATETIME_ZONE_FORMAT.get().format(date);
+    }
+
+    public static Date stringToDate(String dateString) throws ParseException {
+        if (StringUtils.isEmpty(dateString)) {
+            return null;
+        }
+        try {
+            return new Date(ISO_DATE_FORMAT.get().parse(dateString).getTime());
+        } catch (ParseException e) {
+            throw new ParseException("Failed to parse date string: " + dateString, e.getErrorOffset());
+        }
+    }
+
+    public static Timestamp stringToTimestamp(String timestampString) throws ParseException {
+        if (StringUtils.isEmpty(timestampString)) {
+            return null;
+        }
+        try {
+            return new Timestamp(ISO_DATETIME_FORMAT.get().parse(timestampString).getTime());
+        } catch (ParseException e) {
+            throw new ParseException("Failed to parse timestamp string: " + timestampString, e.getErrorOffset());
+        }
+    }
+
+    public static String getShortErrorMessage(Exception e) {
+        if (e == null) {
+            return "";
+        }
+        Throwable cause = NestedExceptionUtils.getMostSpecificCause(e);
+        return ExceptionUtils.getRootCauseMessage(cause);
+    }
+
+    // Date conversion methods with null checks and immutability
+    public static LocalDate utilAsLocalDate(Date utilDate) {
+        if (utilDate == null) {
+            return null;
+        }
+        return utilDate.toInstant().atZone(DEFAULT_ZONE_ID).toLocalDate();
+    }
+
+    public static LocalDateTime utilAsLocalDateTime(Date utilDate) {
+        if (utilDate == null) {
+            return null;
+        }
+        return utilDate.toInstant().atZone(DEFAULT_ZONE_ID).toLocalDateTime();
+    }
+
+    public static Date localDateAsUtil(LocalDate localDate) {
+        if (localDate == null) {
+            return null;
+        }
+        return Date.valueOf(localDate);
+    }
+
+    public static Date localDateTimeAsUtil(LocalDateTime localDateTime) {
+        if (localDateTime == null) {
+            return null;
+        }
+        return Date.from(localDateTime.atZone(DEFAULT_ZONE_ID).toInstant());
+    }
+
+    public static java.sql.Date utilAsSqlDate(Date utilDate) {
+        if (utilDate == null) {
+            return null;
+        }
+        return new java.sql.Date(utilDate.getTime());
+    }
+
+    public static Timestamp utilAsSqlTimestamp(Date utilDate) {
+        if (utilDate == null) {
+            return null;
+        }
+        return new Timestamp(utilDate.getTime());
+    }
+
+    public static Date sqlDateAsUtil(java.sql.Date sqlDate) {
+        if (sqlDate == null) {
+            return null;
+        }
+        return new Date(sqlDate.getTime());
+    }
+
+    public static Date sqlTimestampDateAsUtil(Timestamp sqlTimestamp) {
+        if (sqlTimestamp == null) {
+            return null;
+        }
+        return new Date(sqlTimestamp.getTime());
+    }
+
+    public static String prettyPrint(ObjectMapper objectMapper, Object obj) {
+        if (obj == null) {
+            return "";
+        }
+        if (objectMapper == null) {
+            throw new IllegalArgumentException("ObjectMapper cannot be null");
+        }
+
+        try {
+            return objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(obj);
+        } catch (JsonProcessingException e) {
+            log.warn("Failed to pretty print object", e);
+            return String.valueOf(obj);
+        }
+    }
+
+    public static boolean moveFile(Path source, Path target) {
+        if (source == null || target == null) {
+            throw new IllegalArgumentException("Source and target paths cannot be null");
+        }
+
+        try {
+            Path targetDir = target.getParent();
+            if (targetDir != null && !Files.exists(targetDir)) {
+                Files.createDirectories(targetDir);
+            }
+            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
+            return true;
+        } catch (IOException e) {
+            log.error("Failed to move file from {} to {}", source, target, e);
+            return false;
+        }
+    }
+}
+```
+
+
+```java
+@ExtendWith(MockitoExtension.class)
+class CommonUtilsTest {
+    
+    private static final String TEST_DATE_STRING = "2024-11-26";
+    private static final String TEST_DATETIME_STRING = "2024-11-26 15:30:45.123";
+    private static final String TEST_DATETIME_ZONE_STRING = "2024-11-26T15:30:45.123Z";
+
+    @Mock
+    private ObjectMapper objectMapper;
+
+    @Test
+    void isoZoneFormatDateTime_ValidDate() {
+        Date date = new Date();
+        String result = CommonUtils.isoZoneFormatDateTime(date);
+        assertNotNull(result);
+        assertTrue(result.matches("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z"));
+    }
+
+    @Test
+    void isoZoneFormatDateTime_NullDate() {
+        assertThrows(IllegalArgumentException.class, 
+            () -> CommonUtils.isoZoneFormatDateTime(null));
+    }
+
+    @Test
+    void stringToDate_ValidString() throws ParseException {
+        Date result = CommonUtils.stringToDate(TEST_DATE_STRING);
+        assertNotNull(result);
+        assertEquals(TEST_DATE_STRING, CommonUtils.ISO_DATE_FORMAT.get().format(result));
+    }
+
+    @Test
+    void stringToDate_InvalidFormat() {
+        assertThrows(ParseException.class, 
+            () -> CommonUtils.stringToDate("invalid-date"));
+    }
+
+    @Test
+    void stringToTimestamp_ValidString() throws ParseException {
+        Timestamp result = CommonUtils.stringToTimestamp(TEST_DATETIME_STRING);
+        assertNotNull(result);
+        assertTrue(result.getTime() > 0);
+    }
+
+    @Test
+    void dateConversions_NullHandling() {
+        assertNull(CommonUtils.utilAsLocalDate(null));
+        assertNull(CommonUtils.utilAsLocalDateTime(null));
+        assertNull(CommonUtils.localDateAsUtil(null));
+        assertNull(CommonUtils.localDateTimeAsUtil(null));
+        assertNull(CommonUtils.utilAsSqlDate(null));
+        assertNull(CommonUtils.utilAsSqlTimestamp(null));
+        assertNull(CommonUtils.sqlDateAsUtil(null));
+        assertNull(CommonUtils.sqlTimestampDateAsUtil(null));
+    }
+
+    @Test
+    void dateConversions_ValidDates() {
+        // Test LocalDate conversions
+        LocalDate localDate = LocalDate.now();
+        Date utilDate = CommonUtils.localDateAsUtil(localDate);
+        LocalDate convertedBack = CommonUtils.utilAsLocalDate(utilDate);
+        assertEquals(localDate, convertedBack);
+
+        // Test LocalDateTime conversions
+        LocalDateTime localDateTime = LocalDateTime.now();
+        Date utilDateTime = CommonUtils.localDateTimeAsUtil(localDateTime);
+        LocalDateTime convertedBackDateTime = CommonUtils.utilAsLocalDateTime(utilDateTime);
+        assertEquals(localDateTime.withNano(0), convertedBackDateTime.withNano(0));
+    }
+
+    @Test
+    void moveFile_Success() throws IOException {
+        Path source = Files.createTempFile("test", ".tmp");
+        Path target = Paths.get(source.getParent().toString(), "moved.tmp");
+        
+        assertTrue(CommonUtils.moveFile(source, target));
+        assertFalse(Files.exists(source));
+        assertTrue(Files.exists(target));
+        
+        Files.deleteIfExists(target);
+    }
+
+    @Test
+    void moveFile_NullPaths() {
+        assertThrows(IllegalArgumentException.class, 
+            () -> CommonUtils.moveFile(null, Paths.get("test")));
+        assertThrows(IllegalArgumentException.class, 
+            () -> CommonUtils.moveFile(Paths.get("test"), null));
+    }
+
+    @Test
+    void prettyPrint_ValidObject() throws JsonProcessingException {
+        TestObject obj = new TestObject("test");
+        when(objectMapper.writerWithDefaultPrettyPrinter())
+            .thenReturn(objectMapper.writer());
+        when(objectMapper.writer().writeValueAsString(obj))
+            .thenReturn("{\"name\":\"test\"}");
+
+        String result = CommonUtils.prettyPrint(objectMapper, obj);
+        assertEquals("{\"name\":\"test\"}", result);
+    }
+
+    @Test
+    void prettyPrint_NullObject() {
+        assertEquals("", CommonUtils.prettyPrint(objectMapper, null));
+    }
+
+    @Test
+    void prettyPrint_NullMapper() {
+        assertThrows(IllegalArgumentException.class, 
+            () -> CommonUtils.prettyPrint(null, new Object()));
+    }
+
+    @Data
+    @AllArgsConstructor
+    private static class TestObject {
+        private String name;
+    }
+}
+```
+
+public final class PaymentUtils {
+    
+    private PaymentUtils() {
+        throw new AssertionError("Utility class should not be instantiated");
+    }
+
+    public static PwsRejectedRecord createRecordForRejectedFile(StepAwareService stepAwareService, String errMsg) {
+        if (stepAwareService == null) {
+            throw new IllegalArgumentException("StepAwareService cannot be null");
+        }
+        if (StringUtils.isEmpty(errMsg)) {
+            throw new IllegalArgumentException("Error message cannot be empty");
+        }
+
+        final PwsRejectedRecord rejected = new PwsRejectedRecord();
+        PwsFileUpload fileUpload = stepAwareService.getFileUpload();
+
+        if (fileUpload != null) {
+            rejected.setEntityType("Bulk File Rejected");
+            rejected.setEntityId(fileUpload.getFileUploadId());
+            rejected.setCreatedBy(fileUpload.getCreatedBy());
+            rejected.setBankReferenceId(fileUpload.getFileReferenceId());
+        } else {
+            rejected.setEntityType(stepAwareService.getBankEntityId());
+        }
+
+        rejected.setCreatedDate(Date.valueOf(LocalDate.now()));
+        rejected.setRejectCode(ErrorCode.PBP_2001);
+        rejected.setErrorDetail(errMsg);
+
+        return rejected;
+    }
+
+    public static PwsRejectedRecord createRecordForRejectedPayment(
+            StepAwareService stepAwareService,
+            PaymentInformation paymentInfo, 
+            String errMsg) {
+        validateInputs(stepAwareService, paymentInfo, errMsg);
+        
+        PwsFileUpload fileUpload = stepAwareService.getFileUpload();
+        if (fileUpload == null) {
+            throw new IllegalStateException("FileUpload must be available in StepAwareService");
+        }
+
+        final PwsRejectedRecord rejected = new PwsRejectedRecord();
+        rejected.setEntityType("Payment Rejected");
+        rejected.setEntityId(fileUpload.getFileUploadId());
+        rejected.setCreatedBy(fileUpload.getCreatedBy());
+        rejected.setCreatedDate(Date.valueOf(LocalDate.now()));
+        rejected.setBankReferenceId(fileUpload.getFileReferenceId());
+        rejected.setRejectCode(ErrorCode.PBP_2001);
+        
+        String dmpBatchNumber = Optional.ofNullable(paymentInfo.getPwsBulkTransactions())
+            .map(PwsBulkTransactions::getDmpBatchNumber)
+            .orElse("UNKNOWN");
+        rejected.setErrorDetail(String.format("DMPBatch<%s>: %s", dmpBatchNumber, errMsg));
+
+        return rejected;
+    }
+
+    public static PwsRejectedRecord createRecordForRejectedTransaction(
+            StepAwareService stepAwareService,
+            PaymentInformation paymentInfo, 
+            CreditTransferTransaction txn, 
+            String errMsg) {
+        validateInputs(stepAwareService, paymentInfo, errMsg);
+        if (txn == null) {
+            throw new IllegalArgumentException("Transaction cannot be null");
+        }
+
+        PwsFileUpload fileUpload = stepAwareService.getFileUpload();
+        if (fileUpload == null) {
+            throw new IllegalStateException("FileUpload must be available in StepAwareService");
+        }
+
+        final PwsRejectedRecord rejected = new PwsRejectedRecord();
+        rejected.setEntityType("Transaction Rejected");
+        rejected.setEntityId(fileUpload.getFileUploadId());
+        rejected.setLineNo(parseDmpLineNo(txn.getDmpLineNo()));
+        rejected.setCreatedBy(fileUpload.getCreatedBy());
+        rejected.setCreatedDate(Date.valueOf(LocalDate.now()));
+        rejected.setBankReferenceId(fileUpload.getFileReferenceId());
+        rejected.setRejectCode(ErrorCode.PBP_2001);
+        
+        String dmpBatchNumber = Optional.ofNullable(paymentInfo.getPwsBulkTransactions())
+            .map(PwsBulkTransactions::getDmpBatchNumber)
+            .orElse("UNKNOWN");
+        rejected.setErrorDetail(
+            String.format("DMPBatch<%s> transaction: %s", dmpBatchNumber, errMsg));
+
+        return rejected;
+    }
+
+    public static PwsSaveRecord createPwsSaveRecord(long id, String dmpTxnRef) {
+        return new PwsSaveRecord(id, Optional.ofNullable(dmpTxnRef).orElse(""));
+    }
+
+    public static void updatePaymentSaved(Pain001InboundProcessingResult result, PwsSaveRecord record) {
+        if (result == null) {
+            throw new IllegalArgumentException("Result cannot be null");
+        }
+        if (record == null) {
+            throw new IllegalArgumentException("Save record cannot be null");
+        }
+
+        if (result.getPaymentSaved() == null) {
+            result.setPaymentSaved(new ArrayList<>());
+        }
+        result.getPaymentSaved().add(record);
+    }
+
+    public static void updatePaymentSavedError(Pain001InboundProcessingResult result, PwsSaveRecord record) {
+        if (result == null) {
+            throw new IllegalArgumentException("Result cannot be null");
+        }
+        if (record == null) {
+            throw new IllegalArgumentException("Save record cannot be null");
+        }
+
+        if (result.getPaymentSavedError() == null) {
+            result.setPaymentSavedError(new ArrayList<>());
+        }
+        if (!result.getPaymentSavedError().contains(record)) {
+            result.getPaymentSavedError().add(record);
+        }
+    }
+
+    private static void validateInputs(StepAwareService stepAwareService, 
+                                     PaymentInformation paymentInfo, 
+                                     String errMsg) {
+        if (stepAwareService == null) {
+            throw new IllegalArgumentException("StepAwareService cannot be null");
+        }
+        if (paymentInfo == null) {
+            throw new IllegalArgumentException("PaymentInformation cannot be null");
+        }
+        if (StringUtils.isEmpty(errMsg)) {
+            throw new IllegalArgumentException("Error message cannot be empty");
+        }
+    }
+
+    private static long parseDmpLineNo(String dmpLineNo) {
+        try {
+            return Long.parseLong(dmpLineNo);
+        } catch (NumberFormatException e) {
+            log.warn("Invalid DMP line number: {}", dmpLineNo);
+            return 0;
+        }
+    }
+}
+```
+
+```java
+@ExtendWith(MockitoExtension.class)
+class PaymentUtilsTest {
+
+    @Mock
+    private StepAwareService stepAwareService;
+
+    @Mock
+    private PwsFileUpload fileUpload;
+
+    private PaymentInformation paymentInfo;
+    private CreditTransferTransaction transaction;
+    private static final String TEST_ERROR_MSG = "Test error message";
+    private static final long TEST_FILE_UPLOAD_ID = 123L;
+    private static final String TEST_CREATED_BY = "testUser";
+    private static final String TEST_FILE_REF = "TEST-REF-001";
+    private static final String TEST_BANK_ENTITY = "TEST_BANK";
+    private static final String TEST_DMP_BATCH = "BATCH001";
+
+    @BeforeEach
+    void setUp() {
+        // Setup FileUpload
+        when(fileUpload.getFileUploadId()).thenReturn(TEST_FILE_UPLOAD_ID);
+        when(fileUpload.getCreatedBy()).thenReturn(TEST_CREATED_BY);
+        when(fileUpload.getFileReferenceId()).thenReturn(TEST_FILE_REF);
+        when(stepAwareService.getFileUpload()).thenReturn(fileUpload);
+        when(stepAwareService.getBankEntityId()).thenReturn(TEST_BANK_ENTITY);
+
+        // Setup PaymentInfo
+        paymentInfo = new PaymentInformation();
+        PwsBulkTransactions bulkTxn = new PwsBulkTransactions();
+        bulkTxn.setDmpBatchNumber(TEST_DMP_BATCH);
+        paymentInfo.setPwsBulkTransactions(bulkTxn);
+
+        // Setup Transaction
+        transaction = new CreditTransferTransaction();
+        transaction.setDmpLineNo("1");
+    }
+
+    @Nested
+    class RejectedFileTests {
+        @Test
+        void createRecordForRejectedFile_WithFileUpload() {
+            PwsRejectedRecord result = PaymentUtils.createRecordForRejectedFile(
+                stepAwareService, TEST_ERROR_MSG);
+
+            assertNotNull(result);
+            assertEquals("Bulk File Rejected", result.getEntityType());
+            assertEquals(TEST_FILE_UPLOAD_ID, result.getEntityId());
+            assertEquals(TEST_CREATED_BY, result.getCreatedBy());
+            assertEquals(TEST_FILE_REF, result.getBankReferenceId());
+            assertEquals(ErrorCode.PBP_2001, result.getRejectCode());
+            assertEquals(TEST_ERROR_MSG, result.getErrorDetail());
+            assertNotNull(result.getCreatedDate());
+        }
+
+        @Test
+        void createRecordForRejectedFile_WithoutFileUpload() {
+            when(stepAwareService.getFileUpload()).thenReturn(null);
+
+            PwsRejectedRecord result = PaymentUtils.createRecordForRejectedFile(
+                stepAwareService, TEST_ERROR_MSG);
+
+            assertNotNull(result);
+            assertEquals(TEST_BANK_ENTITY, result.getEntityType());
+            assertEquals(ErrorCode.PBP_2001, result.getRejectCode());
+            assertEquals(TEST_ERROR_MSG, result.getErrorDetail());
+        }
+
+        @Test
+        void createRecordForRejectedFile_NullService() {
+            assertThrows(IllegalArgumentException.class, 
+                () -> PaymentUtils.createRecordForRejectedFile(null, TEST_ERROR_MSG));
+        }
+    }
+
+    @Nested
+    class RejectedPaymentTests {
+        @Test
+        void createRecordForRejectedPayment_Success() {
+            PwsRejectedRecord result = PaymentUtils.createRecordForRejectedPayment(
+                stepAwareService, paymentInfo, TEST_ERROR_MSG);
+
+            assertNotNull(result);
+            assertEquals("Payment Rejected", result.getEntityType());
+            assertEquals(TEST_FILE_UPLOAD_ID, result.getEntityId());
+            assertTrue(result.getErrorDetail().contains(TEST_DMP_BATCH));
+            assertTrue(result.getErrorDetail().contains(TEST_ERROR_MSG));
+        }
+
+        @Test
+        void createRecordForRejectedPayment_NullPaymentInfo() {
+            assertThrows(IllegalArgumentException.class, 
+                () -> PaymentUtils.createRecordForRejectedPayment(
+                    stepAwareService, null, TEST_ERROR_MSG));
+        }
+    }
+
+    @Nested
+    class RejectedTransactionTests {
+        @Test
+        void createRecordForRejectedTransaction_Success() {
+            PwsRejectedRecord result = PaymentUtils.createRecordForRejectedTransaction(
+                stepAwareService, paymentInfo, transaction, TEST_ERROR_MSG);
+
+            assertNotNull(result);
+            assertEquals("Transaction Rejected", result.getEntityType());
+            assertEquals(1L, result.getLineNo());
+            assertTrue(result.getErrorDetail().contains(TEST_DMP_BATCH));
+            assertTrue(result.getErrorDetail().contains(TEST_ERROR_MSG));
+        }
+
+        @Test
+        void createRecordForRejectedTransaction_InvalidLineNo() {
+            transaction.setDmpLineNo("invalid");
+            
+            PwsRejectedRecord result = PaymentUtils.createRecordForRejectedTransaction(
+                stepAwareService, paymentInfo, transaction, TEST_ERROR_MSG);
+
+            assertEquals(0L, result.getLineNo());
+        }
+    }
+
+    @Nested
+    class SaveRecordTests {
+        @Test
+        void createPwsSaveRecord_WithValidInput() {
+            PwsSaveRecord result = PaymentUtils.createPwsSaveRecord(123L, "TEST_REF");
+            
+            assertNotNull(result);
+            assertEquals(123L, result.getId());
+            assertEquals("TEST_REF", result.getDmpTxnRef());
+        }
+
+        @Test
+        void createPwsSaveRecord_WithNullDmpTxnRef() {
+            PwsSaveRecord result = PaymentUtils.createPwsSaveRecord(123L, null);
+            
+            assertNotNull(result);
+            assertEquals("", result.getDmpTxnRef());
+        }
+    }
+
+    @Nested
+    class UpdatePaymentResultTests {
+        private Pain001InboundProcessingResult result;
+        private PwsSaveRecord saveRecord;
+
+        @BeforeEach
+        void setUp() {
+            result = new Pain001InboundProcessingResult();
+            saveRecord = new PwsSaveRecord(123L, "TEST_REF");
+        }
+
+        @Test
+        void updatePaymentSaved_Success() {
+            PaymentUtils.updatePaymentSaved(result, saveRecord);
+            
+            assertNotNull(result.getPaymentSaved());
+            assertTrue(result.getPaymentSaved().contains(saveRecord));
+        }
+
+        @Test
+        void updatePaymentSavedError_NoDuplicates() {
+            PaymentUtils.updatePaymentSavedError(result, saveRecord);
+            PaymentUtils.updatePaymentSavedError(result, saveRecord);
+            
+            assertNotNull(result.getPaymentSavedError());
+            assertEquals(1, result.getPaymentSavedError().size());
+        }
+
+        @Test
+        void updatePaymentSaved_NullResult() {
+            assertThrows(IllegalArgumentException.class, 
+                () -> PaymentUtils.updatePaymentSaved(null, saveRecord));
+        }
+
+        @Test
+        void updatePaymentSavedError_NullRecord() {
+            assertThrows(IllegalArgumentException.class, 
+                () -> PaymentUtils.updatePaymentSavedError(result, null));
+        }
+    }
+}
+```
+
+# Flow
+
+```java
+```java
+@ExtendWith(MockitoExtension.class)
+class BulkProcessingFlowBuilderTest {
+
+    @Mock
+    private AppConfig appConfig;
+
+    @Mock
+    private ObjectMapper objectMapper;
+
+    @Mock
+    private JobRepository jobRepository;
+
+    @Mock
+    private JobLauncher jobLauncher;
+
+    @Mock
+    private PlatformTransactionManager platformTransactionManager;
+
+    @Mock
+    private PaymentContext paymentContext;
+
+    @Mock
+    private Pain001InboundService pain001InboundService;
+
+    @Mock
+    private Exchange exchange;
+
+    @Mock
+    private Message message;
+
+    @Mock
+    private JobExecution jobExecution;
+
+    @Mock
+    private ExecutionContext jobExecutionContext;
+
+    @Mock
+    private StepExecution stepExecution;
+
+    @InjectMocks
+    private BulkProcessingFlowBuilder flowBuilder;
+
+    private AppConfig.BulkRoute testRoute;
+    private InboundContext testContext;
+    private static final String TEST_FILE_PATH = "/test/path/testfile.json";
+    private static final String TEST_FILE_NAME = "testfile.json";
+
+    @BeforeEach
+    void setUp() {
+        setupTestRoute();
+        setupTestContext();
+        setupMocks();
+    }
+
+    @Nested
+    class RouteConfigurationTests {
+        @Test
+        void whenValidInboundRoute_shouldConfigureSuccessfully() throws Exception {
+            // Arrange
+            List<AppConfig.BulkRoute> routes = Collections.singletonList(testRoute);
+            when(appConfig.getBulkRoutes()).thenReturn(routes);
+
+            // Act
+            flowBuilder.configure();
+
+            // Assert
+            verify(appConfig).getBulkRoutes();
+        }
+
+        @Test
+        void whenOutboundRoute_shouldThrowException() {
+            // Arrange
+            testRoute.setProcessingType(AppConfig.ProcessingType.OUTBOUND);
+
+            // Act & Assert
+            assertThrows(BulkProcessingException.class, 
+                () -> flowBuilder.configureRoute(testRoute));
+        }
+
+        @Test
+        void whenNoSteps_shouldThrowException() {
+            // Arrange
+            testRoute.setSteps(Collections.emptyList());
+
+            // Act & Assert
+            assertThrows(BulkProcessingException.class, 
+                () -> flowBuilder.createJob(testRoute, exchange, paymentContext));
+        }
+    }
+
+    @Nested
+    class FileHandlingTests {
+        @Test
+        void whenBuildInboundUri_shouldCreateValidUri() {
+            // Act
+            String uri = flowBuilder.buildInboundFromUri(testRoute);
+
+            // Assert
+            assertTrue(uri.startsWith("file:///"));
+            assertTrue(uri.contains("antInclude=*_Auth.json"));
+            assertTrue(uri.contains("noop=true"));
+            assertTrue(uri.contains("recursive=false"));
+        }
+
+        @Test
+        void whenHandleInboundClose_withSuccess_shouldMoveFiles() {
+            // Arrange
+            setupMockFileSystem();
+
+            // Act
+            flowBuilder.handleInboundClose(testRoute, exchange, ExitStatus.COMPLETED);
+
+            // Assert
+            verifyFileMovement(true);
+        }
+
+        @Test
+        void whenHandleInboundClose_withFailure_shouldMoveToErrorDir() {
+            // Arrange
+            setupMockFileSystem();
+
+            // Act
+            flowBuilder.handleInboundClose(testRoute, exchange, ExitStatus.FAILED);
+
+            // Assert
+            verifyFileMovement(false);
+        }
+    }
+
+    @Nested
+    class JobExecutionTests {
+        @Test
+        void whenCreateJob_shouldSetupCorrectSteps() {
+            // Act
+            Job job = flowBuilder.createJob(testRoute, exchange, paymentContext);
+
+            // Assert
+            assertNotNull(job);
+            assertEquals("BatchJob_" + testRoute.getRouteName(), job.getName());
+            verifyStepsCreated();
+        }
+
+        @Test
+        void whenHandleJobExecution_withSuccess_shouldUpdateContext() {
+            // Arrange
+            setupSuccessfulJobExecution();
+
+            // Act
+            flowBuilder.handleInboundJobExecution(testRoute, exchange, jobExecution);
+
+            // Assert
+            verify(exchange.getIn()).setHeader("exitStatus", ExitStatus.COMPLETED);
+            verifyContextUpdated();
+        }
+
+        @Test
+        void whenHandleJobExecution_withFailure_shouldHandleError() {
+            // Arrange
+            setupFailedJobExecution();
+
+            // Act
+            flowBuilder.handleInboundJobExecution(testRoute, exchange, jobExecution);
+
+            // Assert
+            verify(exchange.getIn()).setHeader("exitStatus", ExitStatus.FAILED);
+            verifyErrorHandling();
+        }
+    }
+
+    @Nested
+    class StepCreationTests {
+        @Test
+        void whenCreatePain001ProcessingStep_shouldConfigureCorrectly() {
+            // Act
+            Step step = flowBuilder.createStepForName("pain001-processing", testRoute, paymentContext);
+
+            // Assert
+            assertNotNull(step);
+            assertEquals("pain001-processing", step.getName());
+        }
+
+        @Test
+        void whenCreatePaymentDebulkStep_shouldConfigureCorrectly() {
+            // Act
+            Step step = flowBuilder.createStepForName("payment-debulk", testRoute, paymentContext);
+
+            // Assert
+            assertNotNull(step);
+            assertEquals("payment-debulk", step.getName());
+        }
+
+        // Similar tests for other steps...
+
+        @Test
+        void whenUnknownStep_shouldThrowException() {
+            assertThrows(BulkProcessingException.class, 
+                () -> flowBuilder.createStepForName("unknown-step", testRoute, paymentContext));
+        }
+    }
+
+    private void setupTestRoute() {
+        testRoute = new AppConfig.BulkRoute();
+        testRoute.setRouteName("test-route");
+        testRoute.setProcessingType(AppConfig.ProcessingType.INBOUND);
+        testRoute.setEnabled(true);
+        testRoute.setSourceType(AppConfig.SourceDestinationType.FILE);
+        
+        AppConfig.FileSource fileSource = new AppConfig.FileSource();
+        fileSource.setDirectoryName("/test/input");
+        fileSource.setAntInclude("*_Auth.json");
+        fileSource.setNoop(true);
+        fileSource.setRecursive(false);
+        fileSource.setMove("/test/backup");
+        fileSource.setMoveFailed("/test/error");
+        testRoute.setFileSource(fileSource);
+        
+        testRoute.setSteps(Arrays.asList(
+            "pain001-processing",
+            "payment-debulk",
+            "payment-validation",
+            "payment-enrichment",
+            "payment-save"
+        ));
+    }
+
+    private void setupTestContext() {
+        testContext = new InboundContext();
+        testContext.setCountry(Country.builder().code("TH").name("Thailand").build());
+        testContext.setBulkRoute(testRoute);
+        testContext.setSourcePath(TEST_FILE_PATH);
+        testContext.setSourceName(TEST_FILE_NAME);
+        testContext.setFormat("json");
+    }
+
+    private void setupMocks() {
+        when(exchange.getIn()).thenReturn(message);
+        when(message.getHeader(Exchange.FILE_PATH, String.class)).thenReturn(TEST_FILE_PATH);
+        when(message.getHeader(Exchange.FILE_NAME, String.class)).thenReturn(TEST_FILE_NAME);
+        when(exchange.getProperty(ContextKey.routeContext, InboundContext.class)).thenReturn(testContext);
+        when(jobExecution.getExecutionContext()).thenReturn(jobExecutionContext);
+    }
+
+    // Additional helper methods...
+}
+```
+
+And here's the test support code:
+
+```java
+@TestConfiguration
+class BulkProcessingTestConfig {
+    @Bean
+    @Primary
+    public JobRepository testJobRepository() throws Exception {
+        JobRepositoryFactoryBean factory = new JobRepositoryFactoryBean();
+        factory.setDataSource(new EmbeddedDatabaseBuilder()
+            .setType(EmbeddedDatabaseType.H2)
+            .addScript("org/springframework/batch/core/schema-h2.sql")
+            .build());
+        factory.setTransactionManager(new ResourcelessTransactionManager());
+        return factory.getObject();
+    }
+
+    @Bean
+    public JobLauncher testJobLauncher(JobRepository jobRepository) {
+        SimpleJobLauncher launcher = new SimpleJobLauncher();
+        launcher.setJobRepository(jobRepository);
+        return launcher;
+    }
+}
 ```
 
 # Service
