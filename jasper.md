@@ -1,3 +1,39 @@
+'''java
+import java.util.Locale;
+import java.util.ResourceBundle;
+import java.util.HashMap;
+import net.sf.jasperreports.engine.*;
+
+public class ReportGenerator {
+
+    public void generateReport(String reportPath, Locale locale) {
+        try {
+            // Load the resource bundle
+            ResourceBundle resourceBundle = ResourceBundle.getBundle("messages", locale);
+
+            // Prepare parameters
+            HashMap<String, Object> parameters = new HashMap<>();
+            parameters.put(JRParameter.REPORT_RESOURCE_BUNDLE, resourceBundle);
+            parameters.put(JRParameter.REPORT_LOCALE, locale);
+
+            // Fill the report
+            JasperPrint jasperPrint = JasperFillManager.fillReport(
+                reportPath, parameters, new JREmptyDataSource()
+            );
+
+            // Export to PDF
+            JasperExportManager.exportReportToPdfFile(jasperPrint, "output.pdf");
+
+        } catch (JRException e) {
+            e.printStackTrace();
+        }
+    }
+}'''
+
+'''java
+ 
+'''
+
 // Project structure
 src/
   main/
