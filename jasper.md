@@ -1,4 +1,4 @@
-'''java
+java
 import java.util.Locale;
 import java.util.ResourceBundle;
 import java.util.HashMap;
@@ -28,10 +28,65 @@ public class ReportGenerator {
             e.printStackTrace();
         }
     }
-}'''
+}
 
-'''java
- 
+java
+import org.springframework.context.MessageSource;
+
+import java.util.Enumeration;
+import java.util.Locale;
+import java.util.ResourceBundle;
+
+public class SpringResourceBundle extends ResourceBundle {
+
+    private final MessageSource messageSource;
+    private final Locale locale;
+
+    public SpringResourceBundle(MessageSource messageSource, Locale locale) {
+        this.messageSource = messageSource;
+        this.locale = locale;
+    }
+
+    @Override
+    protected Object handleGetObject(String key) {
+        return messageSource.getMessage(key, null, locale);
+    }
+
+    @Override
+    public Enumeration<String> getKeys() {
+        // JasperReports doesn't require keys enumeration for message resolution
+        return null;
+    }
+}
+
+
+import net.sf.jasperreports.engine.*;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import java.util.HashMap;
+import java.util.Locale;
+import java.util.Map;
+
+@Service
+public class JasperReportService {
+
+    @Autowired
+    private MessageSource messageSource;
+
+    public JasperPrint generateReport(String reportPath, Map<String, Object> reportParameters, Locale locale) throws JRException {
+        // Custom ResourceBundle based on Spring's MessageSource
+        ResourceBundle resourceBundle = new SpringResourceBundle(messageSource, locale);
+
+        // Add resource bundle to report parameters
+        reportParameters.put(JRParameter.REPORT_RESOURCE_BUNDLE, resourceBundle);
+        reportParameters.put(JRParameter.REPORT_LOCALE, locale);
+
+        // Fill the report
+        JasperReport jasperReport = JasperCompileManager.compileReport(reportPath);
+        return JasperFillManager.fillReport(jasperReport, reportParameters, new JREmptyDataSource());
+    }
+}
 '''
 
 // Project structure
