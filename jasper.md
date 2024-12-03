@@ -1,3 +1,28 @@
+import org.springframework.context.MessageSource;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.support.ResourceBundleMessageSource;
+
+@Configuration
+public class MessageSourceConfig {
+
+    @Bean
+    public MessageSource messageSource() {
+        ResourceBundleMessageSource messageSource = new ResourceBundleMessageSource();
+        
+        // Set the base name to the custom path under resources (without the '.properties' extension)
+        messageSource.setBasename("classpath:report/translations");  // This will look for files like report/translations.properties
+        
+        // Optional: Set the default encoding and cache settings
+        messageSource.setDefaultEncoding("UTF-8");
+        messageSource.setUseCodeAsDefaultMessage(true);  // Use key if translation is missing
+        messageSource.setCacheSeconds(3600);  // Cache for 1 hour
+        
+        return messageSource;
+    }
+}
+
+
 java
 import java.util.Locale;
 import java.util.ResourceBundle;
