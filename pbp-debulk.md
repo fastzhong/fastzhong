@@ -1,5 +1,313 @@
 ```xml
+<select id="getBulkBothApprovalStatusTxnList" resultMap="bothParentApprovalStatusTxnMap"
+            statementType="PREPARED">
+        <![CDATA[
+        SELECT DISTINCT
+               transaction_id,
+				account_number,
+				account_currency,
+				initiation_time,
+				customer_transaction_status,
+				bank_reference_id,
+				resource_id,
+				feature_id,
+				company_id,
+				company_group_id,
+				CHANGE_TOKEN,
+				transaction_currency,
+				TOTAL_AMOUNT,
+				RECIPIENTS_REFERENCE,
+				VALUE_DATE,
+				is_recurring,
+				destination_country,
+				destination_bank_name,
+				fx_flag,
+				party_name,
+				party_account_number,
+				party_account_currency,
+				bank_code,
+				swift_code,
+				beneficiary_reference_id,
+				party_type,
+				residency_status,
+				party_id,
+				proxy_id_type,
+				id_issuing_country,
+				address_line_1,
+				address_line_2,
+				address_line_3,
+				phone_country,
+				phone_country_code,
+				phone_no,
+				fx_type,
+                booking_ref_id,
+                earmark_id,
+				TOTAL_CHILD,
+                HIGHEST_AMOUNT,
+                upload_file_name
+             FROM
+                (
+                <#if filterParams.isSingleTransaction?has_content && filterParams.isSingleTransaction??>
+                    SELECT
+				        txn.transaction_id,
+				        txn.account_number,
+				        txn.account_currency,
+				        txn.initiation_time,
+				        txn.customer_transaction_status,
+				        txn.bank_reference_id,
+				        txn.resource_id,
+				        txn.feature_id,
+				        txn.company_id,
+				        txn.company_group_id,
+				        txn.CHANGE_TOKEN,
+				        txni.transaction_currency,
+				        txni.transaction_amount AS TOTAL_AMOUNT,
+				        txni.customer_reference AS RECIPIENTS_REFERENCE,
+				        txni.value_date as VALUE_DATE,
+				        txni.is_recurring,
+				        txni.destination_country,
+				        txni.destination_bank_name,
+				        txni.fx_flag,
+				        pty.party_name,
+				        pty.party_account_number,
+				        pty.party_account_currency,
+				        pty.bank_code,
+				        pty.swift_code,
+				        pty.beneficiary_reference_id,
+				        pty.party_type,
+				        pty.residency_status,
+				        pty.party_id,
+				        pty.proxy_id_type,
+				        pty.id_issuing_country,
+				        ptyc.address_line_1,
+				        ptyc.address_line_2,
+				        ptyc.address_line_3,
+				        ptyc.phone_country,
+				        ptyc.phone_country_code,
+				        ptyc.phone_no,
+				        ptfc.fx_type,
+                        ptfb.booking_ref_id,
+                        ptfb.earmark_id,
+				        txn.TOTAL_CHILD,
+                        txn.HIGHEST_AMOUNT,
+                        null AS UPLOAD_FILE_NAME
+			    FROM PWS_TRANSACTIONS txn
+				INNER JOIN PWS_TRANSACTION_INSTRUCTIONS txni on txn.transaction_id = txni.transaction_id
+				LEFT JOIN PWS_PARTIES pty on pty.transaction_id = txni.transaction_id
+                LEFT JOIN PWS_PARTY_CONTACTS ptyc on pty.party_id = ptyc.party_id
+                AND ptyc.PARTY_CONTACT_TYPE = <@p value=partyContactType/>
+				LEFT JOIN PWS_TRANSACTION_FX_CONTRACTS ptfc on ptfc.transaction_id = txni.transaction_id
+						   AND ptfc.bank_reference_id = txn.bank_reference_id
+				LEFT JOIN PWS_TRANSACTION_FX_BOOKINGS ptfb on ptfb.booking_id = ptfc.booking_id
+			        WHERE txn.customer_transaction_status NOT IN (
+                        'PENDING_SUBMIT',
+                        'NEW',
+                        'DELETED'
+                        )
+                AND nvl(txn.application_type,'X') != 'terminateRecurring'
+				<#if filterParams.multiBankReferenceIds?has_content && filterParams.multiBankReferenceIds??>
+		           AND txn.bank_reference_id in (<#list filterParams.multiBankReferenceIds as bankReferencesVal> <@p value=bankReferencesVal/> <#if bankReferencesVal_has_next>,</#if> </#list> )
+                </#if>
+                <#if filterParams.bankRefIds?has_content && filterParams.bankRefIds??>
+	       			 AND UPPER(txn.bank_reference_id) LIKE UPPER('%${filterParams.bankRefIds}%')
+       			</#if>
+                <#if filterParams.customerReferencesList?has_content && filterParams.customerReferencesList??>
+		             AND txni.customer_reference in (<#list filterParams.customerReferencesList as cusRef> <@p value=cusRef/>  <#if cusRef_has_next>,</#if> </#list>)
+                </#if>
 
+                 <#if filterParams.singleAccountBasedOnResourceFeatureList?has_content && filterParams.singleAccountBasedOnResourceFeatureList??>
+                       AND (txn.company_group_id || '_' || txn.COMPANY_ID || '_' || txn.account_number || '_' || txn.RESOURCE_ID || '_' || txn.FEATURE_ID)
+		               in (<#list filterParams.singleAccountBasedOnResourceFeatureList as companyAccountGroup> <@p value=companyAccountGroup/> <#if companyAccountGroup_has_next>,</#if> </#list> )
+                 </#if>
+                <#if filterParams.companyIdList?has_content && filterParams.companyIdList??>
+                      AND txn.COMPANY_ID in (<#list filterParams.companyIdList as companyIds> <@p value=companyIds/> <#if companyIds_has_next>,</#if> </#list> )
+                 </#if>
+                 <#if filterParams.companyGroupId?has_content && filterParams.companyGroupId??>
+		              AND txn.company_group_id in ${filterParams.companyGroupId}
+                 </#if>
+                <#if filterParams.accountNumberList?has_content && filterParams.accountNumberList??>
+		              AND txn.account_number in (<#list filterParams.accountNumberList as accountNumbers> <@p value=accountNumbers/> <#if accountNumbers_has_next>,</#if> </#list> )
+                </#if>
+                <#if filterParams.transactionCurrencyList?has_content && filterParams.transactionCurrencyList?? >
+		             AND txni.transaction_currency in (<#list filterParams.transactionCurrencyList as transactionCurrencies> <@p value=transactionCurrencies/> <#if transactionCurrencies_has_next>,</#if> </#list> )
+
+                </#if>
+                <#if filterParams.statusList?has_content && filterParams.statusList??>
+		             AND txn.customer_transaction_status in (<#list filterParams.statusList as statusVal> <@p value=statusVal/> <#if statusVal_has_next>,</#if> </#list> )
+
+                </#if>
+                <#if filterParams.transactionFromAmount ?? && filterParams.transactionFromAmount?has_content && filterParams.transactionToAmount ?? && filterParams.transactionToAmount?has_content >
+					and txni.transaction_amount between <@p name='filterParams.transactionFromAmount'/> and <@p name='filterParams.transactionToAmount'/>
+	            </#if>
+	             <#if filterParams.transactionFromAmount ?? && filterParams.transactionFromAmount?has_content>
+					    and txni.transaction_amount >= <@p name='filterParams.transactionFromAmount'/>
+			     </#if>
+				 <#if filterParams.transactionToAmount ?? && filterParams.transactionToAmount?has_content>
+					    and txni.transaction_amount <=  <@p name='filterParams.transactionToAmount'/>
+				 </#if>
+                <#if filterParams.payerNameList?has_content && filterParams.payerNameList??>
+		             AND pty.party_name in (<#list filterParams.payerNameList as payerNames> <@p value=payerNames/> <#if payerNames_has_next>,</#if> </#list> )
+
+                </#if>
+                 <#if filterParams.payerAccountNumberList?has_content && filterParams.payerAccountNumberList??>
+		             AND pty.party_account_number in (<#list filterParams.payerAccountNumberList as payerAccountNumbers> <@p value=payerAccountNumbers/> <#if payerAccountNumbers_has_next>,</#if> </#list> )
+
+                </#if>
+                 <#if filterParams.payerBankCodeList?has_content && filterParams.payerBankCodeList??>
+		             AND pty.bank_code in (<#list filterParams.payerBankCodeList as payerBankCodes> <@p value=payerBankCodes/> <#if payerBankCodes_has_next>,</#if> </#list> )
+
+                </#if>
+                 <#if filterParams.payerSwiftCodeList?has_content && filterParams.payerSwiftCodeList??>
+		             AND pty.swift_code in (<#list filterParams.payerSwiftCodeList as payerSwiftCodes> <@p value=payerSwiftCodes/> <#if payerSwiftCodes_has_next>,</#if> </#list> )
+                 </#if>
+
+                 <#if filterParams.applicationFromDate?has_content && filterParams.applicationFromDate?? && filterParams.applicationToDate?has_content && filterParams.applicationToDate??>
+                          AND trunc(txn.initiation_time) between '${filterParams.applicationFromDate}' and '${filterParams.applicationToDate}'
+                </#if>
+                 <#if filterParams.valueFromDate?has_content && filterParams.valueFromDate?? && filterParams.valueToDate?has_content && filterParams.valueToDate??>
+                          AND txni.value_date between '${filterParams.valueFromDate}' and '${filterParams.valueToDate}'
+                </#if>
+                <#if filterParams.accountCurrencyList?has_content && filterParams.accountCurrencyList??>
+		            AND txn.account_currency in (<#list filterParams.accountCurrencyList as accountCurrencys> <@p value=accountCurrencys/> <#if accountCurrencys_has_next>,</#if> </#list> )
+                </#if>
+             </#if>
+             <#if filterParams.isBulkTransaction?has_content && filterParams.isBulkTransaction?? && filterParams.isSingleTransaction?has_content && filterParams.isSingleTransaction??>
+			UNION ALL
+			</#if>
+		<#if filterParams.isBulkTransaction?has_content && filterParams.isBulkTransaction??>
+			SELECT
+				txn.transaction_id,
+				txn.account_number,
+				txn.account_currency,
+				txn.initiation_time,
+				txn.customer_transaction_status,
+				txn.bank_reference_id,
+				txn.resource_id,
+				txn.feature_id,
+				txn.company_id,
+				txn.company_group_id,
+				txn.CHANGE_TOKEN,
+				txn.TRANSACTION_CURRENCY,
+				txn.TOTAL_AMOUNT,
+				btxn.RECIPIENTS_REFERENCE,
+				btxn.TRANSFER_DATE as VALUE_DATE,
+				null as is_recurring,
+				null as destination_country,
+				null as destination_bank_name,
+				null as fx_flag,
+				null as party_name,
+				null as party_account_number,
+				null as party_account_currency,
+				null as bank_code,
+				null as swift_code,
+				null as beneficiary_reference_id,
+				null as party_type,
+				null as residency_status,
+				null as party_id,
+				null as proxy_id_type,
+				null as id_issuing_country,
+				null as address_line_1,
+				null as address_line_2,
+				null as address_line_3,
+				null as phone_country,
+				null as phone_country_code,
+				null as phone_no,
+				null as fx_type,
+				null as booking_ref_id,
+				null as earmark_id,
+				txn.TOTAL_CHILD,
+				txn.HIGHEST_AMOUNT,
+				pfu.upload_file_name AS UPLOAD_FILE_NAME
+			FROM PWS_TRANSACTIONS txn
+			LEFT JOIN PWS_BULK_TRANSACTIONS btxn on btxn.transaction_id = txn.transaction_id
+			LEFT JOIN pws_file_upload pfu on pfu.FILE_UPLOAD_ID = btxn.FILE_UPLOAD_ID
+			WHERE txn.customer_transaction_status NOT IN (
+                    'PENDING_SUBMIT',
+                    'NEW',
+                    'DELETED'
+                )
+            AND nvl(txn.application_type,'X') != 'terminateRecurring'
+                <#if filterParams.transactionId?has_content && filterParams.transactionId??>
+		            AND txn.TRANSACTION_ID in ${filterParams.transactionId}
+                </#if>
+                <#if filterParams.isChannelAdmin?has_content && filterParams.isChannelAdmin??>
+                        <#if filterParams.resourceIdList?has_content && filterParams.resourceIdList??>
+                            AND txn.RESOURCE_ID in (<#list filterParams.resourceIdList as resourceIds> <@p value=resourceIds/> <#if resourceIds_has_next>,</#if> </#list>)
+                        </#if>
+                        <#if filterParams.featureIdList?has_content && filterParams.featureIdList??>
+                            AND txn.FEATURE_ID in (<#list filterParams.featureIdList as featureIds> <@p value=featureIds/> <#if featureIds_has_next>,</#if> </#list>)
+                         </#if>
+                     </#if>
+                 <#if filterParams.excludeTransactionId?has_content && filterParams.excludeTransactionId??>
+		             AND txn.TRANSACTION_ID  not in ${filterParams.excludeTransactionId}
+                 </#if>
+                 <#if filterParams.bulkAccountBasedOnResourceFeatureList?has_content && filterParams.bulkAccountBasedOnResourceFeatureList??>
+                       AND (txn.company_group_id || '_' || txn.COMPANY_ID || '_' || txn.account_number || '_' || txn.RESOURCE_ID || '_' || txn.FEATURE_ID)
+		               in (<#list filterParams.bulkAccountBasedOnResourceFeatureList as companyAccountGroup> <@p value=companyAccountGroup/> <#if companyAccountGroup_has_next>,</#if> </#list> )
+                 </#if>
+                 <#if filterParams.companyIdList?has_content && filterParams.companyIdList??>
+                      AND txn.COMPANY_ID in (<#list filterParams.companyIdList as companyIds> <@p value=companyIds/> <#if companyIds_has_next>,</#if> </#list> )
+                 </#if>
+                 <#if filterParams.companyGroupId?has_content && filterParams.companyGroupId??>
+		              AND txn.company_group_id in ${filterParams.companyGroupId}
+                 </#if>
+                <#if filterParams.accountNumberList?has_content && filterParams.accountNumberList??>
+		              AND txn.account_number in (<#list filterParams.accountNumberList as accountNumbers> <@p value=accountNumbers/> <#if accountNumbers_has_next>,</#if> </#list> )
+                </#if>
+                 <#if filterParams.companyName?has_content && filterParams.companyName??>
+		             AND txn.COMPANY_NAME in ${filterParams.companyName}
+                 </#if>
+                 <#if filterParams.accountCurrencyList?has_content && filterParams.accountCurrencyList??>
+		              AND txn.account_currency in (<#list filterParams.accountCurrencyList as accountCurrencys> <@p value=accountCurrencys/> <#if accountCurrencys_has_next>,</#if> </#list> )
+                 </#if>
+                 <#if filterParams.applicationFromDate?has_content && filterParams.applicationFromDate?? && filterParams.applicationToDate?has_content && filterParams.applicationToDate??>
+                        AND trunc(txn.initiation_time) between '${filterParams.applicationFromDate}' and '${filterParams.applicationToDate}'
+                 </#if>
+                 <#if filterParams.statusList?has_content && filterParams.statusList??>
+		               AND txn.customer_transaction_status in (<#list filterParams.statusList as statusVal> <@p value=statusVal/> <#if statusVal_has_next>,</#if> </#list> )
+                 </#if>
+                <#if filterParams.transactionCurrencyList?has_content && filterParams.transactionCurrencyList?? >
+		                AND txn.transaction_currency in (<#list filterParams.transactionCurrencyList as transactionCurrencies> <@p value=transactionCurrencies/> <#if transactionCurrencies_has_next>,</#if> </#list> )
+                 </#if>
+                 <#if filterParams.transactionFromAmount ?? && filterParams.transactionFromAmount?has_content && filterParams.transactionToAmount ?? && filterParams.transactionToAmount?has_content >
+                        and txn.TOTAL_AMOUNT between <@p name='filterParams.transactionFromAmount'/> and <@p name='filterParams.transactionToAmount'/>
+				 </#if>
+				  <#if filterParams.transactionFromAmount ?? && filterParams.transactionFromAmount?has_content>
+					    and txn.TOTAL_AMOUNT >= <@p name='filterParams.transactionFromAmount'/>
+			     </#if>
+				 <#if filterParams.transactionToAmount ?? && filterParams.transactionToAmount?has_content>
+					    and txn.TOTAL_AMOUNT <=  <@p name='filterParams.transactionToAmount'/>
+				 </#if>
+	             <#if filterParams.multiBankReferenceIds?has_content && filterParams.multiBankReferenceIds??>
+		                 AND txn.bank_reference_id in (<#list filterParams.multiBankReferenceIds as bankReferencesVal> <@p value=bankReferencesVal/> <#if bankReferencesVal_has_next>,</#if> </#list> )
+                 </#if>
+                  <#if filterParams.bankRefIds?has_content && filterParams.bankRefIds??>
+	       			 AND UPPER(txn.bank_reference_id) LIKE UPPER('%${filterParams.bankRefIds}%')
+       			</#if>
+                 <#if filterParams.customerReferencesList?has_content && filterParams.customerReferencesList??>
+                        AND btxn.RECIPIENTS_REFERENCE IN (<#list filterParams.customerReferencesList as cusRef> <@p value=cusRef/>  <#if cusRef_has_next>,</#if> </#list>)
+                 </#if>
+                 <#if filterParams.valueFromDate?has_content && filterParams.valueFromDate?? && filterParams.valueToDate?has_content && filterParams.valueToDate??>
+                          AND trunc(btxn.TRANSFER_DATE) between '${filterParams.valueFromDate}' and '${filterParams.valueToDate}'
+                 </#if>
+                 <#if filterParams.numberOfChildTransactions?has_content && filterParams.numberOfChildTransactions??>
+		                AND txn.TOTAL_CHILD = ${filterParams.numberOfChildTransactions}
+                 </#if>
+                 <#if filterParams.maxNumberOfChildTransactions?has_content && filterParams.maxNumberOfChildTransactions??>
+		                AND txn.TOTAL_CHILD <= ${filterParams.maxNumberOfChildTransactions}
+                 </#if>
+                 <#if filterParams.excludeBatch == true>
+                       AND txn.batch_id is null
+                </#if>
+                <#if filterParams.batchId?has_content>
+                       AND txn.batch_id = <@p name='filterParams.batchId'/>
+                </#if>
+
+        </#if>
+			) bothTrans
+			 ORDER BY ${filterParams.sortFieldWithDirection}
+			     OFFSET ${filterParams.offset} ROWS FETCH NEXT ${filterParams.limit} ROWS ONLY
+		]]>
 ```
 
 
