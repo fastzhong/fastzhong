@@ -1,4 +1,51 @@
 ```xml
+<#if filterParams.singleAccountBasedOnResourceFeatureList?has_content && filterParams.singleAccountBasedOnResourceFeatureList??>
+    AND (txn.company_group_id || '_' || txn.COMPANY_ID || '_' || txn.account_number || '_' || txn.RESOURCE_ID || '_' || txn.FEATURE_ID)
+    IN (
+        <#list filterParams.singleAccountBasedOnResourceFeatureList as companyAccountGroup>
+            <@p value=companyAccountGroup/>
+            <#if companyAccountGroup_has_next>,</#if>
+        </#list>
+    )
+</#if>
+```
+
+```xml
+<#if filterParams.singleAccountBasedOnResourceFeatureList?has_content && filterParams.singleAccountBasedOnResourceFeatureList??>
+    AND EXISTS (
+        <#list filterParams.singleAccountBasedOnResourceFeatureList?chunk(300) as chunk>
+            SELECT 1 FROM dual WHERE 
+            (txn.company_group_id || '_' || txn.COMPANY_ID || '_' || txn.account_number || '_' || txn.RESOURCE_ID || '_' || txn.FEATURE_ID) IN (
+                <#list chunk as companyAccountGroup>
+                    <@p value=companyAccountGroup/>
+                    <#if companyAccountGroup_has_next>,</#if>
+                </#list>
+            )
+            <#if chunk_has_next> UNION ALL </#if>
+        </#list>
+    )
+</#if>
+```
+
+```xml
+<#if filterParams.singleAccountBasedOnResourceFeatureList?has_content && filterParams.singleAccountBasedOnResourceFeatureList??>
+    AND (
+        <#list filterParams.singleAccountBasedOnResourceFeatureList?chunk(1000) as chunk>
+            (txn.company_group_id || '_' || txn.COMPANY_ID || '_' || txn.account_number || '_' || txn.RESOURCE_ID || '_' || txn.FEATURE_ID)
+            IN (
+                <#list chunk as companyAccountGroup>
+                    <@p value=companyAccountGroup/>
+                    <#if companyAccountGroup_has_next>,</#if>
+                </#list>
+            )
+            <#if chunk_has_next> OR </#if>
+        </#list>
+    )
+</#if>
+```
+
+
+```xml
 <select id="getBulkBothApprovalStatusTxnList" resultMap="bothParentApprovalStatusTxnMap"
             statementType="PREPARED">
         <![CDATA[
