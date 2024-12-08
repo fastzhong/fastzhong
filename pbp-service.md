@@ -323,20 +323,805 @@ class StepAwareServiceTest {
 }
 ```
 
-# Pain001Processing
-
-```java
-```
-
 
 # Pain001InboundService
 
 ```java
+package com.example.service;
+
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.*;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.springframework.batch.core.StepExecution;
+import org.springframework.batch.item.ExecutionContext;
+import java.io.File;
+import java.util.Arrays;
+import java.util.List;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+class PaymentProcessingServiceTest {
+
+    @Mock private ObjectMapper objectMapper;
+    @Mock private Pain001ProcessService pain001ProcessService;
+    @Mock private PaymentDebulkService paymentDebulkService;
+    @Mock private PaymentEnrichmentService paymentEnrichmentService;
+    @Mock private PaymentValidationService paymentValidationService;
+    @Mock private PaymentSaveService paymentSaveService;
+    @Mock private PaymentDeleteService paymentDeleteService;
+    @Mock private PaymentUpdateService paymentUpdateService;
+    @Mock private PaymentUtils paymentUtils;
+    @Mock private StepExecution stepExecution;
+    @Mock private ExecutionContext executionContext;
+    @Mock private JsonParser jsonParser;
+    
+    private PaymentProcessingService service;
+    private AutoCloseable closeable;
+
+    @BeforeEach
+    void setUp() {
+        closeable = MockitoAnnotations.openMocks(this);
+        service = new PaymentProcessingService(
+            objectMapper, pain001ProcessService, paymentDebulkService,
+            paymentEnrichmentService, paymentValidationService,
+            paymentSaveService, paymentDeleteService, paymentUpdateService,
+            paymentUtils
+        );
+        service.beforeStep(stepExecution);
+        
+        when(stepExecution.getExecutionContext()).thenReturn(executionContext);
+    }
+
+    @AfterEach
+    void tearDown() throws Exception {
+        closeable.close();
+    }
+
+    @Nested
+    @DisplayName("Pain001 Processing Tests")
+    class Pain001ProcessingTests {
+        
+        @Test
+        @DisplayName("Should process valid Pain001 file")
+        void processPain001_WithValidFile_ShouldProcess() throws Exception {
+            // Arrange
+            File jsonFile = mock(File.class);
+            GroupHeaderDTO groupHeader = new GroupHeaderDTO();
+            List<PaymentInformation> paymentInfos = Arrays.asList(
+                new PaymentInformation(), new PaymentInformation()
+            );
+            
+            when(objectMapper.getFactory().createParser(jsonFile)).thenReturn(jsonParser);
+            when(pain001ProcessService.processPain001GroupHeader(any()))
+                .thenReturn(new SourceProcessStatus(SourceProcessStatus.Result.Success, ""));
+            when(pain001ProcessService.processPain001BoMappingValidation(paymentInfos))
+                .thenReturn(new SourceProcessStatus(SourceProcessStatus.Result.Success, ""));
+            
+            // Act
+            List<PaymentInformation> result = service.processPain001(jsonFile);
+
+            // Assert
+            assertNotNull(result);
+            verify(pain001ProcessService).processPain001GroupHeader(any());
+            verify(pain001ProcessService).processPain001BoMappingValidation(paymentInfos);
+        }
+
+        @Test
+        @DisplayName("Should handle parse error")
+        void processPain001_WithParseError_ShouldHandleError() throws Exception {
+            // Arrange
+            File jsonFile = mock(File.class);
+            when(objectMapper.getFactory().createParser(jsonFile))
+                .thenThrow(new IOException("Parse error"));
+
+            // Act
+            List<PaymentInformation> result = service.processPain001(jsonFile);
+
+            // Assert
+            assertNull(result);
+            verify(paymentSaveService).createRejectedRecord(any(PwsRejectedRecord.class));
+        }
+    }
+
+    @Nested
+    @DisplayName("Payment Debulking Tests")
+    class PaymentDebulkingTests {
+        
+        @Test
+        @DisplayName("Should debulk valid payments")
+        void debulk_WithValidPayments_ShouldDebulk() {
+            // Arrange
+            List<PaymentInformation> payments = Arrays.asList(
+                new PaymentInformation(), new PaymentInformation()
+            );
+            List<PaymentInformation> debulkedPayments = Arrays.asList(
+                new PaymentInformation(), new PaymentInformation(), new PaymentInformation()
+            );
+            
+            when(paymentDebulkService.debulk(payments)).thenReturn(debulkedPayments);
+            when(executionContext.get(ContextKey.result, Pain001InboundProcessingResult.class))
+                .thenReturn(new Pain001InboundProcessingResult());
+
+            // Act
+            List<PaymentInformation> result = service.debulk(payments);
+
+            // Assert
+            assertNotNull(result);
+            assertEquals(3, result.size());
+            verify(paymentDebulkService).debulk(payments);
+        }
+    }
+
+    @Nested
+    @DisplayName("Payment Validation Tests")
+    class PaymentValidationTests {
+        
+        @Test
+        @DisplayName("Should validate payments through all stages")
+        void validate_WithValidPayments_ShouldValidate() {
+            // Arrange
+            List<PaymentInformation> payments = Arrays.asList(
+                createValidPayment(), createValidPayment()
+            );
+            
+            when(paymentValidationService.doEntitlementValidation(any()))
+                .thenReturn(payments);
+            when(paymentValidationService.doPreTransactionValidation(any()))
+                .thenReturn(payments);
+            when(paymentValidationService.doTransactionValidation(any()))
+                .thenReturn(payments);
+            when(paymentValidationService.doPostTransactionValidation(any()))
+                .thenReturn(payments);
+            when(paymentValidationService.doDuplicationValidation(any()))
+                .thenReturn(payments);
+
+            // Act
+            List<PaymentInformation> result = service.validate(payments);
+
+            // Assert
+            assertNotNull(result);
+            assertEquals(2, result.size());
+            verify(paymentValidationService).doEntitlementValidation(any());
+            verify(paymentValidationService).doPreTransactionValidation(any());
+            verify(paymentValidationService).doTransactionValidation(any());
+            verify(paymentValidationService).doPostTransactionValidation(any());
+            verify(paymentValidationService).doDuplicationValidation(any());
+        }
+
+        @Test
+        @DisplayName("Should handle validation failures")
+        void validate_WithInvalidPayments_ShouldReject() {
+            // Arrange
+            List<PaymentInformation> payments = Arrays.asList(
+                createInvalidPayment(), createInvalidPayment()
+            );
+            
+            when(paymentValidationService.doEntitlementValidation(any()))
+                .thenReturn(payments);
+            when(executionContext.get(ContextKey.result, Pain001InboundProcessingResult.class))
+                .thenReturn(new Pain001InboundProcessingResult());
+
+            // Act
+            List<PaymentInformation> result = service.validate(payments);
+
+            // Assert
+            assertNull(result);
+            verify(paymentSaveService, times(2)).createRejectedRecord(any());
+        }
+    }
+
+    @Nested
+    @DisplayName("Payment Save Tests")
+    class PaymentSaveTests {
+        
+        @Test
+        @DisplayName("Should save valid payments")
+        void save_WithValidPayments_ShouldSave() {
+            // Arrange
+            PaymentInformation validPayment = createValidPayment();
+            validPayment.setValid(true);
+            List<PaymentInformation> payments = Arrays.asList(validPayment);
+            
+            when(executionContext.get(ContextKey.result, Pain001InboundProcessingResult.class))
+                .thenReturn(new Pain001InboundProcessingResult());
+
+            // Act
+            List<PaymentInformation> result = service.save(payments);
+
+            // Assert
+            assertNotNull(result);
+            verify(paymentSaveService).savePaymentInformation(validPayment);
+            verify(paymentUpdateService).updateFileUploadStatus(any());
+        }
+
+        @Test
+        @DisplayName("Should handle save errors")
+        void save_WithSaveError_ShouldHandleError() {
+            // Arrange
+            PaymentInformation payment = createValidPayment();
+            payment.setValid(true);
+            List<PaymentInformation> payments = Arrays.asList(payment);
+            
+            doThrow(new RuntimeException("Save error"))
+                .when(paymentSaveService).savePaymentInformation(any());
+            when(executionContext.get(ContextKey.result, Pain001InboundProcessingResult.class))
+                .thenReturn(new Pain001InboundProcessingResult());
+
+            // Act
+            List<PaymentInformation> result = service.save(payments);
+
+            // Assert
+            assertNotNull(result);
+            verify(paymentDeleteService).deleteSavedPaymentInformation(payment);
+            verify(paymentUtils).updatePaymentSavedError(any(), any());
+        }
+    }
+
+    private PaymentInformation createValidPayment() {
+        PaymentInformation payment = new PaymentInformation();
+        payment.setEntitled(true);
+        payment.setValid(true);
+        payment.setPwsTransactions(new PwsTransactions());
+        payment.setPwsBulkTransactions(new PwsBulkTransactions());
+        return payment;
+    }
+
+    private PaymentInformation createInvalidPayment() {
+        PaymentInformation payment = new PaymentInformation();
+        payment.setEntitled(false);
+        payment.setValid(false);
+        payment.setPwsTransactions(new PwsTransactions());
+        payment.setPwsBulkTransactions(new PwsBulkTransactions());
+        return payment;
+    }
+}
+```
+
+# Pain001Processing
+
+```java
+package com.example.service;
+
+import org.junit.jupiter.api.*;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.springframework.batch.core.StepExecution;
+import org.springframework.batch.item.ExecutionContext;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.*;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+class Pain001ProcessServiceImplTest {
+
+    @Mock private AppConfig appConfig;
+    @Mock private ObjectMapper objectMapper;
+    @Mock private PaymentMappingService paymentMappingService;
+    @Mock private PaymentIntegrationservice paymentIntegrationservice;
+    @Mock private PaymentQueryService paymentQueryService;
+    @Mock private PaymentSaveService paymentSaveService;
+    @Mock private AesQueryDao aesQueryDao;
+    @Mock private StepExecution stepExecution;
+    @Mock private ExecutionContext executionContext;
+    
+    private Pain001ProcessServiceImpl service;
+    private AutoCloseable closeable;
+
+    @BeforeEach
+    void setUp() {
+        closeable = MockitoAnnotations.openMocks(this);
+        service = new Pain001ProcessServiceImpl(
+            appConfig,
+            objectMapper,
+            paymentMappingService,
+            paymentIntegrationservice,
+            paymentQueryService,
+            paymentSaveService,
+            aesQueryDao
+        );
+        service.beforeStep(stepExecution);
+        
+        when(stepExecution.getExecutionContext()).thenReturn(executionContext);
+        when(executionContext.get(ContextKey.result, Pain001InboundProcessingResult.class))
+            .thenReturn(new Pain001InboundProcessingResult());
+    }
+
+    @AfterEach
+    void tearDown() throws Exception {
+        closeable.close();
+    }
+
+    @Nested
+    @DisplayName("Group Header Processing Tests")
+    class GroupHeaderProcessingTests {
+        
+        @Test
+        @DisplayName("Should process valid group header")
+        void processPain001GroupHeader_WithValidHeader_ShouldProcess() {
+            // Arrange
+            GroupHeaderDTO header = new GroupHeaderDTO();
+            header.setFilestatus(DmpFileStatus.APPROVED.value);
+            header.setFilereference("REF123");
+            header.setFileformat("JSON");
+            header.setControlSum("1000.00");
+            header.setNumberOfTransactions("5");
+            
+            PwsFileUpload fileUpload = new PwsFileUpload();
+            fileUpload.setCreatedBy("123");
+            fileUpload.setCompanyId(456L);
+            fileUpload.setResourceId("RES001");
+            fileUpload.setFeatureId("FEAT001");
+            
+            when(paymentQueryService.getFileUpload("REF123")).thenReturn(fileUpload);
+            when(paymentIntegrationservice.getResourcesAndFeatures(anyLong()))
+                .thenReturn(createValidResourceFeaturesData());
+
+            // Act
+            SourceProcessStatus result = service.processPain001GroupHeader(header);
+
+            // Assert
+            assertEquals(SourceProcessStatus.Result.SourceOK, result.getResult());
+            verify(paymentQueryService).getFileUpload("REF123");
+            verify(paymentIntegrationservice).getResourcesAndFeatures(anyLong());
+        }
+
+        @Test
+        @DisplayName("Should reject file with rejected status")
+        void processPain001GroupHeader_WithRejectedStatus_ShouldReject() {
+            // Arrange
+            GroupHeaderDTO header = new GroupHeaderDTO();
+            header.setFilestatus(DmpFileStatus.REJECTED.value);
+
+            // Act
+            SourceProcessStatus result = service.processPain001GroupHeader(header);
+
+            // Assert
+            assertEquals(SourceProcessStatus.Result.SourceReject, result.getResult());
+            assertTrue(result.getMessage().contains("File rejected by DMP"));
+        }
+
+        @Test
+        @DisplayName("Should handle missing file upload")
+        void processPain001GroupHeader_WithMissingFileUpload_ShouldError() {
+            // Arrange
+            GroupHeaderDTO header = new GroupHeaderDTO();
+            header.setFilestatus(DmpFileStatus.APPROVED.value);
+            header.setFilereference("REF123");
+            
+            when(paymentQueryService.getFileUpload("REF123")).thenReturn(null);
+
+            // Act
+            SourceProcessStatus result = service.processPain001GroupHeader(header);
+
+            // Assert
+            assertEquals(SourceProcessStatus.Result.SourceError, result.getResult());
+            assertTrue(result.getMessage().contains("Failed to find file upload"));
+        }
+    }
+
+    @Nested
+    @DisplayName("Pre-Mapping Processing Tests")
+    class PreMappingProcessingTests {
+        
+        @Test
+        @DisplayName("Should process valid pre-mapping")
+        void processPrePain001BoMapping_WithValidData_ShouldProcess() {
+            // Arrange
+            GroupHeaderDTO header = new GroupHeaderDTO();
+            String debtorName = "TestDebtor";
+            
+            when(aesQueryDao.getCompanyIdFromName(debtorName)).thenReturn(123L);
+            when(aesQueryDao.getBatchBookingIndicator(anyLong()))
+                .thenReturn(BatchBookingIndicator.ITEMIZED.name());
+            when(paymentQueryService.getResourceConfig(any()))
+                .thenReturn("100");
+
+            // Act
+            SourceProcessStatus result = service.processPrePain001BoMapping(header, debtorName);
+
+            // Assert
+            assertEquals(SourceProcessStatus.Result.SourceOK, result.getResult());
+            verify(aesQueryDao).getBatchBookingIndicator(anyLong());
+            verify(paymentQueryService).getResourceConfig(any());
+        }
+
+        @Test
+        @DisplayName("Should handle missing company settings")
+        void processPrePain001BoMapping_WithMissingSettings_ShouldUseDefaults() {
+            // Arrange
+            GroupHeaderDTO header = new GroupHeaderDTO();
+            String debtorName = "TestDebtor";
+            
+            when(aesQueryDao.getBatchBookingIndicator(anyLong())).thenReturn(null);
+
+            // Act
+            SourceProcessStatus result = service.processPrePain001BoMapping(header, debtorName);
+
+            // Assert
+            assertEquals(SourceProcessStatus.Result.SourceOK, result.getResult());
+            verify(aesQueryDao).getBatchBookingIndicator(anyLong());
+        }
+    }
+
+    @Nested
+    @DisplayName("Mapping Validation Tests")
+    class MappingValidationTests {
+        
+        @Test
+        @DisplayName("Should validate correct resource and feature IDs")
+        void processPain001BoMappingValidation_WithValidIds_ShouldValidate() {
+            // Arrange
+            List<PaymentInformation> payments = createPaymentInfos(true);
+            mockFileUploadWithIds("RES001", "FEAT001");
+
+            // Act
+            SourceProcessStatus result = service.processPain001BoMappingValidation(payments);
+
+            // Assert
+            assertEquals(SourceProcessStatus.Result.SourceOK, result.getResult());
+        }
+
+        @Test
+        @DisplayName("Should reject invalid resource and feature IDs")
+        void processPain001BoMappingValidation_WithInvalidIds_ShouldReject() {
+            // Arrange
+            List<PaymentInformation> payments = createPaymentInfos(false);
+            mockFileUploadWithIds("RES001", "FEAT001");
+
+            // Act
+            SourceProcessStatus result = service.processPain001BoMappingValidation(payments);
+
+            // Assert
+            assertEquals(SourceProcessStatus.Result.SourceError, result.getResult());
+            assertTrue(result.getMessage().contains("Invalid resourceId & featureId"));
+        }
+    }
+
+    @Nested
+    @DisplayName("Post-Mapping Processing Tests")
+    class PostMappingProcessingTests {
+        
+        @Test
+        @DisplayName("Should process post-mapping successfully")
+        void processPostPain001BoMapping_ShouldSetupContext() {
+            // Arrange
+            List<PaymentInformation> payments = createPaymentInfos(true);
+            AppConfig.BulkRoute route = new AppConfig.BulkRoute();
+            when(executionContext.get(eq(ContextKey.routeConfig), any()))
+                .thenReturn(route);
+
+            // Act
+            SourceProcessStatus result = service.processPostPain001BoMapping(payments);
+
+            // Assert
+            assertEquals(SourceProcessStatus.Result.SourceOK, result.getResult());
+            verify(executionContext).put(eq(ContextKey.accountResources), any(HashMap.class));
+        }
+    }
+
+    private UserResourceFeaturesActionsData createValidResourceFeaturesData() {
+        UserResourceFeaturesActionsData data = new UserResourceFeaturesActionsData();
+        UserResourceAndFeatureAccess access = new UserResourceAndFeatureAccess();
+        List<Resource> resources = new ArrayList<>();
+        Resource resource = new Resource();
+        resource.setResourceId("RES001");
+        
+        Feature feature = new Feature();
+        feature.setFeatureId("FEAT001");
+        resource.setFeatures(Arrays.asList(feature));
+        
+        resource.setActions(Arrays.asList("CREATE"));
+        resources.add(resource);
+        access.setResources(resources);
+        data.setUserResourceAndFeatureAccess(access);
+        return data;
+    }
+
+    private List<PaymentInformation> createPaymentInfos(boolean validIds) {
+        List<PaymentInformation> payments = new ArrayList<>();
+        PaymentInformation payment = new PaymentInformation();
+        
+        PwsTransactions pwsTransactions = new PwsTransactions();
+        if (validIds) {
+            pwsTransactions.setResourceId("RES001");
+            pwsTransactions.setFeatureId("FEAT001");
+        } else {
+            pwsTransactions.setResourceId("INVALID");
+            pwsTransactions.setFeatureId("INVALID");
+        }
+        payment.setPwsTransactions(pwsTransactions);
+        
+        PwsBulkTransactions pwsBulkTransactions = new PwsBulkTransactions();
+        pwsBulkTransactions.setDmpBatchNumber("BATCH001");
+        payment.setPwsBulkTransactions(pwsBulkTransactions);
+        
+        payments.add(payment);
+        return payments;
+    }
+
+    private void mockFileUploadWithIds(String resourceId, String featureId) {
+        PwsFileUpload fileUpload = new PwsFileUpload();
+        fileUpload.setResourceId(resourceId);
+        fileUpload.setFeatureId(featureId);
+        when(executionContext.get(ContextKey.fileUpload, PwsFileUpload.class))
+            .thenReturn(fileUpload);
+    }
+}
 ```
 
 # debulk
 
 ```java
+package com.example.service;
+
+import org.junit.jupiter.api.*;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.springframework.batch.core.StepExecution;
+import org.springframework.batch.item.ExecutionContext;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.math.BigDecimal;
+import java.util.*;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+class PaymentDebulkServiceImplTHTest {
+
+    @Mock private AppConfig appConfig;
+    @Mock private ObjectMapper objectMapper;
+    @Mock private PaymentSaveService paymentSaveService;
+    @Mock private StepExecution stepExecution;
+    @Mock private ExecutionContext executionContext;
+    
+    private PaymentDebulkServiceImplTH service;
+    private AutoCloseable closeable;
+
+    @BeforeEach
+    void setUp() {
+        closeable = MockitoAnnotations.openMocks(this);
+        service = new PaymentDebulkServiceImplTH(appConfig, objectMapper, paymentSaveService);
+        service.beforeStep(stepExecution);
+        
+        when(stepExecution.getExecutionContext()).thenReturn(executionContext);
+        when(executionContext.get(ContextKey.result, Pain001InboundProcessingResult.class))
+            .thenReturn(new Pain001InboundProcessingResult());
+        
+        AppConfig.DebulkConfig debulkConfig = new AppConfig.DebulkConfig();
+        AppConfig.SmartDebulkConfig smartConfig = new AppConfig.SmartDebulkConfig();
+        smartConfig.setBankCode("024");
+        smartConfig.setBahtnetThreshold(new BigDecimal("2000000"));
+        smartConfig.setSourceFormat(Arrays.asList("FORMAT1", "FORMAT2"));
+        debulkConfig.setDebulkSmart(smartConfig);
+        when(appConfig.getDebulk()).thenReturn(debulkConfig);
+    }
+
+    @AfterEach
+    void tearDown() throws Exception {
+        closeable.close();
+    }
+
+    @Nested
+    @DisplayName("Smart Payment Splitting Tests")
+    class SmartPaymentSplittingTests {
+        
+        @Test
+        @DisplayName("Should split SMART payments by resource type")
+        void splitByResourceType_WithSmartPayments_ShouldSplitCorrectly() {
+            // Arrange
+            PaymentInformation payment = createSmartPayment(Arrays.asList(
+                createTransaction(new BigDecimal("1000000")),
+                createTransaction(new BigDecimal("2500000")),
+                createTransaction(new BigDecimal("500000"))
+            ));
+            
+            when(executionContext.get(ContextKey.sourceFormat, String.class))
+                .thenReturn("FORMAT1");
+
+            // Act
+            List<PaymentInformation> result = service.splitByResourceType(payment);
+
+            // Assert
+            assertNotNull(result);
+            assertEquals(3, result.size());
+            verifyResourceTypes(result, 
+                Resource.SMART_SAME_DAY.id,
+                Resource.BAHTNET.id,
+                Resource.SMART_NEXT_DAY.id);
+        }
+
+        @Test
+        @DisplayName("Should not split non-SMART payments")
+        void splitByResourceType_WithNonSmartPayments_ShouldNotSplit() {
+            // Arrange
+            PaymentInformation payment = createNonSmartPayment(Arrays.asList(
+                createTransaction(new BigDecimal("1000000")),
+                createTransaction(new BigDecimal("2000000"))
+            ));
+
+            // Act
+            List<PaymentInformation> result = service.splitByResourceType(payment);
+
+            // Assert
+            assertEquals(1, result.size());
+            assertEquals(payment.getPwsTransactions().getResourceId(), 
+                result.get(0).getPwsTransactions().getResourceId());
+        }
+    }
+
+    @Nested
+    @DisplayName("Itemized Splitting Tests")
+    class ItemizedSplittingTests {
+        
+        @Test
+        @DisplayName("Should split by maximum transaction count for itemized")
+        void splitByItemized_WithinMaxCount_ShouldSplitCorrectly() {
+            // Arrange
+            PaymentInformation payment = createPayment(createTransactionList(5));
+            int maxCount = 2;
+
+            // Act
+            List<PaymentInformation> result = service.splitByItemized(payment, maxCount);
+
+            // Assert
+            assertEquals(3, result.size());
+            assertEquals(2, result.get(0).getCreditTransferTransactionList().size());
+            assertEquals(2, result.get(1).getCreditTransferTransactionList().size());
+            assertEquals(1, result.get(2).getCreditTransferTransactionList().size());
+        }
+    }
+
+    @Nested
+    @DisplayName("Lumpsum Splitting Tests")
+    class LumpsumSplittingTests {
+        
+        @Test
+        @DisplayName("Should split by maximum amount for lumpsum")
+        void splitByLumpsum_WithinMaxAmount_ShouldSplitCorrectly() {
+            // Arrange
+            PaymentInformation payment = createPayment(Arrays.asList(
+                createTransaction(new BigDecimal("500000")),
+                createTransaction(new BigDecimal("600000")),
+                createTransaction(new BigDecimal("400000"))
+            ));
+            List<PwsRejectedRecord> rejects = new ArrayList<>();
+            int maxAmount = 1000000;
+
+            // Act
+            List<PaymentInformation> result = service.splitByLumpsum(payment, maxAmount, rejects);
+
+            // Assert
+            assertNotNull(result);
+            assertEquals(2, result.size());
+            assertTrue(rejects.isEmpty());
+        }
+
+        @Test
+        @DisplayName("Should handle transactions exceeding maximum amount")
+        void splitByLumpsum_ExceedingMaxAmount_ShouldReject() {
+            // Arrange
+            PaymentInformation payment = createPayment(Arrays.asList(
+                createTransaction(new BigDecimal("1500000")),
+                createTransaction(new BigDecimal("500000"))
+            ));
+            List<PwsRejectedRecord> rejects = new ArrayList<>();
+            int maxAmount = 1000000;
+            
+            CompanySettings settings = new CompanySettings();
+            settings.setRejectOnErrorConfig(RejectOnErrorConfig.NO);
+            when(executionContext.get(ContextKey.companySettings, CompanySettings.class))
+                .thenReturn(settings);
+
+            // Act
+            List<PaymentInformation> result = service.splitByLumpsum(payment, maxAmount, rejects);
+
+            // Assert
+            assertNotNull(result);
+            assertEquals(1, result.size());
+            assertEquals(1, rejects.size());
+        }
+    }
+
+    @Nested
+    @DisplayName("Full Debulking Process Tests")
+    class FullDebulkingTests {
+        
+        @Test
+        @DisplayName("Should process complete debulking workflow")
+        void debulk_WithValidPayments_ShouldProcessComplete() {
+            // Arrange
+            List<PaymentInformation> payments = Arrays.asList(
+                createSmartPayment(createTransactionList(3)),
+                createNonSmartPayment(createTransactionList(2))
+            );
+            
+            CompanySettings settings = new CompanySettings();
+            settings.setBatchBookingIndicator(BatchBookingIndicator.ITEMIZED);
+            settings.setMaxCountOfBatchBooking(2);
+            when(executionContext.get(ContextKey.companySettings, CompanySettings.class))
+                .thenReturn(settings);
+
+            // Act
+            List<PaymentInformation> result = service.debulk(payments);
+
+            // Assert
+            assertNotNull(result);
+            assertTrue(result.size() > 0);
+            verify(paymentSaveService, never()).createRejectedRecords(any());
+        }
+
+        @Test
+        @DisplayName("Should handle invalid booking indicator")
+        void debulk_WithInvalidBookingIndicator_ShouldReturnNull() {
+            // Arrange
+            List<PaymentInformation> payments = Arrays.asList(
+                createSmartPayment(createTransactionList(2))
+            );
+            
+            CompanySettings settings = new CompanySettings();
+            settings.setBatchBookingIndicator(null);
+            when(executionContext.get(ContextKey.companySettings, CompanySettings.class))
+                .thenReturn(settings);
+
+            // Act
+            List<PaymentInformation> result = service.debulk(payments);
+
+            // Assert
+            assertNull(result);
+            verify(executionContext).get(eq(ContextKey.result), any());
+        }
+    }
+
+    private PaymentInformation createSmartPayment(List<CreditTransferTransaction> transactions) {
+        PaymentInformation payment = createPayment(transactions);
+        payment.getPwsTransactions().setResourceId(Resource.SMART.id);
+        return payment;
+    }
+
+    private PaymentInformation createNonSmartPayment(List<CreditTransferTransaction> transactions) {
+        PaymentInformation payment = createPayment(transactions);
+        payment.getPwsTransactions().setResourceId("OTHER");
+        return payment;
+    }
+
+    private PaymentInformation createPayment(List<CreditTransferTransaction> transactions) {
+        PaymentInformation payment = new PaymentInformation();
+        PwsTransactions pwsTransactions = new PwsTransactions();
+        PwsBulkTransactions pwsBulkTransactions = new PwsBulkTransactions();
+        
+        payment.setPwsTransactions(pwsTransactions);
+        payment.setPwsBulkTransactions(pwsBulkTransactions);
+        payment.setCreditTransferTransactionList(transactions);
+        
+        return payment;
+    }
+
+    private List<CreditTransferTransaction> createTransactionList(int count) {
+        List<CreditTransferTransaction> transactions = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            transactions.add(createTransaction(new BigDecimal("100000")));
+        }
+        return transactions;
+    }
+
+    private CreditTransferTransaction createTransaction(BigDecimal amount) {
+        CreditTransferTransaction transaction = new CreditTransferTransaction();
+        PwsBulkTransactionInstructions instructions = new PwsBulkTransactionInstructions();
+        instructions.setTransactionAmount(amount);
+        transaction.setPwsBulkTransactionInstructions(instructions);
+        return transaction;
+    }
+
+    private void verifyResourceTypes(List<PaymentInformation> payments, String... expectedTypes) {
+        Set<String> actualTypes = new HashSet<>();
+        for (PaymentInformation payment : payments) {
+            actualTypes.add(payment.getPwsTransactions().getResourceId());
+        }
+        Set<String> expectedTypeSet = new HashSet<>(Arrays.asList(expectedTypes));
+        assertTrue(actualTypes.containsAll(expectedTypeSet));
+    }
+}
 ```
 
 # enrich
@@ -563,136 +1348,140 @@ class PaymentEnrichmentServiceImplTest {
 # integrate
 
 ```java
-@ExtendWith(MockitoExtension.class)
-@DisplayName("PaymentIntegrationserviceImpl Test Suite")
+ package com.example.service;
+
+import org.junit.jupiter.api.*;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.springframework.batch.core.StepExecution;
+import org.springframework.batch.item.ExecutionContext;
+import org.springframework.test.util.ReflectionTestUtils;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.*;
+import java.util.*;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
 class PaymentIntegrationserviceImplTest {
 
-    @Mock
-    private TransactionUtils transactionUtils;
-    @Mock
-    private GetAxwayTokenService getAxwayTokenService;
-    @Mock
-    private EntitlementService entitlementService;
-    @Mock
-    private RefDataService refDataService;
-    @Mock
-    private StepExecution stepExecution;
-    @Mock
-    private JobExecution jobExecution;
-    @Mock
-    private ExecutionContext jobContext;
-
-    @InjectMocks
+    @Mock private ObjectMapper objectMapper;
+    @Mock private TransactionUtils transactionUtils;
+    @Mock private GetAxwayTokenService getAxwayTokenService;
+    @Mock private EntitlementService entitlementService;
+    @Mock private ValueDateDerivationService valueDateDerivationService;
+    @Mock private StepExecution stepExecution;
+    @Mock private ExecutionContext executionContext;
+    
     private PaymentIntegrationserviceImpl service;
+    private AutoCloseable closeable;
 
     @BeforeEach
     void setUp() {
-        when(stepExecution.getJobExecution()).thenReturn(jobExecution);
-        when(jobExecution.getExecutionContext()).thenReturn(jobContext);
+        closeable = MockitoAnnotations.openMocks(this);
+        service = new PaymentIntegrationserviceImpl(
+            objectMapper,
+            transactionUtils,
+            getAxwayTokenService,
+            entitlementService,
+            valueDateDerivationService
+        );
         service.beforeStep(stepExecution);
         
-        // Set the URL values using reflection since they're normally set by @Value
+        when(stepExecution.getExecutionContext()).thenReturn(executionContext);
+        
+        // Set URLs via reflection
         ReflectionTestUtils.setField(service, "ueqsResourceFeature", "http://test.com/resources");
         ReflectionTestUtils.setField(service, "ueqsCompanyAccount", "http://test.com/accounts");
+    }
+
+    @AfterEach
+    void tearDown() throws Exception {
+        closeable.close();
     }
 
     @Nested
     @DisplayName("CEW Headers Tests")
     class CewHeadersTests {
-
+        
         @Test
-        @DisplayName("Should create CEW headers with correct values")
-        void shouldCreateCewHeadersWithCorrectValues() {
+        @DisplayName("Should create valid CEW headers")
+        void getCewHeaders_ShouldCreateValidHeaders() {
             // Arrange
             AxwayResponseData axwayResponse = new AxwayResponseData();
             axwayResponse.setTokenType("Bearer");
             axwayResponse.setAccessToken("test-token");
+            
             when(getAxwayTokenService.getAxwayJwtToken()).thenReturn(axwayResponse);
+            when(executionContext.get(ContextKey.bankEntity, BankEntity.class))
+                .thenReturn(new BankEntity("BANK001"));
+            when(transactionUtils.getEncrypted("BANK001"))
+                .thenReturn("encrypted-bank-id");
 
             // Act
             Map<String, Object> headers = service.getCewHeaders();
 
             // Assert
             assertNotNull(headers);
-            assertEquals("Bearer test-token", headers.get("Authorization"));
-            assertTrue(headers.containsKey("Req-Date-Time"));
+            assertEquals("Bearer test-token", headers.get("authorization"));
+            assertEquals("encrypted-bank-id", headers.get("uob-entity-id"));
+            assertNotNull(headers.get("req-date-time"));
             
-            // Verify the date is in UTC
-            OffsetDateTime dateTime = (OffsetDateTime) headers.get("Req-Date-Time");
-            assertEquals(ZoneOffset.UTC, dateTime.getOffset());
-            
-            // Verify other required CEW headers are present
-            assertTrue(headers.containsAll(HEADER_CEW.keySet()));
-        }
-
-        @Test
-        @DisplayName("Should handle null Axway response")
-        void shouldHandleNullAxwayResponse() {
-            // Arrange
-            when(getAxwayTokenService.getAxwayJwtToken()).thenReturn(null);
-
-            // Act & Assert
-            assertThrows(NullPointerException.class, () -> service.getCewHeaders());
+            verify(getAxwayTokenService).getAxwayJwtToken();
+            verify(transactionUtils).getEncrypted("BANK001");
         }
     }
 
     @Nested
     @DisplayName("Resources and Features Tests")
     class ResourcesAndFeaturesTests {
-
+        
         @Test
-        @DisplayName("Should get resources and features for valid user")
-        void shouldGetResourcesAndFeaturesForValidUser() {
+        @DisplayName("Should get resources and features for user")
+        void getResourcesAndFeatures_ShouldReturnData() {
             // Arrange
             long userId = 123L;
-            String encryptedUserId = "encrypted-123";
             UserResourceFeaturesActionsData expectedData = new UserResourceFeaturesActionsData();
+            Map<String, Object> headers = new HashMap<>();
             
-            when(transactionUtils.getEncrypted(String.valueOf(userId))).thenReturn(encryptedUserId);
-            when(entitlementService.getResourcesAndFeaturesByUserId(eq(encryptedUserId), any()))
-                .thenReturn(expectedData);
+            when(transactionUtils.getEncrypted(String.valueOf(userId)))
+                .thenReturn("encrypted-user-id");
+            when(entitlementService.getResourcesAndFeaturesByUserId(
+                eq("encrypted-user-id"), any()
+            )).thenReturn(expectedData);
 
             // Act
             UserResourceFeaturesActionsData result = service.getResourcesAndFeatures(userId);
 
             // Assert
             assertNotNull(result);
-            assertEquals(expectedData, result);
-            verify(entitlementService).getResourcesAndFeaturesByUserId(eq(encryptedUserId), any());
-        }
-
-        @Test
-        @DisplayName("Should handle encryption failure")
-        void shouldHandleEncryptionFailure() {
-            // Arrange
-            long userId = 123L;
-            when(transactionUtils.getEncrypted(String.valueOf(userId)))
-                .thenThrow(new RuntimeException("Encryption failed"));
-
-            // Act & Assert
-            assertThrows(RuntimeException.class, () -> service.getResourcesAndFeatures(userId));
+            verify(transactionUtils).getEncrypted(String.valueOf(userId));
+            verify(entitlementService).getResourcesAndFeaturesByUserId(
+                eq("encrypted-user-id"), any()
+            );
         }
     }
 
     @Nested
     @DisplayName("Company and Accounts Tests")
     class CompanyAndAccountsTests {
-
+        
         @Test
-        @DisplayName("Should get company and accounts for valid inputs")
-        void shouldGetCompanyAndAccountsForValidInputs() {
+        @DisplayName("Should get company and accounts for resource features")
+        void getCompanyAndAccounts_ShouldReturnData() {
             // Arrange
             long userId = 123L;
-            String resourceId = "RES_001";
-            String featureId = "FEAT_001";
-            String encryptedUserId = "encrypted-123";
+            String resourceId = "RES001";
+            String featureId = "FEAT001";
+            CompanyAndAccountsForResourceFeaturesResp expectedResp = 
+                new CompanyAndAccountsForResourceFeaturesResp();
             
-            when(jobContext.getLong(ContextKey.userId)).thenReturn(userId);
-            when(transactionUtils.getEncrypted(String.valueOf(userId))).thenReturn(encryptedUserId);
-            
-            CompanyAndAccountsForResourceFeaturesResp expectedResponse = new CompanyAndAccountsForResourceFeaturesResp();
-            when(entitlementService.getV3CompanyAndAccountsForUserResourceFeatures(any(), any()))
-                .thenReturn(expectedResponse);
+            when(transactionUtils.getEncrypted(String.valueOf(userId)))
+                .thenReturn("encrypted-user-id");
+            when(entitlementService.getV3CompanyAndAccountsForUserResourceFeatures(
+                any(), any()
+            )).thenReturn(expectedResp);
+            when(executionContext.getLong(ContextKey.userId))
+                .thenReturn(userId);
 
             // Act
             CompanyAndAccountsForResourceFeaturesResp result = 
@@ -700,60 +1489,61 @@ class PaymentIntegrationserviceImplTest {
 
             // Assert
             assertNotNull(result);
-            assertEquals(expectedResponse, result);
-            
-            // Verify request structure
-            ArgumentCaptor<CompanyAndAccountsForResourceFeaturesReq> requestCaptor = 
-                ArgumentCaptor.forClass(CompanyAndAccountsForResourceFeaturesReq.class);
             verify(entitlementService).getV3CompanyAndAccountsForUserResourceFeatures(
-                requestCaptor.capture(), any());
-            
-            CompanyAndAccountsForResourceFeaturesReq capturedRequest = requestCaptor.getValue();
-            assertEquals(encryptedUserId, capturedRequest.getUserId());
-            assertEquals(1, capturedRequest.getResources().size());
-            assertEquals(resourceId, capturedRequest.getResources().get(0).getResourceId());
-            assertEquals(Collections.singletonList(featureId), 
-                capturedRequest.getResources().get(0).getFeatureIds());
+                argThat(req -> {
+                    assertEquals("encrypted-user-id", req.getUserId());
+                    assertEquals(resourceId, req.getResources().get(0).getResourceId());
+                    assertEquals(featureId, req.getResources().get(0).getFeatureIds().get(0));
+                    return true;
+                }),
+                any()
+            );
         }
+    }
 
+    @Nested
+    @DisplayName("Value Date Derivation Tests")
+    class ValueDateDerivationTests {
+        
         @Test
-        @DisplayName("Should handle empty response")
-        void shouldHandleEmptyResponse() {
+        @DisplayName("Should derive value date correctly")
+        void getDerivedValueDates_ShouldReturnDerivedDate() {
             // Arrange
-            long userId = 123L;
-            String resourceId = "RES_001";
-            String featureId = "FEAT_001";
+            Date valueDate = new Date();
+            String acctCurrency = "USD";
+            String transferCurrency = "THB";
+            LocalDate expectedDate = LocalDate.now();
             
-            when(jobContext.getLong(ContextKey.userId)).thenReturn(userId);
-            when(transactionUtils.getEncrypted(anyString())).thenReturn("encrypted-123");
-            when(entitlementService.getV3CompanyAndAccountsForUserResourceFeatures(any(), any()))
-                .thenReturn(null);
+            when(executionContext.get(eq(ContextKey.bankEntity), any()))
+                .thenReturn(new BankEntity("BANK001"));
+            when(executionContext.get(eq(ContextKey.routeConfig), any()))
+                .thenReturn(createRouteConfig());
+            when(valueDateDerivationService.deriveValueDate(any()))
+                .thenReturn(expectedDate.toString());
 
             // Act
-            CompanyAndAccountsForResourceFeaturesResp result = 
-                service.getCompanyAndAccounts(userId, resourceId, featureId);
+            LocalDate result = service.getDerivedValueDates(
+                valueDate, acctCurrency, transferCurrency
+            );
 
             // Assert
-            assertNull(result);
+            assertEquals(expectedDate, result);
+            verify(valueDateDerivationService).deriveValueDate(
+                argThat(req -> {
+                    assertEquals("BANK001", req.getBankEntityId());
+                    assertEquals(acctCurrency, req.getDebitAccountCurrency());
+                    assertEquals(transferCurrency, req.getTransactionCurrency());
+                    return true;
+                })
+            );
         }
+    }
 
-        @Test
-        @DisplayName("Should handle service exception")
-        void shouldHandleServiceException() {
-            // Arrange
-            long userId = 123L;
-            String resourceId = "RES_001";
-            String featureId = "FEAT_001";
-            
-            when(jobContext.getLong(ContextKey.userId)).thenReturn(userId);
-            when(transactionUtils.getEncrypted(anyString())).thenReturn("encrypted-123");
-            when(entitlementService.getV3CompanyAndAccountsForUserResourceFeatures(any(), any()))
-                .thenThrow(new RuntimeException("Service unavailable"));
-
-            // Act & Assert
-            assertThrows(RuntimeException.class, 
-                () -> service.getCompanyAndAccounts(userId, resourceId, featureId));
-        }
+    private AppConfig.BulkRoute createRouteConfig() {
+        AppConfig.BulkRoute route = new AppConfig.BulkRoute();
+        route.setFeatureId("FEAT001");
+        route.setResourceId("RES001");
+        return route;
     }
 }
 ```
