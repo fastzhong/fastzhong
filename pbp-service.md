@@ -851,6 +851,220 @@ class Pain001ProcessServiceImplTest {
 }
 ```
 
+# mapping
+
+```java
+package com.example.service;
+
+import org.junit.jupiter.api.*;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.springframework.batch.core.StepExecution;
+import org.springframework.batch.item.ExecutionContext;
+import java.sql.Timestamp;
+import java.util.*;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+class PaymentMappingServiceTest {
+
+    @Mock private Pain001ToBoMapper pain001ToBoMapper;
+    @Mock private StepExecution stepExecution;
+    @Mock private ExecutionContext executionContext;
+    
+    private PaymentMappingService service;
+    private AutoCloseable closeable;
+
+    @BeforeEach
+    void setUp() {
+        closeable = MockitoAnnotations.openMocks(this);
+        service = new PaymentMappingService(pain001ToBoMapper);
+        service.beforeStep(stepExecution);
+        
+        when(stepExecution.getExecutionContext()).thenReturn(executionContext);
+        when(executionContext.get(ContextKey.bankEntity, BankEntity.class))
+            .thenReturn(new BankEntity("BANK001"));
+        when(executionContext.getLong(ContextKey.companyId)).thenReturn(123L);
+        when(executionContext.getLong(ContextKey.userId)).thenReturn(456L);
+    }
+
+    @AfterEach
+    void tearDown() throws Exception {
+        closeable.close();
+    }
+
+    @Nested
+    @DisplayName("Payment Information Mapping Tests")
+    class PaymentInformationMappingTests {
+        
+        @Test
+        @DisplayName("Should map valid payment information DTO to business object")
+        void pain001PaymentToBo_WithValidDTO_ShouldMap() throws ParseException {
+            // Arrange
+            PaymentInformationDTO paymentDTO = createValidPaymentDTO();
+            PaymentInformation expectedPaymentInfo = new PaymentInformation();
+            PwsTransactions expectedTransactions = new PwsTransactions();
+            PwsBulkTransactions expectedBulkTransactions = new PwsBulkTransactions();
+            
+            when(pain001ToBoMapper.mapToPaymentInformation(paymentDTO))
+                .thenReturn(expectedPaymentInfo);
+            when(pain001ToBoMapper.mapToPwsTransactions(paymentDTO))
+                .thenReturn(expectedTransactions);
+            when(pain001ToBoMapper.mapToPwsBulkTransactions(eq(paymentDTO), any()))
+                .thenReturn(expectedBulkTransactions);
+
+            // Act
+            PaymentInformation result = service.pain001PaymentToBo(paymentDTO);
+
+            // Assert
+            assertNotNull(result);
+            assertEquals(expectedPaymentInfo, result);
+            assertEquals("BANK001", result.getPwsTransactions().getBankEntityId());
+            assertEquals(123L, result.getPwsTransactions().getCompanyId());
+            assertEquals(456L, result.getPwsTransactions().getInitiatedBy());
+            assertNotNull(result.getPwsTransactions().getInitiationTime());
+            
+            verify(pain001ToBoMapper).mapToPaymentInformation(paymentDTO);
+            verify(pain001ToBoMapper).mapToPwsTransactions(paymentDTO);
+            verify(pain001ToBoMapper).mapToPwsBulkTransactions(eq(paymentDTO), any());
+        }
+
+        @Test
+        @DisplayName("Should throw exception for payment without transactions")
+        void pain001PaymentToBo_WithNoTransactions_ShouldThrowException() {
+            // Arrange
+            PaymentInformationDTO paymentDTO = createPaymentDTOWithoutTransactions();
+
+            // Act & Assert
+            assertThrows(IllegalArgumentException.class, 
+                () -> service.pain001PaymentToBo(paymentDTO));
+        }
+    }
+
+    @Nested
+    @DisplayName("Transaction Mapping Tests")
+    class TransactionMappingTests {
+        
+        @Test
+        @DisplayName("Should map credit transfer transactions correctly")
+        void pain001PaymentToBo_WithMultipleTransactions_ShouldMapAll() throws ParseException {
+            // Arrange
+            PaymentInformationDTO paymentDTO = createPaymentDTOWithMultipleTransactions();
+            PaymentInformation expectedPaymentInfo = new PaymentInformation();
+            PwsTransactions expectedTransactions = new PwsTransactions();
+            PwsBulkTransactions expectedBulkTransactions = new PwsBulkTransactions();
+            
+            when(pain001ToBoMapper.mapToPaymentInformation(paymentDTO))
+                .thenReturn(expectedPaymentInfo);
+            when(pain001ToBoMapper.mapToPwsTransactions(paymentDTO))
+                .thenReturn(expectedTransactions);
+            when(pain001ToBoMapper.mapToPwsBulkTransactions(eq(paymentDTO), any()))
+                .thenReturn(expectedBulkTransactions);
+            when(pain001ToBoMapper.mapToPwsBulkTransactionInstructions(any(), any()))
+                .thenReturn(new PwsBulkTransactionInstructions());
+            when(pain001ToBoMapper.mapToCreditor(any()))
+                .thenReturn(new Creditor());
+            when(pain001ToBoMapper.mapToPwsTransactionAdvices(any()))
+                .thenReturn(new PwsTransactionAdvices());
+            when(pain001ToBoMapper.mapToTaxInformation(any()))
+                .thenReturn(new TaxInformation());
+
+            // Act
+            PaymentInformation result = service.pain001PaymentToBo(paymentDTO);
+
+            // Assert
+            assertNotNull(result);
+            assertEquals(2, result.getCreditTransferTransactionList().size());
+            verify(pain001ToBoMapper, times(2)).mapToCreditor(any());
+            verify(pain001ToBoMapper, times(2)).mapToPwsTransactionAdvices(any());
+            verify(pain001ToBoMapper, times(2)).mapToTaxInformation(any());
+        }
+
+        @Test
+        @DisplayName("Should handle payment instructions correctly")
+        void pain001PaymentToBo_WithPaymentInstructions_ShouldMapInstructions() throws ParseException {
+            // Arrange
+            PaymentInformationDTO paymentDTO = createPaymentDTOWithInstructions();
+            when(pain001ToBoMapper.mapToPaymentInformation(paymentDTO))
+                .thenReturn(new PaymentInformation());
+            when(pain001ToBoMapper.mapToPwsTransactions(paymentDTO))
+                .thenReturn(new PwsTransactions());
+            when(pain001ToBoMapper.mapToPwsBulkTransactions(eq(paymentDTO), any()))
+                .thenReturn(new PwsBulkTransactions());
+            when(pain001ToBoMapper.mapToPwsBulkTransactionInstructions(any(), any()))
+                .thenReturn(new PwsBulkTransactionInstructions());
+
+            // Act
+            PaymentInformation result = service.pain001PaymentToBo(paymentDTO);
+
+            // Assert
+            assertNotNull(result);
+            assertNotNull(result.getCreditTransferTransactionList().get(0)
+                .getPwsBulkTransactionInstructions().getPaymentDetails());
+        }
+    }
+
+    private PaymentInformationDTO createValidPaymentDTO() {
+        PaymentInformationDTO dto = new PaymentInformationDTO();
+        RequestedExecutionDateDTO execDate = new RequestedExecutionDateDTO();
+        execDate.setDate("2024-01-01");
+        dto.setRequestedExecutionDate(execDate);
+        
+        List<CreditTransferTransactionInformationDTO> transactions = new ArrayList<>();
+        CreditTransferTransactionInformationDTO transaction = createTransactionDTO("1", "APPROVED", "USD");
+        transactions.add(transaction);
+        dto.setCreditTransferTransactionInformation(transactions);
+        
+        return dto;
+    }
+
+    private PaymentInformationDTO createPaymentDTOWithoutTransactions() {
+        PaymentInformationDTO dto = new PaymentInformationDTO();
+        RequestedExecutionDateDTO execDate = new RequestedExecutionDateDTO();
+        execDate.setDate("2024-01-01");
+        dto.setRequestedExecutionDate(execDate);
+        return dto;
+    }
+
+    private PaymentInformationDTO createPaymentDTOWithMultipleTransactions() {
+        PaymentInformationDTO dto = createValidPaymentDTO();
+        List<CreditTransferTransactionInformationDTO> transactions = new ArrayList<>();
+        transactions.add(createTransactionDTO("1", "APPROVED", "USD"));
+        transactions.add(createTransactionDTO("2", "APPROVED", "USD"));
+        dto.setCreditTransferTransactionInformation(transactions);
+        return dto;
+    }
+
+    private PaymentInformationDTO createPaymentDTOWithInstructions() {
+        PaymentInformationDTO dto = createValidPaymentDTO();
+        CreditTransferTransactionInformationDTO transaction = dto.getCreditTransferTransactionInformation().get(0);
+        
+        List<InstructionForCreditorAgentDTO> instructions = new ArrayList<>();
+        InstructionForCreditorAgentDTO instruction = new InstructionForCreditorAgentDTO();
+        instruction.setInstructionInformation("Payment details test");
+        instructions.add(instruction);
+        transaction.setInstructionForCreditorAgent(instructions);
+        
+        return dto;
+    }
+
+    private CreditTransferTransactionInformationDTO createTransactionDTO(
+            String lineNumber, String status, String currency) {
+        CreditTransferTransactionInformationDTO dto = new CreditTransferTransactionInformationDTO();
+        dto.setLinenumber(lineNumber);
+        dto.setTransactionstatus(status);
+        
+        AmountDTO amountDTO = new AmountDTO();
+        InstructedAmountDTO instructedAmount = new InstructedAmountDTO();
+        instructedAmount.setCurrency(currency);
+        amountDTO.setInstructedAmount(instructedAmount);
+        dto.setAmount(amountDTO);
+        
+        return dto;
+    }
+}
+```
+
 # debulk
 
 ```java
@@ -1120,6 +1334,278 @@ class PaymentDebulkServiceImplTHTest {
         }
         Set<String> expectedTypeSet = new HashSet<>(Arrays.asList(expectedTypes));
         assertTrue(actualTypes.containsAll(expectedTypeSet));
+    }
+}
+```
+
+# validation
+
+```java
+package com.example.service;
+
+import org.junit.jupiter.api.*;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.springframework.batch.core.StepExecution;
+import org.springframework.batch.item.ExecutionContext;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.math.BigDecimal;
+import java.util.*;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+class PaymentValidationServiceImplTest {
+
+    @Mock private ObjectMapper objectMapper;
+    @Mock private TransactionUtils transactionUtils;
+    @Mock private PaymentIntegrationservice paymentIntegrationservice;
+    @Mock private PaymentValidationHelper paymentValidationHelper;
+    @Mock private DecisionMatrixService<TransactionValidationRecord> txnValidationService;
+    @Mock private StepExecution stepExecution;
+    @Mock private ExecutionContext executionContext;
+    
+    private PaymentValidationServiceImpl service;
+    private AutoCloseable closeable;
+
+    @BeforeEach
+    void setUp() {
+        closeable = MockitoAnnotations.openMocks(this);
+        service = new PaymentValidationServiceImpl(
+            objectMapper,
+            transactionUtils,
+            paymentIntegrationservice,
+            paymentValidationHelper,
+            txnValidationService
+        );
+        service.beforeStep(stepExecution);
+        
+        when(stepExecution.getExecutionContext()).thenReturn(executionContext);
+        when(executionContext.get(ContextKey.result, Pain001InboundProcessingResult.class))
+            .thenReturn(new Pain001InboundProcessingResult());
+    }
+
+    @AfterEach
+    void tearDown() throws Exception {
+        closeable.close();
+    }
+
+    @Nested
+    @DisplayName("Entitlement Validation Tests")
+    class EntitlementValidationTests {
+        
+        @Test
+        @DisplayName("Should validate entitlements successfully")
+        void doEntitlementValidation_WithValidEntitlements_ShouldValidate() {
+            // Arrange
+            List<PaymentInformation> payments = createPaymentInfoList();
+            CompanyAndAccountsForResourceFeaturesResp resp = createValidEntitlementResponse();
+            
+            when(paymentIntegrationservice.getCompanyAndAccounts(anyLong(), anyString(), anyString()))
+                .thenReturn(resp);
+            when(transactionUtils.getDecrypted(anyString())).thenReturn("123");
+            
+            // Act
+            List<PaymentInformation> result = service.doEntitlementValidation(payments);
+
+            // Assert
+            assertNotNull(result);
+            assertEquals(Pain001InboundProcessingStatus.EntitlementValidationPassed, 
+                getResult().getProcessingStatus());
+            verify(paymentIntegrationservice).getCompanyAndAccounts(anyLong(), anyString(), anyString());
+        }
+
+        @Test
+        @DisplayName("Should handle missing entitlements")
+        void doEntitlementValidation_WithMissingEntitlements_ShouldReturnNull() {
+            // Arrange
+            List<PaymentInformation> payments = createPaymentInfoList();
+            when(paymentIntegrationservice.getCompanyAndAccounts(anyLong(), anyString(), anyString()))
+                .thenReturn(null);
+
+            // Act
+            List<PaymentInformation> result = service.doEntitlementValidation(payments);
+
+            // Assert
+            assertNull(result);
+            assertEquals(Pain001InboundProcessingStatus.EntitlementValidationStop, 
+                getResult().getProcessingStatus());
+        }
+    }
+
+    @Nested
+    @DisplayName("Pre-Transaction Validation Tests")
+    class PreTransactionValidationTests {
+        
+        @Test
+        @DisplayName("Should validate pre-transaction conditions")
+        void doPreTransactionValidation_WithValidConditions_ShouldValidate() {
+            // Arrange
+            List<PaymentInformation> payments = createPaymentInfoList();
+            setupValidPreTransactionConditions();
+
+            // Act
+            List<PaymentInformation> result = service.doPreTransactionValidation(payments);
+
+            // Assert
+            assertNotNull(result);
+            assertEquals(Pain001InboundProcessingStatus.PreTransactionValidationPassed, 
+                getResult().getProcessingStatus());
+            verify(paymentValidationHelper).validateValueDate(any(), any());
+        }
+
+        @Test
+        @DisplayName("Should handle validation errors with reject on error")
+        void doPreTransactionValidation_WithErrors_ShouldReject() {
+            // Arrange
+            List<PaymentInformation> payments = createPaymentInfoList();
+            setupRejectOnErrorConditions();
+
+            // Act
+            List<PaymentInformation> result = service.doPreTransactionValidation(payments);
+
+            // Assert
+            assertNull(result);
+            assertEquals(Pain001InboundProcessingStatus.RejectOnError, 
+                getResult().getProcessingStatus());
+        }
+    }
+
+    @Nested
+    @DisplayName("Transaction Validation Tests")
+    class TransactionValidationTests {
+        
+        @Test
+        @DisplayName("Should validate transactions successfully")
+        void doTransactionValidation_WithValidTransactions_ShouldValidate() {
+            // Arrange
+            List<PaymentInformation> payments = createPaymentInfoList();
+            when(txnValidationService.applyRulesShouldStop(any(), any(), anyBoolean()))
+                .thenReturn(false);
+
+            // Act
+            List<PaymentInformation> result = service.doTransactionValidation(payments);
+
+            // Assert
+            assertNotNull(result);
+            assertEquals(Pain001InboundProcessingStatus.TransactionValidationPassed, 
+                getResult().getProcessingStatus());
+            verify(txnValidationService).applyRulesShouldStop(any(), any(), anyBoolean());
+        }
+
+        @Test
+        @DisplayName("Should handle validation exceptions")
+        void doTransactionValidation_WithException_ShouldHandleError() {
+            // Arrange
+            List<PaymentInformation> payments = createPaymentInfoList();
+            when(txnValidationService.applyRulesShouldStop(any(), any(), anyBoolean()))
+                .thenThrow(new RuntimeException("Validation error"));
+
+            // Act
+            List<PaymentInformation> result = service.doTransactionValidation(payments);
+
+            // Assert
+            assertNotNull(result);
+            assertEquals(Pain001InboundProcessingStatus.TransactionValidationWithException, 
+                getResult().getProcessingStatus());
+        }
+    }
+
+    @Nested
+    @DisplayName("Payment Update Tests")
+    class PaymentUpdateTests {
+        
+        @Test
+        @DisplayName("Should update payment totals correctly")
+        void updatePaymentAfterValidation_ShouldUpdateTotals() {
+            // Arrange
+            List<PaymentInformation> payments = Arrays.asList(
+                createValidPayment(new BigDecimal("1000")),
+                createInvalidPayment(new BigDecimal("500"))
+            );
+
+            // Act
+            service.updatePaymentAfterValidation(payments);
+
+            // Assert
+            Pain001InboundProcessingResult result = getResult();
+            assertEquals(1, result.getPaymentValidTotal());
+            assertEquals(new BigDecimal("1000"), result.getPaymentValidAmount());
+            assertEquals(1, result.getPaymentInvalidTotal());
+            assertEquals(new BigDecimal("500"), result.getPaymentInvalidAmount());
+        }
+    }
+
+    private List<PaymentInformation> createPaymentInfoList() {
+        return Arrays.asList(createValidPayment(new BigDecimal("1000")));
+    }
+
+    private PaymentInformation createValidPayment(BigDecimal amount) {
+        PaymentInformation payment = new PaymentInformation();
+        payment.setValid(true);
+        
+        PwsTransactions transactions = new PwsTransactions();
+        transactions.setAccountNumber("ACC123");
+        transactions.setTotalAmount(amount);
+        payment.setPwsTransactions(transactions);
+        
+        PwsBulkTransactions bulkTransactions = new PwsBulkTransactions();
+        bulkTransactions.setDmpBatchNumber("BATCH001");
+        payment.setPwsBulkTransactions(bulkTransactions);
+        
+        return payment;
+    }
+
+    private PaymentInformation createInvalidPayment(BigDecimal amount) {
+        PaymentInformation payment = createValidPayment(amount);
+        payment.setValid(false);
+        return payment;
+    }
+
+    private CompanyAndAccountsForResourceFeaturesResp createValidEntitlementResponse() {
+        CompanyAndAccountsForResourceFeaturesResp resp = new CompanyAndAccountsForResourceFeaturesResp();
+        List<CompanyAndAccountsForUser> companyGroups = new ArrayList<>();
+        
+        CompanyAndAccountsForUser group = new CompanyAndAccountsForUser();
+        group.setCompanyGroupId("123");
+        
+        CompanyAccountforUser company = new CompanyAccountforUser();
+        company.setCompanyId("123");
+        company.setCompanyName("Test Company");
+        
+        AccountResource account = new AccountResource();
+        account.setAccountNumber("ACC123");
+        account.setAccountStatus("ACTIVE");
+        company.setAccounts(Arrays.asList(account));
+        
+        group.setCompanies(Arrays.asList(company));
+        companyGroups.add(group);
+        
+        resp.setCompaniesAccountResourceFeature(companyGroups);
+        return resp;
+    }
+
+    private void setupValidPreTransactionConditions() {
+        CompanySettings settings = new CompanySettings();
+        settings.setRejectOnErrorConfig(RejectOnErrorConfig.NO);
+        when(executionContext.get(ContextKey.companySettings, CompanySettings.class))
+            .thenReturn(settings);
+    }
+
+    private void setupRejectOnErrorConditions() {
+        CompanySettings settings = new CompanySettings();
+        settings.setRejectOnErrorConfig(RejectOnErrorConfig.YES);
+        when(executionContext.get(ContextKey.companySettings, CompanySettings.class))
+            .thenReturn(settings);
+        
+        PaymentValidationResult validationResult = new PaymentValidationResult(
+            PaymentValidationResult.Result.ERROR, "Validation error"
+        );
+        when(paymentValidationHelper.validateValueDate(any(), any()))
+            .thenReturn(validationResult);
+    }
+
+    private Pain001InboundProcessingResult getResult() {
+        return executionContext.get(ContextKey.result, Pain001InboundProcessingResult.class);
     }
 }
 ```
@@ -1893,4 +2379,457 @@ class PaymentUpdateServiceImplTest {
         }
     }
 }
+```
+
+# save
+
+```java
+package com.example.service;
+
+import org.junit.jupiter.api.*;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.mybatis.spring.SqlSessionTemplate;
+import org.apache.ibatis.session.*;
+import org.springframework.retry.support.RetryTemplate;
+import org.springframework.batch.core.StepExecution;
+import org.springframework.batch.item.ExecutionContext;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.math.BigDecimal;
+import java.time.*;
+import java.util.*;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
+class PaymentSaveServiceImplTest {
+
+    @Mock private AppConfig appConfig;
+    @Mock private ObjectMapper objectMapper;
+    @Mock private PaymentUtils paymentUtils;
+    @Mock private PaymentDeleteService paymentDeleteService;
+    @Mock private RetryTemplate retryTemplate;
+    @Mock private SqlSessionTemplate sqlSessionTemplate;
+    @Mock private PwsSaveDao pwsSaveDao;
+    @Mock private StepExecution stepExecution;
+    @Mock private ExecutionContext executionContext;
+    @Mock private SqlSessionFactory sqlSessionFactory;
+    @Mock private SqlSession sqlSession;
+    
+    private PaymentSaveServiceImpl service;
+    private AutoCloseable closeable;
+
+    @BeforeEach
+    void setUp() {
+        closeable = MockitoAnnotations.openMocks(this);
+        service = new PaymentSaveServiceImpl(
+            appConfig, objectMapper, paymentUtils, paymentDeleteService,
+            retryTemplate, sqlSessionTemplate, pwsSaveDao
+        );
+        service.beforeStep(stepExecution);
+        
+        when(stepExecution.getExecutionContext()).thenReturn(executionContext);
+        when(executionContext.get(ContextKey.result, Pain001InboundProcessingResult.class))
+            .thenReturn(new Pain001InboundProcessingResult());
+        when(sqlSessionTemplate.getSqlSessionFactory()).thenReturn(sqlSessionFactory);
+        when(sqlSessionFactory.openSession(any(ExecutorType.class))).thenReturn(sqlSession);
+        when(sqlSession.getMapper(PwsSaveDao.class)).thenReturn(pwsSaveDao);
+    }
+
+    @AfterEach
+    void tearDown() throws Exception {
+        closeable.close();
+    }
+
+    @Nested
+    @DisplayName("Transit Message Tests")
+    class TransitMessageTests {
+        
+        @Test
+        @DisplayName("Should create transit message")
+        void createTransitMessage_WithValidMessage_ShouldCreate() {
+            // Arrange
+            PwsTransitMessage message = new PwsTransitMessage();
+            message.setBankReferenceId("REF001");
+
+            // Act
+            service.createTransitMessage(message);
+
+            // Assert
+            verify(pwsSaveDao).insertPwsTransitMessage(message);
+        }
+    }
+
+    @Nested
+    @DisplayName("Rejected Record Tests")
+    class RejectedRecordTests {
+        
+        @Test
+        @DisplayName("Should create single rejected record")
+        void createRejectedRecord_WithValidRecord_ShouldCreate() {
+            // Arrange
+            PwsRejectedRecord record = new PwsRejectedRecord();
+            record.setEntityId("ENT001");
+
+            // Act
+            service.createRejectedRecord(record);
+
+            // Assert
+            verify(pwsSaveDao).insertPwsRejectedRecord(record);
+        }
+
+        @Test
+        @DisplayName("Should create multiple rejected records in batches")
+        void createRejectedRecords_WithMultipleRecords_ShouldCreateInBatches() {
+            // Arrange
+            List<PwsRejectedRecord> records = createRejectedRecords(5);
+            when(appConfig.getBatchInsertSize()).thenReturn(2);
+            when(retryTemplate.execute(any(), any())).thenAnswer(invocation -> {
+                invocation.getArgument(0, RetryCallback.class).doWithRetry(null);
+                return null;
+            });
+
+            // Act
+            service.createRejectedRecords(records);
+
+            // Assert
+            verify(sqlSession, times(3)).commit();
+            verify(sqlSession, times(3)).close();
+        }
+    }
+
+    @Nested
+    @DisplayName("Payment Information Save Tests")
+    class PaymentInformationSaveTests {
+        
+        @Test
+        @DisplayName("Should save valid payment information")
+        void savePaymentInformation_WithValidPayment_ShouldSave() {
+            // Arrange
+            PaymentInformation payment = createValidPayment();
+            when(appConfig.getBatchInsertSize()).thenReturn(2);
+            when(retryTemplate.execute(any(), any())).thenAnswer(invocation -> {
+                invocation.getArgument(0, RetryCallback.class).doWithRetry(null);
+                return null;
+            });
+
+            // Act
+            service.savePaymentInformation(payment);
+
+            // Assert
+            verify(pwsSaveDao).insertPwsTransactions(any());
+            verify(pwsSaveDao).insertPwsBulkTransactions(any());
+            verify(sqlSession, atLeastOnce()).commit();
+        }
+
+        @Test
+        @DisplayName("Should handle save failure")
+        void savePaymentInformation_WithSaveFailure_ShouldHandleError() {
+            // Arrange
+            PaymentInformation payment = createValidPayment();
+            when(appConfig.getBatchInsertSize()).thenReturn(2);
+            when(retryTemplate.execute(any(), any())).thenThrow(new RuntimeException("Save failed"));
+
+            // Act
+            service.savePaymentInformation(payment);
+
+            // Assert
+            verify(paymentDeleteService).deleteSavedPaymentInformation(payment);
+            verify(paymentUtils).updatePaymentSavedError(any(), any());
+        }
+    }
+
+    @Nested
+    @DisplayName("Batch Processing Tests")
+    class BatchProcessingTests {
+        
+        @Test
+        @DisplayName("Should save bulk payment")
+        void saveBulkPayment_WithValidPayment_ShouldSave() {
+            // Arrange
+            PaymentInformation payment = createValidPayment();
+            when(pwsSaveDao.getBankRefSequenceNum()).thenReturn(1);
+            when(executionContext.get(ContextKey.bankRefMetaData, BankRefMetaData.class))
+                .thenReturn(new BankRefMetaData("TH", "PWS", "PAY", "2401"));
+
+            // Act
+            long txnId = service.saveBulkPayment(payment);
+
+            // Assert
+            assertTrue(txnId > 0);
+            verify(pwsSaveDao).insertPwsTransactions(any());
+            verify(pwsSaveDao).insertPwsBulkTransactions(any());
+        }
+
+        @Test
+        @DisplayName("Should process transaction batch")
+        void saveCreditTransferBatch_WithValidBatch_ShouldProcess() throws Exception {
+            // Arrange
+            PaymentInformation payment = createValidPayment();
+            List<CreditTransferTransaction> batch = createTransactionBatch(2);
+            when(pwsSaveDao.getBatchBankRefSequenceNum(anyInt()))
+                .thenReturn(Arrays.asList(1, 2));
+            when(executionContext.get(ContextKey.bankRefMetaData, BankRefMetaData.class))
+                .thenReturn(new BankRefMetaData("TH", "PWS", "PAY", "2401"));
+
+            // Act
+            service.saveCreditTransferBatch(payment, batch, 1);
+
+            // Assert
+            verify(sqlSession, atLeastOnce()).commit();
+            verify(sqlSession).close();
+        }
+    }
+
+    private List<PwsRejectedRecord> createRejectedRecords(int count) {
+        List<PwsRejectedRecord> records = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            PwsRejectedRecord record = new PwsRejectedRecord();
+            record.setEntityId("ENT" + i);
+            record.setEntityType("TYPE" + i);
+            records.add(record);
+        }
+        return records;
+    }
+
+    private PaymentInformation createValidPayment() {
+        PaymentInformation payment = new PaymentInformation();
+        
+        PwsTransactions transactions = new PwsTransactions();
+        transactions.setTransactionId(1L);
+        transactions.setBankReferenceId("REF001");
+        payment.setPwsTransactions(transactions);
+        
+        PwsBulkTransactions bulkTransactions = new PwsBulkTransactions();
+        bulkTransactions.setDmpBatchNumber("BATCH001");
+        payment.setPwsBulkTransactions(bulkTransactions);
+        
+        List<CreditTransferTransaction> creditTransfers = createTransactionBatch(2);
+        payment.setCreditTransferTransactionList(creditTransfers);
+        
+        return payment;
+    }
+
+    private List<CreditTransferTransaction> createTransactionBatch(int count) {
+        List<CreditTransferTransaction> batch = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            CreditTransferTransaction txn = new CreditTransferTransaction();
+            txn.setValid(true);
+            
+            PwsBulkTransactionInstructions instructions = new PwsBulkTransactionInstructions();
+            instructions.setTransactionAmount(BigDecimal.valueOf(1000));
+            txn.setPwsBulkTransactionInstructions(instructions);
+            
+            Creditor creditor = new Creditor();
+            PwsParties parties = new PwsParties();
+            creditor.setPwsParties(parties);
+            txn.setCreditor(creditor);
+            
+            PwsTransactionAdvices advice = new PwsTransactionAdvices();
+            txn.setAdvice(advice);
+            
+            TaxInformation taxInfo = new TaxInformation();
+            txn.setTaxInformation(taxInfo);
+            
+            batch.add(txn);
+        }
+        return batch;
+    }
+}
+
+@Nested
+    @DisplayName("Batch Collection Tests")
+    class BatchCollectionTests {
+        
+        @Test
+        @DisplayName("Should collect all transaction batch records")
+        void collectTransactionBatchRecords_WithAllFields_ShouldCollect() {
+            // Arrange
+            CreditTransferTransaction txn = createFullTransaction();
+            TransactionBatchCollections collections = new TransactionBatchCollections();
+            
+            // Act
+            service.collectTransactionBatchRecords(txn, 1L, "PARENT-REF", "CHILD-REF", 
+                System.currentTimeMillis(), collections);
+
+            // Assert
+            assertNotNull(collections.getTxnInstructions());
+            assertEquals(1, collections.getTxnInstructions().size());
+            assertEquals(1, collections.getCreditors().size());
+            assertTrue(collections.getCreditorContacts().size() > 0);
+            assertEquals(1, collections.getAdvices().size());
+            assertTrue(collections.getTaxInstructions().size() > 0);
+            assertEquals(1, collections.getPayerTaxContacts().size());
+            assertEquals(1, collections.getPayeeTaxContacts().size());
+        }
+
+        @Test
+        @DisplayName("Should collect transaction records with null optionals")
+        void collectTransactionBatchRecords_WithNullFields_ShouldCollect() {
+            // Arrange
+            CreditTransferTransaction txn = createMinimalTransaction();
+            TransactionBatchCollections collections = new TransactionBatchCollections();
+            
+            // Act
+            service.collectTransactionBatchRecords(txn, 1L, "PARENT-REF", "CHILD-REF", 
+                System.currentTimeMillis(), collections);
+
+            // Assert
+            assertNotNull(collections.getTxnInstructions());
+            assertEquals(1, collections.getTxnInstructions().size());
+            assertEquals(1, collections.getCreditors().size());
+            assertTrue(collections.getCreditorContacts().isEmpty());
+            assertTrue(collections.getAdvices().contains(null));
+            assertTrue(collections.getTaxInstructions().isEmpty());
+            assertTrue(collections.getPayerTaxContacts().contains(null));
+            assertTrue(collections.getPayeeTaxContacts().contains(null));
+        }
+    }
+
+    @Nested
+    @DisplayName("Batch Execution Tests")
+    class BatchExecutionTests {
+        
+        @Test
+        @DisplayName("Should execute batch inserts in correct order")
+        void executeTransactionBatchInsertsInOrder_ShouldExecuteAll() {
+            // Arrange
+            TransactionBatchCollections collections = createFullBatchCollections();
+            
+            // Act
+            service.executeTransactionBatchInsertsInOrder(collections, 1);
+
+            // Assert
+            verify(sqlSession, times(7)).commit(); // Verify all 7 batch types are committed
+            verify(pwsSaveDao, atLeastOnce()).insertPwsBulkTransactionInstructions(any());
+            verify(pwsSaveDao, atLeastOnce()).insertPwsParties(any());
+            verify(pwsSaveDao, atLeastOnce()).insertPwsPartyContacts(any());
+            verify(pwsSaveDao, atLeastOnce()).insertPwsTransactionAdvices(any());
+            verify(pwsSaveDao, atLeastOnce()).insertPwsTaxInstructions(any());
+        }
+
+        @Test
+        @DisplayName("Should handle batch insert failure")
+        void executeBatchInsert_WithFailure_ShouldRollback() {
+            // Arrange
+            List<PwsParties> records = Collections.singletonList(new PwsParties());
+            doThrow(new RuntimeException("Insert failed"))
+                .when(pwsSaveDao).insertPwsParties(any());
+
+            // Act & Assert
+            assertThrows(BulkProcessingException.class, 
+                () -> service.executeBatchInsert("insertPwsParties", records, null));
+            verify(sqlSession).rollback();
+            verify(sqlSession).close();
+        }
+    }
+
+    @Nested
+    @DisplayName("Payment Save Edge Cases")
+    class PaymentSaveEdgeCasesTests {
+        
+        @Test
+        @DisplayName("Should handle empty valid transactions")
+        void savePaymentInformation_WithNoValidTransactions_ShouldReturn() {
+            // Arrange
+            PaymentInformation payment = createValidPayment();
+            payment.getCreditTransferTransactionList()
+                .forEach(txn -> txn.setValid(false));
+
+            // Act
+            service.savePaymentInformation(payment);
+
+            // Assert
+            verify(pwsSaveDao, never()).insertPwsTransactions(any());
+            verify(pwsSaveDao, never()).insertPwsBulkTransactions(any());
+        }
+
+        @Test
+        @DisplayName("Should handle retry exhaustion")
+        void savePaymentInformation_WithRetryExhaustion_ShouldHandleError() {
+            // Arrange
+            PaymentInformation payment = createValidPayment();
+            when(retryTemplate.execute(any(), any()))
+                .thenThrow(new RuntimeException("Retry exhausted"));
+
+            // Act
+            service.savePaymentInformation(payment);
+
+            // Assert
+            verify(paymentDeleteService).deleteSavedPaymentInformation(payment);
+            verify(paymentUtils).updatePaymentSavedError(any(), any());
+        }
+    }
+
+    // Helper methods for creating test data
+    private CreditTransferTransaction createFullTransaction() {
+        CreditTransferTransaction txn = new CreditTransferTransaction();
+        
+        // Set required fields
+        txn.setPwsBulkTransactionInstructions(new PwsBulkTransactionInstructions());
+        
+        // Create creditor with contacts
+        Creditor creditor = new Creditor();
+        creditor.setPwsParties(new PwsParties());
+        List<PwsPartyContacts> contacts = Arrays.asList(
+            new PwsPartyContacts(), new PwsPartyContacts()
+        );
+        creditor.setPwsPartyContactList(contacts);
+        txn.setCreditor(creditor);
+        
+        // Set advice
+        txn.setAdvice(new PwsTransactionAdvices());
+        
+        // Create tax information
+        TaxInformation taxInfo = new TaxInformation();
+        taxInfo.setInstructionList(Arrays.asList(
+            new PwsTaxInstructions(), new PwsTaxInstructions()
+        ));
+        taxInfo.setPayerTaxContact(new PwsPartyContacts());
+        taxInfo.setPayeeTaxContact(new PwsPartyContacts());
+        txn.setTaxInformation(taxInfo);
+        
+        return txn;
+    }
+
+    private CreditTransferTransaction createMinimalTransaction() {
+        CreditTransferTransaction txn = new CreditTransferTransaction();
+        txn.setPwsBulkTransactionInstructions(new PwsBulkTransactionInstructions());
+        
+        Creditor creditor = new Creditor();
+        creditor.setPwsParties(new PwsParties());
+        txn.setCreditor(creditor);
+        
+        txn.setTaxInformation(new TaxInformation());
+        
+        return txn;
+    }
+
+    private TransactionBatchCollections createFullBatchCollections() {
+        TransactionBatchCollections collections = new TransactionBatchCollections();
+        
+        // Add instructions
+        collections.getTxnInstructions().add(new PwsBulkTransactionInstructions());
+        
+        // Add creditors
+        collections.getCreditors().add(new PwsParties());
+        
+        // Add creditor contacts
+        List<PwsPartyContacts> contacts = new ArrayList<>();
+        contacts.add(new PwsPartyContacts());
+        collections.getCreditorContacts().add(contacts);
+        
+        // Add advice
+        collections.getAdvices().add(new PwsTransactionAdvices());
+        
+        // Add tax instructions
+        List<PwsTaxInstructions> taxInstructions = new ArrayList<>();
+        taxInstructions.add(new PwsTaxInstructions());
+        collections.getTaxInstructions().add(taxInstructions);
+        
+        // Add tax contacts
+        collections.getPayerTaxContacts().add(new PwsPartyContacts());
+        collections.getPayeeTaxContacts().add(new PwsPartyContacts());
+        
+        return collections;
+    }
 ```
