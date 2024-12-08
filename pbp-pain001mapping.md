@@ -21,100 +21,22 @@ public class StreamingPain001Processor {
 
     public List<PaymentInformation> processPain001(File file) {
         try (JsonParser parser = objectMapper.getFactory().createParser(file)) {
-            // Initialize containers
-            GroupHeaderDTO groupHeader = null;
-            String debtorName = null;
-            List<PaymentInformation> paymentInfos = new ArrayList<>();
-            boolean preMappingDone = false;
-
             // Navigate to CustomerCreditTransferInitiation
             while (parser.nextToken() != null) {
-                String fieldName = parser.getCurrentName();
+                String fieldName = parser.currentName();
                 if ("customerCreditTransferInitiation".equals(fieldName)) {
                     parser.nextToken(); // START_OBJECT
-                    break;
+                    return parseCustomerCreditTransferInitiation(parser);
                 }
             }
-
-            // Parse CustomerCreditTransferInitiation contents
-            while (parser.nextToken() != JsonToken.END_OBJECT) {
-                String fieldName = parser.getCurrentName();
-                if (fieldName == null) continue;
-
-                switch (fieldName) {
-                    case "groupHeader":
-                        parser.nextToken();
-                        groupHeader = objectMapper.readValue(parser, GroupHeaderDTO.class);
-                        // Process group header
-                        SourceProcessStatus headerResult = pain001ProcessService.processPain001GroupHeader(groupHeader);
-                        if (handleSourceProcessResultAndStop(headerResult)) {
-                            return null;
-                        }
-                        break;
-
-                    case "paymentInformation":
-                        parser.nextToken(); // START_ARRAY
-                        while (parser.nextToken() != JsonToken.END_ARRAY) {
-                            // Read one PaymentInformationDTO
-                            PaymentInformationDTO paymentInfoDTO = objectMapper.readValue(parser, PaymentInformationDTO.class);
-
-                            // Get debtor name and do pre-mapping if not done yet
-                            if (!preMappingDone) {
-                                debtorName = paymentInfoDTO.getDebtor().getName();
-                                SourceProcessStatus preMappingResult = 
-                                    pain001ProcessService.processPrePain001BoMapping(groupHeader, debtorName);
-                                if (handleSourceProcessResultAndStop(preMappingResult)) {
-                                    return null;
-                                }
-                                preMappingDone = true;
-                            }
-
-                            // Create temporary Pain001 structure for mapping
-                            Pain001 tempPain001 = createSinglePaymentPain001(groupHeader, paymentInfoDTO);
-                            
-                            // Map to BO immediately
-                            List<PaymentInformation> mappedPayments = pain001ProcessService.processPain001BoMapping(tempPain001);
-                            if (!CollectionUtils.isEmpty(mappedPayments)) {
-                                paymentInfos.addAll(mappedPayments);
-                            }
-                        }
-                        break;
-                }
-            }
-
-            // Validate we have payments after mapping
-            if (CollectionUtils.isEmpty(paymentInfos)) {
-                SourceProcessStatus emptyPaymentError = new SourceProcessStatus(
-                    SourceProcessStatus.Result.SourceError,
-                    "No payments to process after BO mapping"
-                );
-                handleSourceProcessResultAndStop(emptyPaymentError);
-                return null;
-            }
-
-            // Perform mapping validation
-            SourceProcessStatus mappingValidationResult = 
-                pain001ProcessService.processPain001BoMappingValidation(paymentInfos);
-            if (handleSourceProcessResultAndStop(mappingValidationResult)) {
-                return null;
-            }
-
-            // Post mapping processing
-            SourceProcessStatus postMappingResult = 
-                pain001ProcessService.processPostPain001BoMapping(paymentInfos);
-            if (handleSourceProcessResultAndStop(postMappingResult)) {
-                return null;
-            }
-
-            // Create transit message
-            PwsTransitMessage transitMsg = createTransitMessage(
-                getResult().getSourceReference(),
-                Pain001InboundProcessingStatus.Pain001Processing.name()
+            
+            // If we get here, we didn't find CustomerCreditTransferInitiation
+            SourceProcessStatus error = new SourceProcessStatus(
+                SourceProcessStatus.Result.SourceError,
+                "CustomerCreditTransferInitiation not found in file"
             );
-            setTransitMessage(transitMsg);
-            getResult().setProcessingStatus(Pain001InboundProcessingStatus.Pain001Processing);
-
-            return paymentInfos;
+            handleSourceProcessResultAndStop(error);
+            return null;
 
         } catch (IOException e) {
             log.error("Error on parsing pain001 json file: {}", file.getName(), e);
@@ -127,21 +49,105 @@ public class StreamingPain001Processor {
         }
     }
 
-    private Pain001 createSinglePaymentPain001(GroupHeaderDTO groupHeader, PaymentInformationDTO paymentInfoDTO) {
-        List<PaymentInformationDTO> singlePaymentList = new ArrayList<>();
-        singlePaymentList.add(paymentInfoDTO);
+    private List<PaymentInformation> parseCustomerCreditTransferInitiation(JsonParser parser) throws IOException {
+        GroupHeaderDTO groupHeader = null;
+        String debtorName = null;
+        List<PaymentInformation> paymentInfos = new ArrayList<>();
+        boolean preMappingDone = false;
 
-        CustomerCreditTransferInitiation ccti = new CustomerCreditTransferInitiation();
-        ccti.setGroupHeader(groupHeader);
-        ccti.setPaymentInformation(singlePaymentList);
+        while (parser.nextToken() != JsonToken.END_OBJECT) {
+            String fieldName = parser.currentName();
+            if (fieldName == null) continue;
 
-        BusinessDocument bd = new BusinessDocument();
-        bd.setCustomerCreditTransferInitiation(ccti);
+            switch (fieldName) {
+                case "groupHeader":
+                    groupHeader = parseAndProcessGroupHeader(parser);
+                    if (groupHeader == null) return null;
+                    break;
 
-        Pain001 pain001 = new Pain001();
-        pain001.setBusinessDocument(bd);
+                case "paymentInformation":
+                    List<PaymentInformation> parsedPayments = parsePaymentInformations(
+                        parser, groupHeader, preMappingDone);
+                    if (parsedPayments == null) return null;
+                    paymentInfos.addAll(parsedPayments);
+                    preMappingDone = true;
+                    break;
+            }
+        }
+
+        return validateAndProcessPayments(paymentInfos);
+    }
+
+    private GroupHeaderDTO parseAndProcessGroupHeader(JsonParser parser) throws IOException {
+        parser.nextToken();
+        GroupHeaderDTO groupHeader = objectMapper.readValue(parser, GroupHeaderDTO.class);
         
-        return pain001;
+        SourceProcessStatus headerResult = pain001ProcessService.processPain001GroupHeader(groupHeader);
+        if (handleSourceProcessResultAndStop(headerResult)) {
+            return null;
+        }
+        
+        return groupHeader;
+    }
+
+    private List<PaymentInformation> parsePaymentInformations(
+            JsonParser parser, 
+            GroupHeaderDTO groupHeader,
+            boolean preMappingDone) throws IOException {
+            
+        List<PaymentInformation> paymentInfos = new ArrayList<>();
+        parser.nextToken(); // START_ARRAY
+
+        while (parser.nextToken() != JsonToken.END_ARRAY) {
+            // Read one PaymentInformationDTO
+            PaymentInformationDTO paymentInfoDTO = objectMapper.readValue(parser, PaymentInformationDTO.class);
+
+            // Get debtor name and do pre-mapping if not done yet
+            if (!preMappingDone) {
+                String debtorName = paymentInfoDTO.getDebtor().getName();
+                SourceProcessStatus preMappingResult = 
+                    pain001ProcessService.processPrePain001BoMapping(groupHeader, debtorName);
+                if (handleSourceProcessResultAndStop(preMappingResult)) {
+                    return null;
+                }
+            }
+
+            // Map directly to PaymentInformation
+            PaymentInformation paymentInfo = pain001ProcessService.mapToPaymentInformation(paymentInfoDTO);
+            if (paymentInfo != null) {
+                paymentInfos.add(paymentInfo);
+            }
+        }
+
+        return paymentInfos;
+    }
+
+    private List<PaymentInformation> validateAndProcessPayments(List<PaymentInformation> paymentInfos) {
+        // Validate we have payments after mapping
+        if (CollectionUtils.isEmpty(paymentInfos)) {
+            SourceProcessStatus emptyPaymentError = new SourceProcessStatus(
+                SourceProcessStatus.Result.SourceError,
+                "No payments to process after mapping"
+            );
+            handleSourceProcessResultAndStop(emptyPaymentError);
+            return null;
+        }
+
+        // Perform mapping validation
+        SourceProcessStatus mappingValidationResult = 
+            pain001ProcessService.processPain001BoMappingValidation(paymentInfos);
+        if (handleSourceProcessResultAndStop(mappingValidationResult)) {
+            return null;
+        }
+
+        // Post mapping processing
+        SourceProcessStatus postMappingResult = 
+            pain001ProcessService.processPostPain001BoMapping(paymentInfos);
+        if (handleSourceProcessResultAndStop(postMappingResult)) {
+            return null;
+        }
+
+        return paymentInfos;
     }
 
     // Convenience method to process using file path
