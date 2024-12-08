@@ -931,165 +931,6 @@ class PaymentDebulkServiceImplTHTest {
 }
 ```
 
-# delete
-
-```java
-@ExtendWith(MockitoExtension.class)
-@DisplayName("PaymentDeleteServiceImpl Test Suite")
-class PaymentDeleteServiceImplTest {
-
-    @Mock
-    private PwsDeleteDao pwsDeleteDao;
-    @Mock
-    private StepExecution stepExecution;
-    @Mock
-    private JobExecution jobExecution;
-    @Mock
-    private ExecutionContext jobContext;
-    @Mock
-    private ExecutionContext stepContext;
-
-    @InjectMocks
-    private PaymentDeleteServiceImpl service;
-
-    @BeforeEach
-    void setUp() {
-        when(stepExecution.getJobExecution()).thenReturn(jobExecution);
-        when(jobExecution.getExecutionContext()).thenReturn(jobContext);
-        when(stepExecution.getExecutionContext()).thenReturn(stepContext);
-        service.beforeStep(stepExecution);
-    }
-
-    @Nested
-    @DisplayName("Delete Payment Information Tests")
-    class DeletePaymentInformationTests {
-
-        @Test
-        @DisplayName("Should delete all related records when transaction ID exists")
-        void shouldDeleteAllRelatedRecordsWhenTransactionIdExists() {
-            // Arrange
-            long transactionId = 123L;
-            PaymentInformation paymentInfo = createPaymentInfoWithTransactionId(transactionId);
-
-            // Act
-            service.deletePaymentInformation(paymentInfo);
-
-            // Assert
-            // Verify all delete operations were called in correct order
-            InOrder inOrder = inOrder(pwsDeleteDao);
-            inOrder.verify(pwsDeleteDao).deletePwsTaxInstructions(transactionId);
-            inOrder.verify(pwsDeleteDao).deletePwsTransactionAdvices(transactionId);
-            inOrder.verify(pwsDeleteDao).deletePwsPartyContacts(transactionId);
-            inOrder.verify(pwsDeleteDao).deletePwsParties(transactionId);
-            inOrder.verify(pwsDeleteDao).deletePwsBulkTransactionInstructions(transactionId);
-            inOrder.verify(pwsDeleteDao).deletePwsBulkTransactions(transactionId);
-            inOrder.verify(pwsDeleteDao).deletePwsTransactions(transactionId);
-
-            // Verify IDs were reset
-            assertEquals(0L, paymentInfo.getPwsTransactions().getTransactionId());
-            assertEquals(0L, paymentInfo.getPwsBulkTransactions().getTransactionId());
-            assertTrue(paymentInfo.getCreditTransferTransactionList().stream()
-                    .allMatch(tx -> tx.getPwsBulkTransactionInstructions().getTransactionId() == 0L));
-        }
-
-        @Test
-        @DisplayName("Should skip deletion when transaction ID is zero")
-        void shouldSkipDeletionWhenTransactionIdIsZero() {
-            // Arrange
-            PaymentInformation paymentInfo = createPaymentInfoWithTransactionId(0L);
-
-            // Act
-            service.deletePaymentInformation(paymentInfo);
-
-            // Assert
-            verifyNoInteractions(pwsDeleteDao);
-            assertEquals(0L, paymentInfo.getPwsTransactions().getTransactionId());
-            assertEquals(0L, paymentInfo.getPwsBulkTransactions().getTransactionId());
-        }
-
-        @Test
-        @DisplayName("Should handle multiple credit transfer transactions")
-        void shouldHandleMultipleCreditTransferTransactions() {
-            // Arrange
-            long transactionId = 123L;
-            PaymentInformation paymentInfo = createPaymentInfoWithMultipleTransactions(transactionId, 3);
-
-            // Act
-            service.deletePaymentInformation(paymentInfo);
-
-            // Assert
-            verify(pwsDeleteDao, times(1)).deletePwsTransactions(transactionId);
-            assertEquals(3, paymentInfo.getCreditTransferTransactionList().size());
-            assertTrue(paymentInfo.getCreditTransferTransactionList().stream()
-                    .allMatch(tx -> tx.getPwsBulkTransactionInstructions().getTransactionId() == 0L));
-        }
-
-        @Test
-        @DisplayName("Should handle database errors while maintaining transaction integrity")
-        void shouldHandleDatabaseErrorsWhileMaintainingTransactionIntegrity() {
-            // Arrange
-            long transactionId = 123L;
-            PaymentInformation paymentInfo = createPaymentInfoWithTransactionId(transactionId);
-            doThrow(new RuntimeException("Database error"))
-                    .when(pwsDeleteDao)
-                    .deletePwsPartyContacts(transactionId);
-
-            // Act & Assert
-            assertThrows(RuntimeException.class, () -> service.deletePaymentInformation(paymentInfo));
-            
-            // Verify operations before error were called
-            verify(pwsDeleteDao).deletePwsTaxInstructions(transactionId);
-            verify(pwsDeleteDao).deletePwsTransactionAdvices(transactionId);
-            verify(pwsDeleteDao).deletePwsPartyContacts(transactionId);
-            
-            // Verify operations after error were not called
-            verify(pwsDeleteDao, never()).deletePwsParties(transactionId);
-            verify(pwsDeleteDao, never()).deletePwsBulkTransactionInstructions(transactionId);
-            verify(pwsDeleteDao, never()).deletePwsBulkTransactions(transactionId);
-            verify(pwsDeleteDao, never()).deletePwsTransactions(transactionId);
-        }
-    }
-
-    private PaymentInformation createPaymentInfoWithTransactionId(long transactionId) {
-        PwsTransactions pwsTransactions = new PwsTransactions();
-        pwsTransactions.setTransactionId(transactionId);
-
-        PwsBulkTransactions pwsBulkTransactions = new PwsBulkTransactions();
-        pwsBulkTransactions.setTransactionId(transactionId);
-
-        PwsBulkTransactionInstructions instructions = new PwsBulkTransactionInstructions();
-        instructions.setTransactionId(transactionId);
-
-        CreditTransferTransaction creditTransferTransaction = new CreditTransferTransaction();
-        creditTransferTransaction.setPwsBulkTransactionInstructions(instructions);
-
-        PaymentInformation paymentInfo = new PaymentInformation();
-        paymentInfo.setPwsTransactions(pwsTransactions);
-        paymentInfo.setPwsBulkTransactions(pwsBulkTransactions);
-        paymentInfo.setCreditTransferTransactionList(Collections.singletonList(creditTransferTransaction));
-
-        return paymentInfo;
-    }
-
-    private PaymentInformation createPaymentInfoWithMultipleTransactions(long transactionId, int count) {
-        PaymentInformation paymentInfo = createPaymentInfoWithTransactionId(transactionId);
-        List<CreditTransferTransaction> transactions = new ArrayList<>();
-        
-        for (int i = 0; i < count; i++) {
-            PwsBulkTransactionInstructions instructions = new PwsBulkTransactionInstructions();
-            instructions.setTransactionId(transactionId);
-            
-            CreditTransferTransaction transaction = new CreditTransferTransaction();
-            transaction.setPwsBulkTransactionInstructions(instructions);
-            transactions.add(transaction);
-        }
-        
-        paymentInfo.setCreditTransferTransactionList(transactions);
-        return paymentInfo;
-    }
-}
-```
-
 # enrich
 
 ```java
@@ -1511,3 +1352,347 @@ class PaymentIntegrationserviceImplTest {
 
 
 # query
+
+```java
+@ExtendWith(MockitoExtension.class)
+@DisplayName("PaymentQueryServiceImpl Test Suite")
+class PaymentQueryServiceImplTest {
+
+    @Mock
+    private PwsQueryDao pwsQueryDao;
+
+    @InjectMocks
+    private PaymentQueryServiceImpl service;
+
+    @Nested
+    @DisplayName("File Upload Query Tests")
+    class FileUploadQueryTests {
+
+        @Test
+        @DisplayName("Should return file upload when found")
+        void shouldReturnFileUploadWhenFound() {
+            // Arrange
+            String fileRef = "REF123";
+            PwsFileUpload expectedFileUpload = new PwsFileUpload();
+            when(pwsQueryDao.getPwsFileUpload(fileRef)).thenReturn(expectedFileUpload);
+
+            // Act
+            PwsFileUpload result = service.getFileUpload(fileRef);
+
+            // Assert
+            assertNotNull(result);
+            assertEquals(expectedFileUpload, result);
+            verify(pwsQueryDao).getPwsFileUpload(fileRef);
+        }
+
+        @Test
+        @DisplayName("Should return null when file upload not found")
+        void shouldReturnNullWhenFileUploadNotFound() {
+            // Arrange
+            String fileRef = "NONEXISTENT";
+            when(pwsQueryDao.getPwsFileUpload(fileRef)).thenReturn(null);
+
+            // Act
+            PwsFileUpload result = service.getFileUpload(fileRef);
+
+            // Assert
+            assertNull(result);
+            verify(pwsQueryDao).getPwsFileUpload(fileRef);
+        }
+
+        @Test
+        @DisplayName("Should handle null file reference")
+        void shouldHandleNullFileReference() {
+            // Arrange
+            when(pwsQueryDao.getPwsFileUpload(null)).thenReturn(null);
+
+            // Act
+            PwsFileUpload result = service.getFileUpload(null);
+
+            // Assert
+            assertNull(result);
+            verify(pwsQueryDao).getPwsFileUpload(null);
+        }
+
+        @Test
+        @DisplayName("Should handle DAO exception")
+        void shouldHandleDaoException() {
+            // Arrange
+            String fileRef = "ERROR_REF";
+            when(pwsQueryDao.getPwsFileUpload(fileRef)).thenThrow(new RuntimeException("Database error"));
+
+            // Act & Assert
+            assertThrows(RuntimeException.class, () -> service.getFileUpload(fileRef));
+            verify(pwsQueryDao).getPwsFileUpload(fileRef);
+        }
+    }
+}
+```
+
+# delete
+
+```java
+@ExtendWith(MockitoExtension.class)
+@DisplayName("PaymentDeleteServiceImpl Test Suite")
+class PaymentDeleteServiceImplTest {
+
+    @Mock
+    private PwsDeleteDao pwsDeleteDao;
+    @Mock
+    private StepExecution stepExecution;
+    @Mock
+    private JobExecution jobExecution;
+    @Mock
+    private ExecutionContext jobContext;
+    @Mock
+    private ExecutionContext stepContext;
+
+    @InjectMocks
+    private PaymentDeleteServiceImpl service;
+
+    @BeforeEach
+    void setUp() {
+        when(stepExecution.getJobExecution()).thenReturn(jobExecution);
+        when(jobExecution.getExecutionContext()).thenReturn(jobContext);
+        when(stepExecution.getExecutionContext()).thenReturn(stepContext);
+        service.beforeStep(stepExecution);
+    }
+
+    @Nested
+    @DisplayName("Delete Payment Information Tests")
+    class DeletePaymentInformationTests {
+
+        @Test
+        @DisplayName("Should delete all related records when transaction ID exists")
+        void shouldDeleteAllRelatedRecordsWhenTransactionIdExists() {
+            // Arrange
+            long transactionId = 123L;
+            PaymentInformation paymentInfo = createPaymentInfoWithTransactionId(transactionId);
+
+            // Act
+            service.deletePaymentInformation(paymentInfo);
+
+            // Assert
+            // Verify all delete operations were called in correct order
+            InOrder inOrder = inOrder(pwsDeleteDao);
+            inOrder.verify(pwsDeleteDao).deletePwsTaxInstructions(transactionId);
+            inOrder.verify(pwsDeleteDao).deletePwsTransactionAdvices(transactionId);
+            inOrder.verify(pwsDeleteDao).deletePwsPartyContacts(transactionId);
+            inOrder.verify(pwsDeleteDao).deletePwsParties(transactionId);
+            inOrder.verify(pwsDeleteDao).deletePwsBulkTransactionInstructions(transactionId);
+            inOrder.verify(pwsDeleteDao).deletePwsBulkTransactions(transactionId);
+            inOrder.verify(pwsDeleteDao).deletePwsTransactions(transactionId);
+
+            // Verify IDs were reset
+            assertEquals(0L, paymentInfo.getPwsTransactions().getTransactionId());
+            assertEquals(0L, paymentInfo.getPwsBulkTransactions().getTransactionId());
+            assertTrue(paymentInfo.getCreditTransferTransactionList().stream()
+                    .allMatch(tx -> tx.getPwsBulkTransactionInstructions().getTransactionId() == 0L));
+        }
+
+        @Test
+        @DisplayName("Should skip deletion when transaction ID is zero")
+        void shouldSkipDeletionWhenTransactionIdIsZero() {
+            // Arrange
+            PaymentInformation paymentInfo = createPaymentInfoWithTransactionId(0L);
+
+            // Act
+            service.deletePaymentInformation(paymentInfo);
+
+            // Assert
+            verifyNoInteractions(pwsDeleteDao);
+            assertEquals(0L, paymentInfo.getPwsTransactions().getTransactionId());
+            assertEquals(0L, paymentInfo.getPwsBulkTransactions().getTransactionId());
+        }
+
+        @Test
+        @DisplayName("Should handle multiple credit transfer transactions")
+        void shouldHandleMultipleCreditTransferTransactions() {
+            // Arrange
+            long transactionId = 123L;
+            PaymentInformation paymentInfo = createPaymentInfoWithMultipleTransactions(transactionId, 3);
+
+            // Act
+            service.deletePaymentInformation(paymentInfo);
+
+            // Assert
+            verify(pwsDeleteDao, times(1)).deletePwsTransactions(transactionId);
+            assertEquals(3, paymentInfo.getCreditTransferTransactionList().size());
+            assertTrue(paymentInfo.getCreditTransferTransactionList().stream()
+                    .allMatch(tx -> tx.getPwsBulkTransactionInstructions().getTransactionId() == 0L));
+        }
+
+        @Test
+        @DisplayName("Should handle database errors while maintaining transaction integrity")
+        void shouldHandleDatabaseErrorsWhileMaintainingTransactionIntegrity() {
+            // Arrange
+            long transactionId = 123L;
+            PaymentInformation paymentInfo = createPaymentInfoWithTransactionId(transactionId);
+            doThrow(new RuntimeException("Database error"))
+                    .when(pwsDeleteDao)
+                    .deletePwsPartyContacts(transactionId);
+
+            // Act & Assert
+            assertThrows(RuntimeException.class, () -> service.deletePaymentInformation(paymentInfo));
+            
+            // Verify operations before error were called
+            verify(pwsDeleteDao).deletePwsTaxInstructions(transactionId);
+            verify(pwsDeleteDao).deletePwsTransactionAdvices(transactionId);
+            verify(pwsDeleteDao).deletePwsPartyContacts(transactionId);
+            
+            // Verify operations after error were not called
+            verify(pwsDeleteDao, never()).deletePwsParties(transactionId);
+            verify(pwsDeleteDao, never()).deletePwsBulkTransactionInstructions(transactionId);
+            verify(pwsDeleteDao, never()).deletePwsBulkTransactions(transactionId);
+            verify(pwsDeleteDao, never()).deletePwsTransactions(transactionId);
+        }
+    }
+
+    private PaymentInformation createPaymentInfoWithTransactionId(long transactionId) {
+        PwsTransactions pwsTransactions = new PwsTransactions();
+        pwsTransactions.setTransactionId(transactionId);
+
+        PwsBulkTransactions pwsBulkTransactions = new PwsBulkTransactions();
+        pwsBulkTransactions.setTransactionId(transactionId);
+
+        PwsBulkTransactionInstructions instructions = new PwsBulkTransactionInstructions();
+        instructions.setTransactionId(transactionId);
+
+        CreditTransferTransaction creditTransferTransaction = new CreditTransferTransaction();
+        creditTransferTransaction.setPwsBulkTransactionInstructions(instructions);
+
+        PaymentInformation paymentInfo = new PaymentInformation();
+        paymentInfo.setPwsTransactions(pwsTransactions);
+        paymentInfo.setPwsBulkTransactions(pwsBulkTransactions);
+        paymentInfo.setCreditTransferTransactionList(Collections.singletonList(creditTransferTransaction));
+
+        return paymentInfo;
+    }
+
+    private PaymentInformation createPaymentInfoWithMultipleTransactions(long transactionId, int count) {
+        PaymentInformation paymentInfo = createPaymentInfoWithTransactionId(transactionId);
+        List<CreditTransferTransaction> transactions = new ArrayList<>();
+        
+        for (int i = 0; i < count; i++) {
+            PwsBulkTransactionInstructions instructions = new PwsBulkTransactionInstructions();
+            instructions.setTransactionId(transactionId);
+            
+            CreditTransferTransaction transaction = new CreditTransferTransaction();
+            transaction.setPwsBulkTransactionInstructions(instructions);
+            transactions.add(transaction);
+        }
+        
+        paymentInfo.setCreditTransferTransactionList(transactions);
+        return paymentInfo;
+    }
+}
+```
+
+# update
+
+```java
+@ExtendWith(MockitoExtension.class)
+@DisplayName("PaymentUpdateServiceImpl Test Suite")
+class PaymentUpdateServiceImplTest {
+
+    @Mock
+    private PwsUpdateDao pwsUpdateDao;
+
+    @InjectMocks
+    private PaymentUpdateServiceImpl service;
+
+    @Nested
+    @DisplayName("File Upload Status Update Tests")
+    class FileUploadStatusUpdateTests {
+
+        @Test
+        @DisplayName("Should update file upload status successfully")
+        void shouldUpdateFileUploadStatusSuccessfully() {
+            // Arrange
+            PwsFileUpload fileUpload = new PwsFileUpload();
+            fileUpload.setFileUploadId(123L);
+            fileUpload.setStatus("COMPLETED");
+
+            // Act
+            assertDoesNotThrow(() -> service.updateFileUploadStatus(fileUpload));
+
+            // Assert
+            verify(pwsUpdateDao).updateFileUploadStatus(fileUpload);
+        }
+
+        @Test
+        @DisplayName("Should handle null file upload")
+        void shouldHandleNullFileUpload() {
+            // Arrange
+            doThrow(new IllegalArgumentException("File upload cannot be null"))
+                .when(pwsUpdateDao).updateFileUploadStatus(null);
+
+            // Act & Assert
+            assertThrows(IllegalArgumentException.class, 
+                () -> service.updateFileUploadStatus(null));
+            verify(pwsUpdateDao).updateFileUploadStatus(null);
+        }
+
+        @Test
+        @DisplayName("Should handle DAO exception during file upload update")
+        void shouldHandleDaoExceptionDuringFileUploadUpdate() {
+            // Arrange
+            PwsFileUpload fileUpload = new PwsFileUpload();
+            doThrow(new RuntimeException("Database error"))
+                .when(pwsUpdateDao).updateFileUploadStatus(fileUpload);
+
+            // Act & Assert
+            assertThrows(RuntimeException.class, 
+                () -> service.updateFileUploadStatus(fileUpload));
+            verify(pwsUpdateDao).updateFileUploadStatus(fileUpload);
+        }
+    }
+
+    @Nested
+    @DisplayName("Transit Message Status Update Tests")
+    class TransitMessageStatusUpdateTests {
+
+        @Test
+        @DisplayName("Should update transit message status successfully")
+        void shouldUpdateTransitMessageStatusSuccessfully() {
+            // Arrange
+            PwsTransitMessage transitMessage = new PwsTransitMessage();
+            transitMessage.setTransitMessageId(456L);
+            transitMessage.setStatus("PROCESSED");
+
+            // Act
+            assertDoesNotThrow(() -> service.updateTransitMessageStatus(transitMessage));
+
+            // Assert
+            verify(pwsUpdateDao).updateTransitMessageStatus(transitMessage);
+        }
+
+        @Test
+        @DisplayName("Should handle null transit message")
+        void shouldHandleNullTransitMessage() {
+            // Arrange
+            doThrow(new IllegalArgumentException("Transit message cannot be null"))
+                .when(pwsUpdateDao).updateTransitMessageStatus(null);
+
+            // Act & Assert
+            assertThrows(IllegalArgumentException.class, 
+                () -> service.updateTransitMessageStatus(null));
+            verify(pwsUpdateDao).updateTransitMessageStatus(null);
+        }
+
+        @Test
+        @DisplayName("Should handle DAO exception during transit message update")
+        void shouldHandleDaoExceptionDuringTransitMessageUpdate() {
+            // Arrange
+            PwsTransitMessage transitMessage = new PwsTransitMessage();
+            doThrow(new RuntimeException("Database error"))
+                .when(pwsUpdateDao).updateTransitMessageStatus(transitMessage);
+
+            // Act & Assert
+            assertThrows(RuntimeException.class, 
+                () -> service.updateTransitMessageStatus(transitMessage));
+            verify(pwsUpdateDao).updateTransitMessageStatus(transitMessage);
+        }
+    }
+}
+```
