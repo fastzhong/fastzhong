@@ -1,212 +1,538 @@
-```java
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.function.Executable;
+# commong
 
+```java
+package com.example.utils;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.*;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.Timestamp;
 import java.text.ParseException;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.Date;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
 class CommonUtilsTest {
 
-    @Test
-    void testStringToDate_validDateString() throws ParseException {
-        String dateStr = "2024-12-08";
-        Date date = CommonUtils.stringToDate(dateStr);
-        assertNotNull(date);
-        assertEquals(CommonUtils.ISO_DATE_FORMAT.parse(dateStr).getTime(), date.getTime());
+    private ObjectMapper objectMapper;
+    private Path tempDir;
+
+    @BeforeEach
+    void setUp() {
+        objectMapper = new ObjectMapper();
+        tempDir = Path.of(System.getProperty("java.io.tmpdir"));
     }
 
-    @Test
-    void testStringToDate_nullString() throws ParseException {
-        String dateStr = null;
-        assertNull(CommonUtils.stringToDate(dateStr));
+    @Nested
+    @DisplayName("Date Formatting Tests")
+    class DateFormattingTests {
+
+        @Test
+        @DisplayName("Should format date with zone correctly")
+        void isoZoneFormatDateTime_WithValidDate_ShouldFormatCorrectly() {
+            // Arrange
+            Date date = new Date();
+            
+            // Act
+            String formatted = CommonUtils.isoZoneFormatDateTime(date);
+            
+            // Assert
+            assertNotNull(formatted);
+            assertTrue(formatted.matches("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z"));
+        }
+
+        @Test
+        @DisplayName("Should throw IllegalArgumentException for null date")
+        void isoZoneFormatDateTime_WithNullDate_ShouldThrowException() {
+            assertThrows(IllegalArgumentException.class, 
+                () -> CommonUtils.isoZoneFormatDateTime((Date) null));
+        }
     }
 
-    @Test
-    void testStringToDate_invalidDateString() {
-        String dateStr = "invalid-date";
-        Executable executable = () -> CommonUtils.stringToDate(dateStr);
-        assertThrows(ParseException.class, executable);
+    @Nested
+    @DisplayName("Date Parsing Tests")
+    class DateParsingTests {
+
+        @Test
+        @DisplayName("Should parse valid date string")
+        void stringToDate_WithValidDateString_ShouldParseCorrectly() throws ParseException {
+            // Arrange
+            String dateStr = "2024-01-01";
+            
+            // Act
+            Date result = CommonUtils.stringToDate(dateStr);
+            
+            // Assert
+            assertNotNull(result);
+            assertEquals(dateStr, CommonUtils.ISO_DATE_FORMAT.get().format(result));
+        }
+
+        @Test
+        @DisplayName("Should return null for null or empty string")
+        void stringToDate_WithNullOrEmptyString_ShouldReturnNull() throws ParseException {
+            assertNull(CommonUtils.stringToDate(null));
+            assertNull(CommonUtils.stringToDate(""));
+        }
+
+        @Test
+        @DisplayName("Should throw ParseException for invalid date format")
+        void stringToDate_WithInvalidFormat_ShouldThrowParseException() {
+            assertThrows(ParseException.class, () -> CommonUtils.stringToDate("invalid-date"));
+        }
     }
 
-    @Test
-    void testStringToTimestamp_validDateTimeString() throws ParseException {
-        String dateTimeStr = "2024-12-08 15:30:45.123";
-        Timestamp timestamp = CommonUtils.stringToTimestamp(dateTimeStr);
-        assertNotNull(timestamp);
-        assertEquals(CommonUtils.ISO_DATETIME_FORMAT.parse(dateTimeStr).getTime(), timestamp.getTime());
+    @Nested
+    @DisplayName("Timestamp Conversion Tests")
+    class TimestampConversionTests {
+
+        @Test
+        @DisplayName("Should convert valid datetime string to timestamp")
+        void stringToTimestamp_WithValidString_ShouldConvertCorrectly() throws ParseException {
+            // Arrange
+            String datetimeStr = "2024-01-01 12:00:00.000";
+            
+            // Act
+            Timestamp result = CommonUtils.stringToTimestamp(datetimeStr);
+            
+            // Assert
+            assertNotNull(result);
+            assertEquals(datetimeStr, CommonUtils.ISO_DATETIME_FORMAT.get().format(result));
+        }
+
+        @ParameterizedTest
+        @NullAndEmptySource
+        @DisplayName("Should return null for null or empty input")
+        void stringToTimestamp_WithNullOrEmpty_ShouldReturnNull(String input) throws ParseException {
+            assertNull(CommonUtils.stringToTimestamp(input));
+        }
     }
 
-    @Test
-    void testStringToTimestamp_nullString() throws ParseException {
-        String dateTimeStr = null;
-        assertNull(CommonUtils.stringToTimestamp(dateTimeStr));
+    @Nested
+    @DisplayName("Date Type Conversion Tests")
+    class DateTypeConversionTests {
+
+        @Test
+        @DisplayName("Should convert between util.Date and LocalDate")
+        void dateConversion_UtilDateAndLocalDate_ShouldConvertCorrectly() {
+            // Arrange
+            Date utilDate = new Date();
+            
+            // Act
+            LocalDate localDate = CommonUtils.utilAsLocalDate(utilDate);
+            Date convertedBack = CommonUtils.localDateAsUtil(localDate);
+            
+            // Assert
+            assertNotNull(localDate);
+            assertNotNull(convertedBack);
+            assertEquals(localDate, convertedBack.toInstant()
+                .atZone(ZoneId.systemDefault()).toLocalDate());
+        }
+
+        @Test
+        @DisplayName("Should convert between util.Date and LocalDateTime")
+        void dateConversion_UtilDateAndLocalDateTime_ShouldConvertCorrectly() {
+            // Arrange
+            Date utilDate = new Date();
+            
+            // Act
+            LocalDateTime localDateTime = CommonUtils.utilAsLocalDateTime(utilDate);
+            Date convertedBack = CommonUtils.localDateTimeAsUtil(localDateTime);
+            
+            // Assert
+            assertNotNull(localDateTime);
+            assertNotNull(convertedBack);
+            assertEquals(localDateTime.withNano(0), 
+                convertedBack.toInstant()
+                    .atZone(ZoneId.systemDefault())
+                    .toLocalDateTime()
+                    .withNano(0));
+        }
+
+        @Test
+        @DisplayName("Should convert between util.Date and sql.Date")
+        void dateConversion_UtilDateAndSqlDate_ShouldConvertCorrectly() {
+            // Arrange
+            Date utilDate = new Date();
+            
+            // Act
+            java.sql.Date sqlDate = CommonUtils.utilAsSqlDate(utilDate);
+            Date convertedBack = CommonUtils.sqlDateAsUtil(sqlDate);
+            
+            // Assert
+            assertNotNull(sqlDate);
+            assertNotNull(convertedBack);
+            assertEquals(utilDate.getTime(), convertedBack.getTime());
+        }
+
+        @Test
+        @DisplayName("Should convert between util.Date and sql.Timestamp")
+        void dateConversion_UtilDateAndSqlTimestamp_ShouldConvertCorrectly() {
+            // Arrange
+            Date utilDate = new Date();
+            
+            // Act
+            Timestamp sqlTimestamp = CommonUtils.utilAsSqlTimestamp(utilDate);
+            Date convertedBack = CommonUtils.sqlTimestampDateAsUtil(sqlTimestamp);
+            
+            // Assert
+            assertNotNull(sqlTimestamp);
+            assertNotNull(convertedBack);
+            assertEquals(utilDate.getTime(), convertedBack.getTime());
+        }
     }
 
-    @Test
-    void testStringToTimestamp_invalidDateTimeString() {
-        String dateTimeStr = "invalid-datetime";
-        Executable executable = () -> CommonUtils.stringToTimestamp(dateTimeStr);
-        assertThrows(ParseException.class, executable);
+    @Nested
+    @DisplayName("Error Handling Tests")
+    class ErrorHandlingTests {
+
+        @Test
+        @DisplayName("Should get root cause message from nested exception")
+        void getShortErrorMessage_WithNestedException_ShouldGetRootCause() {
+            // Arrange
+            Exception innermost = new IllegalArgumentException("Root cause");
+            Exception middle = new RuntimeException("Middle", innermost);
+            Exception outer = new Exception("Outer", middle);
+            
+            // Act
+            String message = CommonUtils.getShortErrorMessage(outer);
+            
+            // Assert
+            assertTrue(message.contains("Root cause"));
+        }
     }
 
-    @Test
-    void testGetShortErrorMessage_withRootCause() {
-        Exception rootCause = new IllegalArgumentException("Root cause message");
-        Exception wrapper = new RuntimeException("Wrapper exception", rootCause);
-        String errorMessage = CommonUtils.getShortErrorMessage(wrapper);
-        assertEquals("Root cause message", errorMessage);
+    @Nested
+    @DisplayName("Object Printing Tests")
+    class ObjectPrintingTests {
+
+        @Test
+        @DisplayName("Should pretty print JSON object")
+        void prettyPrint_WithValidObject_ShouldFormatJson() {
+            // Arrange
+            TestObject obj = new TestObject("test", 123);
+            
+            // Act
+            String result = CommonUtils.prettyPrint(objectMapper, obj);
+            
+            // Assert
+            assertNotNull(result);
+            assertTrue(result.contains("test"));
+            assertTrue(result.contains("123"));
+        }
+
+        @Test
+        @DisplayName("Should handle null object")
+        void prettyPrint_WithNullObject_ShouldReturnEmptyString() {
+            assertEquals("", CommonUtils.prettyPrint(objectMapper, null));
+        }
     }
 
-    @Test
-    void testGetShortErrorMessage_withoutRootCause() {
-        Exception exception = new IllegalStateException("No root cause");
-        String errorMessage = CommonUtils.getShortErrorMessage(exception);
-        assertEquals("No root cause", errorMessage);
+    @Nested
+    @DisplayName("File Operation Tests")
+    class FileOperationTests {
+
+        @Test
+        @DisplayName("Should move file successfully")
+        void moveFile_WithValidPaths_ShouldMoveFile() throws Exception {
+            // Arrange
+            Path source = Files.createTempFile(tempDir, "source", ".tmp");
+            Path target = tempDir.resolve("target.tmp");
+            
+            // Act
+            boolean result = CommonUtils.moveFile(source, target);
+            
+            // Assert
+            assertTrue(result);
+            assertTrue(Files.exists(target));
+            assertFalse(Files.exists(source));
+            
+            // Cleanup
+            Files.deleteIfExists(target);
+        }
+
+        @Test
+        @DisplayName("Should handle file move failure")
+        void moveFile_WithInvalidSource_ShouldReturnFalse() {
+            // Arrange
+            Path source = tempDir.resolve("nonexistent.tmp");
+            Path target = tempDir.resolve("target.tmp");
+            
+            // Act
+            boolean result = CommonUtils.moveFile(source, target);
+            
+            // Assert
+            assertFalse(result);
+        }
+    }
+
+    // Helper class for testing JSON serialization
+    private static class TestObject {
+        private String name;
+        private int value;
+
+        public TestObject(String name, int value) {
+            this.name = name;
+            this.value = value;
+        }
+
+        public String getName() { return name; }
+        public int getValue() { return value; }
     }
 }
-
 ```
 
 ```java
-@ExtendWith(MockitoExtension.class)
+package com.example.utils;
+
+import org.junit.jupiter.api.*;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import java.sql.Date;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
 class PaymentUtilsTest {
 
     @Mock
     private StepAwareService stepAwareService;
-
-    @InjectMocks
+    
     private PaymentUtils paymentUtils;
+    private AutoCloseable closeable;
 
     @BeforeEach
     void setUp() {
-        MockitoAnnotations.openMocks(this);
+        closeable = MockitoAnnotations.openMocks(this);
+        paymentUtils = new PaymentUtils();
     }
 
-    @Test
-    void testCreatePwsSaveRecord_WithValidInputs() {
-        long id = 123L;
-        String dmpTxnRef = "dmpRef123";
-
-        PwsSaveRecord record = paymentUtils.createPwsSaveRecord(id, dmpTxnRef);
-
-        assertAll(
-                () -> assertEquals(id, record.getTxnId(), "ID mismatch"),
-                () -> assertEquals(dmpTxnRef, record.getDmpTxnRef(), "Transaction reference mismatch")
-        );
+    @AfterEach
+    void tearDown() throws Exception {
+        closeable.close();
     }
 
-    @Test
-    void testCreatePwsSaveRecord_WithNullDmpTxnRef() {
-        long id = 123L;
+    @Nested
+    @DisplayName("Rejected File Record Tests")
+    class RejectedFileRecordTests {
+        
+        @Test
+        @DisplayName("Should create rejected record with file upload")
+        void createRecordForRejectedFile_WithFileUpload_ShouldCreateRecord() {
+            // Arrange
+            PwsFileUpload fileUpload = new PwsFileUpload();
+            fileUpload.setFileUploadId("FILE001");
+            fileUpload.setCreatedBy("USER001");
+            fileUpload.setFileReferenceId("REF001");
+            
+            when(stepAwareService.getFileUpload()).thenReturn(fileUpload);
+            String errorMessage = "File processing error";
 
-        PwsSaveRecord record = paymentUtils.createPwsSaveRecord(id, null);
+            // Act
+            PwsRejectedRecord result = PaymentUtils.createRecordForRejectedFile(stepAwareService, errorMessage);
 
-        assertAll(
-                () -> assertEquals(id, record.getTxnId(), "ID mismatch"),
-                () -> assertEquals("", record.getDmpTxnRef(), "Default transaction reference not set")
-        );
+            // Assert
+            assertNotNull(result);
+            assertEquals("Bulk File Rejected", result.getEntityType());
+            assertEquals("FILE001", result.getEntityId());
+            assertEquals("USER001", result.getCreatedBy());
+            assertEquals("REF001", result.getBankReferenceId());
+            assertEquals(ErrorCode.PBP_2001, result.getRejectCode());
+            assertEquals(errorMessage, result.getErrorDetail());
+            assertEquals(Date.valueOf(LocalDate.now()), result.getCreatedDate());
+            
+            verify(stepAwareService).getFileUpload();
+        }
+
+        @Test
+        @DisplayName("Should create rejected record without file upload")
+        void createRecordForRejectedFile_WithoutFileUpload_ShouldCreateRecord() {
+            // Arrange
+            when(stepAwareService.getFileUpload()).thenReturn(null);
+            when(stepAwareService.getBankEntityId()).thenReturn("BANK001");
+            String errorMessage = "Processing error";
+
+            // Act
+            PwsRejectedRecord result = PaymentUtils.createRecordForRejectedFile(stepAwareService, errorMessage);
+
+            // Assert
+            assertNotNull(result);
+            assertEquals("BANK001", result.getEntityType());
+            assertEquals(ErrorCode.PBP_2001, result.getRejectCode());
+            assertEquals(errorMessage, result.getErrorDetail());
+            assertEquals(Date.valueOf(LocalDate.now()), result.getCreatedDate());
+            
+            verify(stepAwareService).getFileUpload();
+            verify(stepAwareService).getBankEntityId();
+        }
     }
 
-    @Test
-    void testUpdatePaymentSaved_AddsRecord() {
-        Pain001InboundProcessingResult result = new Pain001InboundProcessingResult();
-        PwsSaveRecord record = new PwsSaveRecord(123L, "ref123");
+    @Nested
+    @DisplayName("Rejected Payment Record Tests")
+    class RejectedPaymentRecordTests {
+        
+        @Test
+        @DisplayName("Should create rejected record for payment")
+        void createRecordForRejectedPayment_WithValidData_ShouldCreateRecord() {
+            // Arrange
+            PwsFileUpload fileUpload = new PwsFileUpload();
+            fileUpload.setFileUploadId("FILE001");
+            fileUpload.setCreatedBy("USER001");
+            fileUpload.setFileReferenceId("REF001");
+            
+            PaymentInformation paymentInfo = new PaymentInformation();
+            PwsBulkTransactions bulkTransactions = new PwsBulkTransactions();
+            bulkTransactions.setDmpBatchNumber("BATCH001");
+            paymentInfo.setPwsBulkTransactions(bulkTransactions);
+            
+            when(stepAwareService.getFileUpload()).thenReturn(fileUpload);
+            String errorMessage = "Payment processing error";
 
-        paymentUtils.updatePaymentSaved(result, record);
+            // Act
+            PwsRejectedRecord result = PaymentUtils.createRecordForRejectedPayment(
+                stepAwareService, paymentInfo, errorMessage);
 
-        assertTrue(result.getPaymentSaved().contains(record), "Record not added to saved payments");
+            // Assert
+            assertNotNull(result);
+            assertEquals("Payment Rejected", result.getEntityType());
+            assertEquals("FILE001", result.getEntityId());
+            assertEquals("USER001", result.getCreatedBy());
+            assertEquals("REF001", result.getBankReferenceId());
+            assertEquals(ErrorCode.PBP_2001, result.getRejectCode());
+            assertTrue(result.getErrorDetail().contains("BATCH001"));
+            assertTrue(result.getErrorDetail().contains(errorMessage));
+            assertEquals(Date.valueOf(LocalDate.now()), result.getCreatedDate());
+            
+            verify(stepAwareService).getFileUpload();
+        }
     }
 
-    @Test
-    void testUpdatePaymentSavedError_AddsRecordWhenNotPresent() {
-        Pain001InboundProcessingResult result = new Pain001InboundProcessingResult();
-        PwsSaveRecord record = new PwsSaveRecord(123L, "ref123");
+    @Nested
+    @DisplayName("Rejected Transaction Record Tests")
+    class RejectedTransactionRecordTests {
+        
+        @Test
+        @DisplayName("Should create rejected record for transaction")
+        void createRecordForRejectedTransaction_WithValidData_ShouldCreateRecord() {
+            // Arrange
+            PwsFileUpload fileUpload = new PwsFileUpload();
+            fileUpload.setFileUploadId("FILE001");
+            fileUpload.setCreatedBy("USER001");
+            fileUpload.setFileReferenceId("REF001");
+            
+            PaymentInformation paymentInfo = new PaymentInformation();
+            PwsBulkTransactions bulkTransactions = new PwsBulkTransactions();
+            bulkTransactions.setDmpBatchNumber("BATCH001");
+            paymentInfo.setPwsBulkTransactions(bulkTransactions);
+            
+            CreditTransferTransaction transaction = new CreditTransferTransaction();
+            transaction.setDmpLineNo("123");
+            
+            when(stepAwareService.getFileUpload()).thenReturn(fileUpload);
+            String errorMessage = "Transaction processing error";
 
-        paymentUtils.updatePaymentSavedError(result, record);
+            // Act
+            PwsRejectedRecord result = PaymentUtils.createRecordForRejectedTransaction(
+                stepAwareService, paymentInfo, transaction, errorMessage);
 
-        assertTrue(result.getPaymentSavedError().contains(record), "Record not added to saved payment errors");
+            // Assert
+            assertNotNull(result);
+            assertEquals("Transaction Rejected", result.getEntityType());
+            assertEquals("FILE001", result.getEntityId());
+            assertEquals(123L, result.getLineNo());
+            assertEquals("USER001", result.getCreatedBy());
+            assertEquals("REF001", result.getBankReferenceId());
+            assertEquals(ErrorCode.PBP_2001, result.getRejectCode());
+            assertTrue(result.getErrorDetail().contains("BATCH001"));
+            assertTrue(result.getErrorDetail().contains(errorMessage));
+            assertEquals(Date.valueOf(LocalDate.now()), result.getCreatedDate());
+            
+            verify(stepAwareService).getFileUpload();
+        }
     }
 
-    @Test
-    void testUpdatePaymentSavedError_DoesNotDuplicateRecord() {
-        Pain001InboundProcessingResult result = new Pain001InboundProcessingResult();
-        PwsSaveRecord record = new PwsSaveRecord(123L, "ref123");
-        result.getPaymentSavedError().add(record);
+    @Nested
+    @DisplayName("PWS Save Record Tests")
+    class PwsSaveRecordTests {
+        
+        @Test
+        @DisplayName("Should create PWS save record with valid data")
+        void createPwsSaveRecord_WithValidData_ShouldCreateRecord() {
+            // Arrange
+            long id = 123L;
+            String dmpTxnRef = "TXN001";
 
-        paymentUtils.updatePaymentSavedError(result, record);
+            // Act
+            PwsSaveRecord result = paymentUtils.createPwsSaveRecord(id, dmpTxnRef);
 
-        assertEquals(1, result.getPaymentSavedError().size(), "Duplicate record added to saved payment errors");
+            // Assert
+            assertNotNull(result);
+            assertEquals(id, result.getId());
+            assertEquals(dmpTxnRef, result.getDmpTxnRef());
+        }
+
+        @Test
+        @DisplayName("Should create PWS save record with null reference")
+        void createPwsSaveRecord_WithNullReference_ShouldCreateRecord() {
+            // Arrange
+            long id = 123L;
+
+            // Act
+            PwsSaveRecord result = paymentUtils.createPwsSaveRecord(id, null);
+
+            // Assert
+            assertNotNull(result);
+            assertEquals(id, result.getId());
+            assertEquals("", result.getDmpTxnRef());
+        }
     }
 
-    @Test
-    void testCreateRecordForRejectedFile_WithValidFileUpload() {
-        PwsFileUpload fileUpload = new PwsFileUpload(123L, "fileRef123", "user123");
-        Mockito.when(stepAwareService.getFileUpload()).thenReturn(fileUpload);
+    @Nested
+    @DisplayName("Payment Result Update Tests")
+    class PaymentResultUpdateTests {
+        
+        @Test
+        @DisplayName("Should update payment saved successfully")
+        void updatePaymentSaved_WithValidRecord_ShouldUpdate() {
+            // Arrange
+            Pain001InboundProcessingResult result = new Pain001InboundProcessingResult();
+            PwsSaveRecord record = new PwsSaveRecord(123L, "TXN001");
 
-        String errMsg = "File rejected due to error";
-        PwsRejectedRecord rejectedRecord = PaymentUtils.createRecordForRejectedFile(stepAwareService, errMsg);
+            // Act
+            paymentUtils.updatePaymentSaved(result, record);
 
-        assertAll(
-                () -> assertEquals("Bulk File Rejected", rejectedRecord.getEntityType(), "Incorrect entity type"),
-                () -> assertEquals(123L, rejectedRecord.getEntityId(), "File ID mismatch"),
-                () -> assertEquals("user123", rejectedRecord.getCreatedBy(), "Created by mismatch"),
-                () -> assertEquals(errMsg, rejectedRecord.getErrorDetail(), "Error message mismatch")
-        );
-    }
+            // Assert
+            assertTrue(result.getPaymentSaved().contains(record));
+            assertEquals(1, result.getPaymentSaved().size());
+        }
 
-    @Test
-    void testCreateRecordForRejectedFile_WithoutFileUpload() {
-        Mockito.when(stepAwareService.getFileUpload()).thenReturn(null);
+        @Test
+        @DisplayName("Should update payment saved error only once")
+        void updatePaymentSavedError_WithDuplicateRecord_ShouldUpdateOnce() {
+            // Arrange
+            Pain001InboundProcessingResult result = new Pain001InboundProcessingResult();
+            PwsSaveRecord record = new PwsSaveRecord(123L, "TXN001");
 
-        String errMsg = "File rejected due to error";
-        PwsRejectedRecord rejectedRecord = PaymentUtils.createRecordForRejectedFile(stepAwareService, errMsg);
+            // Act
+            paymentUtils.updatePaymentSavedError(result, record);
+            paymentUtils.updatePaymentSavedError(result, record);
 
-        assertAll(
-                () -> assertEquals(stepAwareService.getBankEntityId(), rejectedRecord.getEntityType(), "Entity type mismatch"),
-                () -> assertEquals(errMsg, rejectedRecord.getErrorDetail(), "Error message mismatch")
-        );
-    }
-
-    @Test
-    void testCreateRecordForRejectedPayment() {
-        PwsFileUpload fileUpload = new PwsFileUpload(123L, "fileRef123", "user123");
-        Mockito.when(stepAwareService.getFileUpload()).thenReturn(fileUpload);
-
-        PaymentInformation paymentInfo = new PaymentInformation();
-        paymentInfo.setPwsBulkTransactions(new PwsBulkTransactions("batch123"));
-
-        String errMsg = "Payment rejected due to insufficient funds";
-        PwsRejectedRecord rejectedRecord = PaymentUtils.createRecordForRejectedPayment(stepAwareService, paymentInfo, errMsg);
-
-        assertAll(
-                () -> assertEquals("Payment Rejected", rejectedRecord.getEntityType(), "Incorrect entity type"),
-                () -> assertEquals("batch123", paymentInfo.getPwsBulkTransactions().getDmpBatchNumber(), "Batch number mismatch"),
-                () -> assertTrue(rejectedRecord.getErrorDetail().contains(errMsg), "Error message mismatch")
-        );
-    }
-
-    @Test
-    void testCreateRecordForRejectedTransaction() {
-        PwsFileUpload fileUpload = new PwsFileUpload(123L, "fileRef123", "user123");
-        Mockito.when(stepAwareService.getFileUpload()).thenReturn(fileUpload);
-
-        PaymentInformation paymentInfo = new PaymentInformation();
-        paymentInfo.setPwsBulkTransactions(new PwsBulkTransactions("batch123"));
-
-        CreditTransferTransaction txn = new CreditTransferTransaction(456L);
-
-        String errMsg = "Transaction rejected due to limit exceeded";
-        PwsRejectedRecord rejectedRecord = PaymentUtils.createRecordForRejectedTransaction(stepAwareService, paymentInfo, txn, errMsg);
-
-        assertAll(
-                () -> assertEquals("Transaction Rejected", rejectedRecord.getEntityType(), "Incorrect entity type"),
-                () -> assertEquals(456L, rejectedRecord.getLineNo(), "Transaction line number mismatch"),
-                () -> assertTrue(rejectedRecord.getErrorDetail().contains(errMsg), "Error message mismatch")
-        );
+            // Assert
+            assertTrue(result.getPaymentSavedError().contains(record));
+            assertEquals(1, result.getPaymentSavedError().size());
+        }
     }
 }
-
 ```
