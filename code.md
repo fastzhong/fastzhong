@@ -7,6 +7,14 @@
     </#list>
   )
 </#if>
+
+<if test="filterParams.authorizerIds != null and filterParams.authorizerIds.size() > 0">
+    AND (
+        <foreach collection="filterParams.authorizerIds" item="authorizerId" separator=" OR ">
+            ',' || authorizer_ids || ',' LIKE CONCAT('%,', #{authorizerId, jdbcType=VARCHAR}, ',%')
+        </foreach>
+    )
+</if>
 ```
 
 ## registry
