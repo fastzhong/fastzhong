@@ -4,7 +4,8 @@ MockedStatic<CommonUtils> mockedCommonUtils = mockStatic(CommonUtils.class);
                 return null;
             });
 
-
+@ExtendWith(MockitoExtension.class)
+class CommonUtilsTest {
 ```
 
 ## registry
