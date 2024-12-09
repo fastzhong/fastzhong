@@ -1,20 +1,10 @@
-```xml
-<#if filterParams.authorizerIds?has_content>
-  AND (
-    <#list filterParams.authorizerIds as authorizerId>
-        authorizer_ids like '%<@p value=authorizerId/>%'
-      <#if authorizerId_has_next> OR </#if>
-    </#list>
-  )
-</#if>
+```java
+MockedStatic<CommonUtils> mockedCommonUtils = mockStatic(CommonUtils.class);
+            mockedCommonUtils.when(() -> CommonUtils.prettyPrint(any(), any())).thenAnswer(invocation -> {
+                return null;
+            });
 
-<if test="filterParams.authorizerIds != null and filterParams.authorizerIds.size() > 0">
-    AND (
-        <foreach collection="filterParams.authorizerIds" item="authorizerId" separator=" OR ">
-            ',' || authorizer_ids || ',' LIKE CONCAT('%,', #{authorizerId, jdbcType=VARCHAR}, ',%')
-        </foreach>
-    )
-</if>
+
 ```
 
 ## registry
