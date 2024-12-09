@@ -1,6 +1,13 @@
-org.apache.camel.ResolveEndpointFailedException: Failed to resolve endpoint: https://172.29.229.126:18089/api/oauth/token?connectTimeout=30000&connectionClose=true&connectionRequestTimeout=30000&connectionTimeToLive=30000&connectionsPerRoute=30&maxTotalConnections=30&socketTimeout=30000&sort=asc&ssl=true&sslContextParameters=%23axwaysslContextParams&x509HostnameVerifier=%23axwayNoopHostnameVerifier due to: Cannot find a ResourceResolver in classpath supporting the scheme: C
-	at org.apache.camel.impl.engine.AbstractCamelContext.doGetEndpoint(AbstractCamelContext.java:839)
-	at org.apache.camel.impl.engine.DefaultCamelContextExtension.getEndpoint(DefaultCamelContextExtension.java:264)
+```xml
+<#if filterParams.authorizerIds?has_content>
+  AND (
+    <#list filterParams.authorizerIds as authorizerId>
+        authorizer_ids like '%<@p value=authorizerId/>%'
+      <#if authorizerId_has_next> OR </#if>
+    </#list>
+  )
+</#if>
+```
 
 ## registry
 
