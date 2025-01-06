@@ -1,3 +1,76 @@
+# ORA-0001 primary key violation 
+
+## cause 
+cause1: a bkTransactionId being explicitly set
+
+- In the MyBatis mapper, there is no mention of explicitly setting the bkTransactionId. However, if the PwsBulkTransactions object contains a non-null bkTransactionId, it might be included in the insert statement, causing a collision.
+
+- Retry logic may cause duplicate inserts.
+
+cause2: sequence misalignment
+
+If the sequence backing the identity column is manually altered.
+
+cause3: concurrency-related conflicts
+
+- Two services attempt inserts at nearly the same time, and the database's sequence handling temporarily overlaps. This is extremely rare but can happen under high load or unusual timing conditions, Example:
+1. Service A begins an insert and fetches BK_TRANSACTION_ID = 101.
+2. Service B starts immediately afterward and fetches the same 101 before Service A completes (timing issue in sequence cache synchronization).
+3. Both inserts conflict, leading to ORA-00001.
+
+- Oracle's identity column uses CACHE 20 by default, which means it pre-allocates 20 values in memory. If multiple database sessions (e.g., from different services) are active concurrently, they may generate overlapping keys if the cache is not managed properly or sessions disconnect unexpectedly, especially after a database restart or when the cache is reset. Example:
+1. Service A's session holds a cached value (101) but does not use it before crashing or disconnecting.
+2. Service B also fetches 101 due to cache desynchronization, causing a duplicate key.
+
+- Minor differences in service configurations (e.g., transaction isolation levels, retry policies) or database session settings (e.g., identity generation behavior) might occasionally cause issues.
+
+## solution 
+as ORA-00001 only happens ocationally, i suspect cause3.
+
+Solution0:
+-   monitor sequence
+SELECT sequence_name, last_number, cache_size, increment_by
+FROM user_sequences
+WHERE sequence_name LIKE '%PWS_BULK_TRANSACTIONS%';
+
+-   applcation logging to check the bkTransactionId before/after insert
+
+-   make sure set bkTransactionId to null and valiate before insert (for retry)
+
+Solution1: Disabling caching can slow down inserts slightly but ensures better consistency.
+
+Solution2: Use a unique sequence to explicitly generate keys instead of relying on the identity column, application read the sequence no before insert or use db trigger to get sequence no when insert.
+
+<insert id="insertPwsBulkTransactions" parameterType="com.uob.gwb.pbp.po.PwsBulkTransactions">
+    <selectKey keyProperty="bkTransactionId" resultType="java.lang.Long" order="BEFORE">
+        SELECT PWS_BULK_TRANSACTIONS_SEQ.NEXTVAL FROM dual
+    </selectKey>
+    INSERT INTO pws_bulk_transactions (
+        bk_transaction_id,
+        transaction_id,
+        file_upload_id,
+        <!-- other columns -->
+    ) VALUES (
+        #{bkTransactionId},
+        #{pwsBulkTransactions.transactionId},
+        #{pwsBulkTransactions.fileUploadId},
+        <!-- other values -->
+    )
+</insert>
+
+CREATE SEQUENCE PWS_BK_TRANSACTION_SEQ START WITH 1 INCREMENT BY 1 NOCACHE;
+CREATE OR REPLACE TRIGGER PWS_BK_TRANSACTION_TRG
+BEFORE INSERT ON PWS_BULK_TRANSACTIONS
+FOR EACH ROW
+BEGIN
+    SELECT PWS_BK_TRANSACTION_SEQ.NEXTVAL INTO :NEW.BK_TRANSACTION_ID FROM DUAL;
+END;
+
+
+Solution3: Add a simple retry mechanism in both services to handle transient conflicts (DuplicateKeyException).
+
+## schema sql 
+
 ```sql
 CREATE TABLE "PWS"."PWS_BULK_TRANSACTIONS" (
     "BK_TRANSACTION_ID"         NUMBER
@@ -46,7 +119,8 @@ PCTFREE 10 PCTUSED 40 INITRANS 1 MAXTRANS 255 NOCOMPRESS LOGGING
 TABLESPACE "SPWS_TB";
 ```
 
-```sql
+## mapper 
+```xml
 
     <insert id="insertPwsBulkTransactions" parameterType="com.uob.gwb.pbp.po.PwsBulkTransactions"
             statementType="PREPARED" useGeneratedKeys="true" keyProperty="bkTransactionId" keyColumn="bk_transaction_id">
@@ -94,6 +168,8 @@ TABLESPACE "SPWS_TB";
     </insert>
 ```
 
+## error
+
 ```txt
 2025-01-03T16:32:03,544 [//] [SimpleAsyncTaskExecutor-1] DEBUG org.springframework.jdbc.support.SQLErrorCodeSQLExceptionTranslator  - Translating SQLException with SQL state '23000', error code '1', message [ORA-00001: unique constraint (PWS.PK_PWS_BULK_TRANSACTIONS) violated
 ] for task [
@@ -102,6 +178,8 @@ TABLESPACE "SPWS_TB";
 ### The error may exist in class path resource [db/mapper/pws/PwsSaveDao.xml]
 ### The error may involve com.uob.gwb.pbp.dao.pws.PwsSaveDao.insertPwsBulkTransactions-Inline
 ```
+
+# Spring Batch Sequence
 
 Yes, in Oracle 19 (and all Oracle versions), sequence names are case-sensitive when you enclose them in double quotes. However, if you create sequences without double quotes, Oracle will automatically convert the names to uppercase.
 
