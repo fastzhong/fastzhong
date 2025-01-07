@@ -1,5 +1,6 @@
 Caused by: org.springframework.beans.factory.UnsatisfiedDependencyException: Error creating bean with name 'EdpCommonService' defined in URL [jar:file:/C:/Users/UNCLUZ/.m2/repository/com/uob/gwb/transaction-common/6.0.132/transaction-common-6.0.132.jar!/com/uob/gwb/transaction/common/service/EdpCommonServiceImpl.class]: Unsatisfied dependency expressed through constructor parameter 0: No qualifying bean of type 'com.uob.gwb.transaction.common.service.RefDataService' available: expected at least 1 bean which qualifies as autowire candidate. Dependency annotations: {}
 
+Caused by: org.springframework.beans.factory.NoSuchBeanDefinitionException: No qualifying bean of type 'com.uob.gwb.transaction.common.service.RefDataService' available: expected at least 1 bean which qualifies as autowire candidate. Dependency annotations: {}
 
 
 
