@@ -90,4 +90,308 @@ SELECT COUNT(*) AS count FROM (
 	AND txn.customer_transaction_status NOT IN ('PENDING_SUBMIT', 'NEW','DELETED' ) ) bothTrans
 ```
 
+```java
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class TransactionWorkflowService {
+    private final TransactionWorkflowDAO transactionWorkflowDAO;
+    
+    private final ExecutorService executorService = Executors.newFixedThreadPool(4);
+    
+    // Constants
+    private static final String YES = "Y";
+    private static final String DOT_SEPARATOR = ".";
+    private static final String BOTH_TRANS = "bothTrans";
+    private static final String LOWER = "lower";
+    private static final String OPEN_BRACE = "(";
+    private static final String SINGLE_TRANSACTION = "Single-Transaction";
+    private static final int QUERY_TIMEOUT_SECONDS = 7;
+
+    @Value("${transaction.concurrent.enabled:true}")
+    private boolean concurrentExecutionEnabled;
+
+    /**
+     * Processes both approval status transactions
+     */
+    protected List<ApprovalStatusTxn> getBothApprovalStatus(FilterParams filterParams) {
+        if (!shouldProcessBothApprovalStatus(filterParams)) {
+            return new ArrayList<>();
+        }
+
+        processSortField(filterParams);
+        setTransactionTypes(filterParams);
+
+        try {
+            // Execute main transaction list query
+            CompletableFuture<List<ApprovalStatusTxn>> txnListFuture = executeAsync(
+                () -> transactionWorkflowDAO.getBulkBothApprovalStatusTxnList(filterParams)
+            );
+
+            List<ApprovalStatusTxn> approvalStatusList = txnListFuture.get(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            
+            if (ObjectUtils.isEmpty(approvalStatusList)) {
+                return approvalStatusList;
+            }
+
+            List<String> transIds = extractTransactionIds(approvalStatusList);
+
+            // Execute count and FX contracts queries concurrently
+            CompletableFuture<Integer> countFuture = executeAsync(
+                () -> transactionWorkflowDAO.getBulkBothApprovalStatusTxnCount(filterParams)
+            );
+
+            CompletableFuture<Map<String, ApprovalStatusTxn>> fxContractsFuture = executeAsync(
+                () -> fetchFxContracts(transIds)
+            );
+
+            // Wait for both futures
+            int count = countFuture.get(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            Map<String, ApprovalStatusTxn> fxContractMap = fxContractsFuture.get(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+
+            updateApprovalStatusList(approvalStatusList, count, fxContractMap);
+
+            return approvalStatusList;
+
+        } catch (Exception e) {
+            log.error("Error processing both approval status transactions", e);
+            throw new TransactionProcessingException("Failed to process both approval status transactions", e);
+        }
+    }
+
+    /**
+     * Processes bulk approval status transactions
+     */
+    protected List<ApprovalStatusTxn> getBulkApprovalStatus(FilterParams filterParams) {
+        if (!shouldProcessBulkApproval(filterParams)) {
+            return new ArrayList<>();
+        }
+
+        return YES.equalsIgnoreCase(filterParams.getIsChild()) 
+            ? processChildTransactions(filterParams)
+            : processParentTransactions(filterParams);
+    }
+
+    // Private helper methods for getBothApprovalStatus
+    private boolean shouldProcessBothApprovalStatus(FilterParams filterParams) {
+        return YES.equalsIgnoreCase(filterParams.getIsChannelAdmin())
+            || ObjectUtils.isNotEmpty(filterParams.getSingleAccountBasedOnResourceFeatureList())
+            || ObjectUtils.isNotEmpty(filterParams.getBulkAccountBasedOnResourceFeatureList());
+    }
+
+    private void processSortField(FilterParams filterParams) {
+        String orderByWithDirection = filterParams.getSortFieldWithDirection();
+        String orderBy = orderByWithDirection.substring(orderByWithDirection.indexOf(DOT_SEPARATOR) + 1);
+        
+        StringBuilder sortBuilder = new StringBuilder();
+        if (orderByWithDirection.contains(LOWER)) {
+            sortBuilder.append(LOWER).append(OPEN_BRACE);
+        }
+        sortBuilder.append(BOTH_TRANS).append(DOT_SEPARATOR).append(orderBy.trim());
+        
+        filterParams.setSortFieldWithDirection(sortBuilder.toString());
+    }
+
+    private void setTransactionTypes(FilterParams filterParams) {
+        if (ObjectUtils.isNotEmpty(filterParams.getSingleAccountBasedOnResourceFeatureList())) {
+            filterParams.setIsSingleTransaction(YES);
+            filterParams.setSingleFeatureId(SINGLE_TRANSACTION);
+        }
+        if (ObjectUtils.isNotEmpty(filterParams.getBulkAccountBasedOnResourceFeatureList())) {
+            filterParams.setIsBulkTransaction(YES);
+        }
+    }
+
+    // Private helper methods for getBulkApprovalStatus
+    private boolean shouldProcessBulkApproval(FilterParams filterParams) {
+        return YES.equalsIgnoreCase(filterParams.getIsChannelAdmin())
+            || CollectionUtils.isNotEmpty(filterParams.getBulkAccountBasedOnResourceFeatureList());
+    }
+
+    private List<ApprovalStatusTxn> processChildTransactions(FilterParams filterParams) {
+        filterParams.setIsChildY(YES);
+        
+        try {
+            CompletableFuture<List<ApprovalStatusTxn>> txnListFuture = executeAsync(
+                () -> transactionWorkflowDAO.getBulkApprovalStatusTxnList(filterParams)
+            );
+
+            List<ApprovalStatusTxn> approvalStatusList = txnListFuture.get(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            
+            if (ObjectUtils.isEmpty(approvalStatusList)) {
+                return approvalStatusList;
+            }
+
+            int count = executeAsync(
+                () -> transactionWorkflowDAO.getBulkApprovalStatusTxnCount(filterParams)
+            ).get(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+
+            log.info("Total number of transaction Count for Bulk Transaction {}", count);
+            approvalStatusList.stream()
+                .findFirst()
+                .ifPresent(txn -> txn.setCount(BigDecimal.valueOf(count)));
+
+            return approvalStatusList;
+
+        } catch (Exception e) {
+            log.error("Error processing child transactions", e);
+            throw new TransactionProcessingException("Failed to process child transactions", e);
+        }
+    }
+
+    private List<ApprovalStatusTxn> processParentTransactions(FilterParams filterParams) {
+        filterParams.setIsChildN(YES);
+        
+        try {
+            CompletableFuture<List<ApprovalStatusTxn>> txnListFuture = executeAsync(
+                () -> transactionWorkflowDAO.getBulkParentApprovalStatusTxnList(filterParams)
+            );
+
+            List<ApprovalStatusTxn> approvalStatusList = txnListFuture.get(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            
+            if (ObjectUtils.isEmpty(approvalStatusList)) {
+                return approvalStatusList;
+            }
+
+            List<String> transIds = extractTransactionIds(approvalStatusList);
+
+            // Execute all queries concurrently
+            CompletableFuture<Integer> countFuture = executeAsync(
+                () -> transactionWorkflowDAO.getBulkParentApprovalStatusTxnCount(filterParams)
+            );
+
+            CompletableFuture<Map<String, List<PwsTransactionCharges>>> chargesFuture = executeAsync(
+                () -> fetchChargesDetail(transIds)
+            );
+
+            CompletableFuture<Map<String, ApprovalStatusTxn>> fxContractsFuture = executeAsync(
+                () -> fetchFxContracts(transIds)
+            );
+
+            // Wait for all futures
+            int count = countFuture.get(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            Map<String, List<PwsTransactionCharges>> chargesMap = chargesFuture.get(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            Map<String, ApprovalStatusTxn> fxContractMap = fxContractsFuture.get(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+
+            updateParentTransactions(approvalStatusList, count, chargesMap, fxContractMap);
+
+            return approvalStatusList;
+
+        } catch (Exception e) {
+            log.error("Error processing parent transactions", e);
+            throw new TransactionProcessingException("Failed to process parent transactions", e);
+        }
+    }
+
+    // Shared utility methods
+    private <T> CompletableFuture<T> executeAsync(Supplier<T> supplier) {
+        return concurrentExecutionEnabled
+            ? CompletableFuture.supplyAsync(supplier, executorService)
+            : CompletableFuture.completedFuture(supplier.get());
+    }
+
+    private List<String> extractTransactionIds(List<ApprovalStatusTxn> transactions) {
+        return transactions.stream()
+            .map(ApprovalStatusTxn::getTransactionId)
+            .toList();
+    }
+
+    private Map<String, List<PwsTransactionCharges>> fetchChargesDetail(List<String> transIds) {
+        return transactionWorkflowDAO.getChargesDetail(transIds).stream()
+            .collect(Collectors.groupingBy(
+                charge -> charge.getTransactionId().toString(),
+                Collectors.mapping(
+                    charge -> charge,
+                    Collectors.toList()
+                )
+            ));
+    }
+
+    private Map<String, ApprovalStatusTxn> fetchFxContracts(List<String> transIds) {
+        return transactionWorkflowDAO.getFxContracts(transIds)
+            .stream()
+            .collect(Collectors.toMap(
+                ApprovalStatusTxn::getTransactionId,
+                Function.identity(),
+                (existing, replacement) -> existing
+            ));
+    }
+
+    private void updateApprovalStatusList(
+            List<ApprovalStatusTxn> approvalStatusList,
+            int count,
+            Map<String, ApprovalStatusTxn> fxContractMap) {
+        
+        BigDecimal countValue = BigDecimal.valueOf(count);
+        approvalStatusList.forEach(approve -> {
+            approve.setCount(countValue);
+            ApprovalStatusTxn fx = fxContractMap.get(approve.getTransactionId());
+            if (fx != null) {
+                approve.setFxType(fx.getFxType());
+                approve.setFxFlag(fx.getFxFlag());
+                approve.setBookingRefId(fx.getBookingRefId());
+                approve.setEarmarkId(fx.getEarmarkId());
+            }
+        });
+    }
+
+    private void updateParentTransactions(
+            List<ApprovalStatusTxn> approvalStatusList,
+            int count,
+            Map<String, List<PwsTransactionCharges>> chargesMap,
+            Map<String, ApprovalStatusTxn> fxContractMap) {
+
+        chargesMap.forEach((transId, charges) -> {
+            BigDecimal totalAmount = charges.stream()
+                .map(PwsTransactionCharges::getFeesAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+            String transCurrency = charges.stream()
+                .findFirst()
+                .map(PwsTransactionCharges::getFeesCurrency)
+                .orElse(null);
+
+            ApprovalStatusTxn fx = fxContractMap.get(transId);
+
+            approvalStatusList.stream()
+                .filter(approve -> approve.getTransactionId().equalsIgnoreCase(transId))
+                .forEach(approv -> {
+                    approv.setFeesCurrency(transCurrency);
+                    approv.setTotalFeeAmount(totalAmount);
+                    if (fx != null) {
+                        approv.setFxType(fx.getFxType());
+                        approv.setFxFlag(fx.getFxFlag());
+                        approv.setBookingRefId(fx.getBookingRefId());
+                        approv.setEarmarkId(fx.getEarmarkId());
+                    }
+                });
+        });
+
+        approvalStatusList.stream()
+            .findFirst()
+            .ifPresent(txn -> txn.setCount(BigDecimal.valueOf(count)));
+    }
+
+    @PreDestroy
+    public void cleanup() {
+        executorService.shutdown();
+        try {
+            if (!executorService.awaitTermination(800, TimeUnit.MILLISECONDS)) {
+                executorService.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            executorService.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+    }
+}
+
+@Slf4j
+public class TransactionProcessingException extends RuntimeException {
+    public TransactionProcessingException(String message, Throwable cause) {
+        super(message, cause);
+    }
+}
+```
+
 
