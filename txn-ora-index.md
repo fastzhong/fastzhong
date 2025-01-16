@@ -394,4 +394,21 @@ public class TransactionProcessingException extends RuntimeException {
 }
 ```
 
+```java
+Map<String, String> payrollAccounts = new HashMap<>();
+List<String> payrollConfigValues = new ArrayList<>();
+
+// Assuming payrollAccounts and payrollConfigValues are already populated and of the same size
+
+Map<String, String> updatedPayrollAccounts = IntStream.range(0, payrollAccounts.size())
+    .boxed()
+    .collect(Collectors.toMap(
+        i -> payrollConfigValues.get(i),
+        i -> payrollAccounts.get(payrollAccounts.keySet().toArray(new String[0])[i]),
+        (v1, v2) -> v1,
+        LinkedHashMap::new
+    ));
+
+payrollAccounts = updatedPayrollAccounts;
+```
 
