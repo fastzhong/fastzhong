@@ -450,9 +450,6 @@ class ApprovalStatusServiceImplTest {
 ```
 
 ```java
-
-package com.uob.gwb.txn.service;
-
 import static com.uob.gwb.txn.common.GenericConstants.*;
 import static org.apache.commons.lang3.ObjectUtils.isNotEmpty;
 
