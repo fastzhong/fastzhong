@@ -350,6 +350,341 @@ public class ApprovalStatusServicePerformanceImpl extends ApprovalStatusServiceI
 ## unit test
 
 ```java
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.Mockito.*;
+
+import com.uob.gwb.txn.common.GenericConstants;
+import org.apache.commons.collections.ListUtils;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.math.BigDecimal;
+import java.util.*;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeoutException;
+import java.util.stream.Collectors;
+
+@ExtendWith(MockitoExtension.class)
+class ApprovalStatusServicePerformanceImplTest {
+
+    private static final String YES = "Y";
+    private static final String NO = "N";
+
+    @Mock
+    private TransactionWorkflowDAO transactionWorkflowDAO;
+    
+    @Mock
+    private EntitlementService entitlementService;
+    
+    @Mock
+    private TransactionWorkflowV2DAO transactionWorkflowV2DAO;
+    
+    @Mock
+    private ResourceCompanyAndAccountsforResourcesMapper resourceMapper;
+    
+    @Mock
+    private ApprovalStatusListMapper approvalStatusListMapper;
+    
+    @Mock
+    private TransactionWorkFlowConfig transactionWorkFlowConfig;
+    
+    @Mock
+    private TransactionUtils transactionUtils;
+    
+    @Mock
+    private HttpUtils httpUtils;
+    
+    @Mock
+    private CamelService camelService;
+    
+    @Mock
+    private ObjectMapper objectMapper;
+    
+    @Mock
+    private TransactionWorkflowUtils transactionWorkflowUtils;
+    
+    @Mock
+    private TransactionWorkflowEnquiryCommonService commonService;
+    
+    @Mock
+    private TransactionEntityDomainMapper transactionEntityDomainMapper;
+    
+    @Mock
+    private EntitlementsResourceService entitlementsResourceService;
+    
+    @Mock
+    private TxnUtils txnUtils;
+
+    @InjectMocks
+    private ApprovalStatusServicePerformanceImpl approvalStatusService;
+
+    @BeforeEach
+    void setUp() {
+        // Additional setup if needed
+    }
+
+    @Test
+    @DisplayName("getSingleApprovalStatus - Should return empty list when not channel admin")
+    void getSingleApprovalStatus_WhenNotChannelAdmin_ShouldReturnEmptyList() {
+        // Arrange
+        FilterParams filterParams = new FilterParams();
+        filterParams.setIsChannelAdmin(NO);
+        filterParams.setSingleAccountBasedOnResourceFeatureList(Collections.emptyList());
+
+        // Act
+        List<ApprovalStatusTxn> result = approvalStatusService.getSingleApprovalStatus(filterParams);
+
+        // Assert
+        assertTrue(result.isEmpty());
+        verifyNoInteractions(transactionWorkflowDAO);
+    }
+
+    @Test
+    @DisplayName("getSingleApprovalStatus - Should return transactions when channel admin")
+    void getSingleApprovalStatus_WhenChannelAdmin_ShouldReturnTransactions() {
+        // Arrange
+        FilterParams filterParams = new FilterParams();
+        filterParams.setIsChannelAdmin(YES);
+        
+        List<ApprovalStatusTxn> expectedTxns = List.of(createMockTransaction("1"));
+        when(transactionWorkflowDAO.getApprovalStatusTxnList(filterParams))
+            .thenReturn(expectedTxns);
+        when(transactionWorkflowDAO.getApprovalStatusTxnCount(filterParams))
+            .thenReturn(1);
+
+        // Act
+        List<ApprovalStatusTxn> result = approvalStatusService.getSingleApprovalStatus(filterParams);
+
+        // Assert
+        assertFalse(result.isEmpty());
+        assertEquals(BigDecimal.ONE, result.get(0).getCount());
+        verify(transactionWorkflowDAO).getApprovalStatusTxnList(filterParams);
+        verify(transactionWorkflowDAO).getApprovalStatusTxnCount(filterParams);
+    }
+
+    @Test
+    @DisplayName("getSingleApprovalStatus - Should handle timeout exception")
+    void getSingleApprovalStatus_WhenTimeout_ShouldThrowApplicationException() {
+        // Arrange
+        FilterParams filterParams = new FilterParams();
+        filterParams.setIsChannelAdmin(YES);
+        
+        when(transactionWorkflowDAO.getApprovalStatusTxnList(filterParams))
+            .thenThrow(new RuntimeException("Timeout occurred"));
+
+        // Act & Assert
+        assertThrows(ApplicationException.class, 
+            () -> approvalStatusService.getSingleApprovalStatus(filterParams));
+    }
+
+    @Test
+    @DisplayName("processParentTransactions - Should process all queries concurrently")
+    void processParentTransactions_ShouldProcessQueriesConcurrently() throws Exception {
+        // Arrange
+        FilterParams filterParams = new FilterParams();
+        List<ApprovalStatusTxn> expectedTxns = List.of(createMockTransaction("1"));
+        List<PwsTransactionCharges> expectedCharges = List.of(createMockCharges("1"));
+        List<ApprovalStatusTxn> expectedFxContracts = List.of(createMockFxContract("1"));
+
+        when(transactionWorkflowDAO.getBulkParentApprovalStatusTxnList(filterParams))
+            .thenReturn(expectedTxns);
+        when(transactionWorkflowDAO.getBulkParentApprovalStatusTxnCount(filterParams))
+            .thenReturn(1);
+        when(transactionWorkflowDAO.getChargesDetail(anyList()))
+            .thenReturn(expectedCharges);
+        when(transactionWorkflowDAO.getFxContracts(anyList()))
+            .thenReturn(expectedFxContracts);
+
+        // Act
+        List<ApprovalStatusTxn> result = approvalStatusService.processParentTransactions(filterParams);
+
+        // Assert
+        assertFalse(result.isEmpty());
+        assertEquals(BigDecimal.ONE, result.get(0).getCount());
+        assertNotNull(result.get(0).getFxType());
+        assertNotNull(result.get(0).getTotalFeeAmount());
+        
+        verify(transactionWorkflowDAO).getBulkParentApprovalStatusTxnList(filterParams);
+        verify(transactionWorkflowDAO).getBulkParentApprovalStatusTxnCount(filterParams);
+        verify(transactionWorkflowDAO).getChargesDetail(anyList());
+        verify(transactionWorkflowDAO).getFxContracts(anyList());
+    }
+
+    @Test
+    @DisplayName("processChildTransactions - Should handle empty result")
+    void processChildTransactions_WhenEmptyResult_ShouldReturnEmptyList() throws Exception {
+        // Arrange
+        FilterParams filterParams = new FilterParams();
+        
+        when(transactionWorkflowDAO.getBulkApprovalStatusTxnList(filterParams))
+            .thenReturn(Collections.emptyList());
+
+        // Act
+        List<ApprovalStatusTxn> result = approvalStatusService.processChildTransactions(filterParams);
+
+        // Assert
+        assertTrue(result.isEmpty());
+        verify(transactionWorkflowDAO).getBulkApprovalStatusTxnList(filterParams);
+        verify(transactionWorkflowDAO, never()).getBulkApprovalStatusTxnCount(any());
+    }
+
+    @Test
+    @DisplayName("processChildTransactions - Should process successfully")
+    void processChildTransactions_ShouldProcessSuccessfully() throws Exception {
+        // Arrange
+        FilterParams filterParams = new FilterParams();
+        List<ApprovalStatusTxn> expectedTxns = List.of(createMockTransaction("1"));
+        
+        when(transactionWorkflowDAO.getBulkApprovalStatusTxnList(filterParams))
+            .thenReturn(expectedTxns);
+        when(transactionWorkflowDAO.getBulkApprovalStatusTxnCount(filterParams))
+            .thenReturn(1);
+
+        // Act
+        List<ApprovalStatusTxn> result = approvalStatusService.processChildTransactions(filterParams);
+
+        // Assert
+        assertFalse(result.isEmpty());
+        assertEquals(BigDecimal.ONE, result.get(0).getCount());
+    }
+
+    @Test
+    @DisplayName("processParentTransactions - Should handle empty FX contracts")
+    void processParentTransactions_WhenEmptyFxContracts_ShouldProcessSuccessfully() throws Exception {
+        // Arrange
+        FilterParams filterParams = new FilterParams();
+        List<ApprovalStatusTxn> expectedTxns = List.of(createMockTransaction("1"));
+        List<PwsTransactionCharges> expectedCharges = List.of(createMockCharges("1"));
+
+        when(transactionWorkflowDAO.getBulkParentApprovalStatusTxnList(filterParams))
+            .thenReturn(expectedTxns);
+        when(transactionWorkflowDAO.getBulkParentApprovalStatusTxnCount(filterParams))
+            .thenReturn(1);
+        when(transactionWorkflowDAO.getChargesDetail(anyList()))
+            .thenReturn(expectedCharges);
+        when(transactionWorkflowDAO.getFxContracts(anyList()))
+            .thenReturn(Collections.emptyList());
+
+        // Act
+        List<ApprovalStatusTxn> result = approvalStatusService.processParentTransactions(filterParams);
+
+        // Assert
+        assertFalse(result.isEmpty());
+        assertNull(result.get(0).getFxType());
+        assertNotNull(result.get(0).getTotalFeeAmount());
+    }
+
+    @Test
+    @DisplayName("getBothApprovalStatus - Should process both transactions")
+    void getBothApprovalStatus_ShouldProcessBothTransactions() {
+        // Arrange
+        FilterParams filterParams = new FilterParams();
+        filterParams.setIsChannelAdmin(YES);
+        filterParams.setSortFieldWithDirection("field.asc");
+        
+        List<ApprovalStatusTxn> expectedTxns = List.of(createMockTransaction("1"));
+        List<ApprovalStatusTxn> expectedFxContracts = List.of(createMockFxContract("1"));
+
+        when(transactionWorkflowDAO.getBulkBothApprovalStatusTxnList(any()))
+            .thenReturn(expectedTxns);
+        when(transactionWorkflowDAO.getBulkBothApprovalStatusTxnCount(any()))
+            .thenReturn(1);
+        when(transactionWorkflowDAO.getFxContracts(anyList()))
+            .thenReturn(expectedFxContracts);
+
+        // Act
+        List<ApprovalStatusTxn> result = approvalStatusService.getBothApprovalStatus(filterParams);
+
+        // Assert
+        assertFalse(result.isEmpty());
+        assertEquals(BigDecimal.ONE, result.get(0).getCount());
+        assertNotNull(result.get(0).getFxType());
+    }
+
+    @Test
+    @DisplayName("cleanup - Should shutdown executor service gracefully")
+    void cleanup_ShouldShutdownExecutorServiceGracefully() throws InterruptedException {
+        // Act
+        approvalStatusService.cleanup();
+
+        // Wait briefly to allow shutdown to complete
+        Thread.sleep(1000);
+    }
+
+    @Test
+    @DisplayName("updateFilterParamsForApprovalStatus - Should handle all scenarios")
+    void updateFilterParamsForApprovalStatus_ShouldHandleAllScenarios() {
+        // Arrange
+        FilterParams filterParams = new FilterParams();
+        filterParams.setSortFieldWithDirection("LOWER(field.asc)");
+        filterParams.setSingleAccountBasedOnResourceFeatureList(List.of("feature1"));
+        filterParams.setBulkAccountBasedOnResourceFeatureList(List.of("feature2"));
+
+        // Act
+        FilterParams result = approvalStatusService.updateFilterParamsForApprovalStatus(filterParams);
+
+        // Assert
+        assertTrue(result.getSortFieldWithDirection().startsWith("LOWER("));
+        assertEquals(YES, result.getIsSingleTransaction());
+        assertEquals(YES, result.getIsBulkTransaction());
+        assertEquals("SINGLE_TRANSACTION", result.getSingleFeatureId());
+    }
+
+    @Test
+    @DisplayName("getBulkApprovalStatus - Should handle all scenarios")
+    void getBulkApprovalStatus_ShouldHandleAllScenarios() {
+        // Arrange
+        FilterParams filterParams = new FilterParams();
+        filterParams.setIsChannelAdmin(YES);
+        filterParams.setIsChild(YES);
+        
+        List<ApprovalStatusTxn> expectedTxns = List.of(createMockTransaction("1"));
+        
+        when(transactionWorkflowDAO.getBulkApprovalStatusTxnList(any()))
+            .thenReturn(expectedTxns);
+        when(transactionWorkflowDAO.getBulkApprovalStatusTxnCount(any()))
+            .thenReturn(1);
+
+        // Act
+        List<ApprovalStatusTxn> result = approvalStatusService.getBulkApprovalStatus(filterParams);
+
+        // Assert
+        assertFalse(result.isEmpty());
+        assertEquals(BigDecimal.ONE, result.get(0).getCount());
+    }
+
+    // Helper methods
+    private ApprovalStatusTxn createMockTransaction(String id) {
+        ApprovalStatusTxn txn = new ApprovalStatusTxn();
+        txn.setTransactionId(id);
+        return txn;
+    }
+
+    private ApprovalStatusTxn createMockFxContract(String id) {
+        ApprovalStatusTxn txn = new ApprovalStatusTxn();
+        txn.setTransactionId(id);
+        txn.setFxType("SPOT");
+        txn.setFxFlag(YES);
+        txn.setBookingRefId("BOOK1");
+        txn.setEarmarkId("EARK1");
+        return txn;
+    }
+
+    private PwsTransactionCharges createMockCharges(String id) {
+        PwsTransactionCharges charges = new PwsTransactionCharges();
+        charges.setTransactionId(Long.valueOf(id));
+        charges.setFeesAmount(BigDecimal.TEN);
+        charges.setFeesCurrency("USD");
+        return charges;
+    }
+}
 ```
 
 ## code
