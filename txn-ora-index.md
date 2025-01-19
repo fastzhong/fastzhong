@@ -1,4 +1,22 @@
-```sq1
+# IF 
+
+You can also use a regex search for a pair of opening and closing tags:
+```txt
+<#if\b[^>]*>[\s\S]*?</#if>
+```
+
+Search for <#if> without a corresponding </#if>:
+```txt
+<#if\b[^>]*>(?![\s\S]*?</#if>)
+```
+
+Search for <#/if> without a corresponding </#if>:
+```txt
+</#if>(?![\s\S]*?<)
+```
+
+
+```sql
 SELECT DISTINCT transaction_id, account_number, account_currency, initiation_time, customer_transaction_status, bank_reference_id, resource_id, feature_id, company_id, company_group_id, CHANGE_TOKEN, transaction_currency, TOTAL_AMOUNT, RECIPIENTS_REFERENCE, VALUE_DATE, original_uetr, is_recurring, destination_country, destination_bank_name, fx_flag, party_name, party_account_number, party_account_currency, bank_code, swift_code, beneficiary_reference_id, party_type, residency_status, party_id, proxy_id_type, id_issuing_country, address_line_1, address_line_2, address_line_3, phone_country, phone_country_code, phone_no, fx_type, booking_ref_id, earmark_id, TOTAL_CHILD, HIGHEST_AMOUNT, upload_file_name, correlation_Id, batch_id
 FROM (
 
