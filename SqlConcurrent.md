@@ -509,26 +509,7 @@ public class ApprovalStatusV2ServiceImpl extends ApprovalStatusServiceImpl imple
     private static final int THREAD_POOL_SIZE = 4;
     private static final int BATCH_SIZE = 1000;
 
-    // Thread pool configuration with custom rejection handler
-    private final ExecutorService executorService = new ThreadPoolExecutor(
-        THREAD_POOL_SIZE, 
-        THREAD_POOL_SIZE,
-        0L, 
-        TimeUnit.MILLISECONDS,
-        new LinkedBlockingQueue<>(100),
-        new ThreadPoolExecutor.CallerRunsPolicy() // Fallback strategy
-    );
-
-    // Cache for frequently accessed data
-    private final LoadingCache<String, Integer> transactionCountCache = CacheBuilder.newBuilder()
-        .maximumSize(1000)
-        .expireAfterWrite(5, TimeUnit.MINUTES)
-        .build(new CacheLoader<>() {
-            @Override
-            public Integer load(String key) {
-                return 0; // Default value
-            }
-        });
+    private final ExecutorService executorService = Executors.newFixedThreadPool(THREAD_POOL_SIZE);
 
     @PreDestroy
     public void cleanup() {
@@ -552,9 +533,6 @@ public class ApprovalStatusV2ServiceImpl extends ApprovalStatusServiceImpl imple
             TransactionsLookUpReq request,
             CompanyAndAccountsForUserResourceFeaturesResp response,
             String isChild) {
-        
-        MDC.put("transactionType", transactionType);
-        MDC.put("requestId", request.getRequestId());
         
         try {
             validateInput(transactionType, filterParams, request);
@@ -584,8 +562,6 @@ public class ApprovalStatusV2ServiceImpl extends ApprovalStatusServiceImpl imple
                 String.format("Failed to process approval status transactions for type: %s", transactionType), 
                 e
             );
-        } finally {
-            MDC.clear();
         }
     }
 
@@ -595,11 +571,9 @@ public class ApprovalStatusV2ServiceImpl extends ApprovalStatusServiceImpl imple
         if (StringUtils.isBlank(transactionType)) {
             errors.add("Transaction type cannot be empty");
         }
-
         if (filterParams == null) {
             errors.add("Filter parameters cannot be null");
         }
-
         if (request == null || request.getAdditionalProperties() == null) {
             errors.add("Request or its properties cannot be null");
         }
@@ -609,68 +583,33 @@ public class ApprovalStatusV2ServiceImpl extends ApprovalStatusServiceImpl imple
         }
     }
 
-    private <T> CompletableFuture<T> executeWithRetry(Supplier<T> supplier, String operationName) {
-        return CompletableFuture.supplyAsync(() -> {
-            int maxRetries = 3;
-            int retryCount = 0;
-            while (true) {
-                try {
-                    return supplier.get();
-                } catch (Exception e) {
-                    retryCount++;
-                    if (retryCount >= maxRetries) {
-                        log.error("Operation {} failed after {} retries", operationName, maxRetries, e);
-                        throw new TransactionProcessingException(
-                            String.format("Operation %s failed after retries", operationName), e);
-                    }
-                    log.warn("Retry {} for operation {}", retryCount, operationName);
-                    try {
-                        Thread.sleep(100L * retryCount); // Exponential backoff
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        throw new TransactionProcessingException("Interrupted during retry", ie);
-                    }
-                }
-            }
-        }, executorService);
-    }
-
     private List<ApprovalStatusTxn> processSingleTransactions(FilterParams filterParams) {
-        String cacheKey = buildCacheKey(filterParams);
-        
         try {
-            // Execute queries with retry mechanism
-            CompletableFuture<List<ApprovalStatusTxn>> txnListFuture = executeWithRetry(
-                () -> transactionWorkflowV2DAO.getApprovalStatusTxnList(filterParams),
-                "getApprovalStatusTxnList"
-            );
+            // Start both queries simultaneously
+            CompletableFuture<List<ApprovalStatusTxn>> txnListFuture = CompletableFuture
+                .supplyAsync(() -> transactionWorkflowV2DAO.getApprovalStatusTxnList(filterParams), 
+                           executorService);
 
-            CompletableFuture<Integer> countFuture = executeWithRetry(
-                () -> transactionWorkflowV2DAO.getApprovalStatusTxnCount(filterParams),
-                "getApprovalStatusTxnCount"
-            );
+            CompletableFuture<Integer> countFuture = CompletableFuture
+                .supplyAsync(() -> transactionWorkflowV2DAO.getApprovalStatusTxnCount(filterParams),
+                           executorService);
 
-            // Wait for results with timeout
+            // Wait for both futures to complete
             List<ApprovalStatusTxn> approvalStatusList = txnListFuture.get(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
             
             if (ObjectUtils.isEmpty(approvalStatusList)) {
                 return approvalStatusList;
             }
 
-            // Process count and update cache
             int count = countFuture.get(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-            transactionCountCache.put(cacheKey, count);
+            log.info("Total number of single transactions: {}", count);
             
-            log.info("Total number of transaction Count for Single Transaction {}", count);
             updateTransactionCount(approvalStatusList, count);
-
             return approvalStatusList;
 
         } catch (TimeoutException e) {
-            log.error("Timeout while processing single transactions", e);
-            throw new TransactionProcessingException("Operation timed out for single transactions", e);
+            throw new TransactionProcessingException("Query timeout occurred", e);
         } catch (Exception e) {
-            log.error("Error processing single transactions", e);
             throw new TransactionProcessingException("Failed to process single transactions", e);
         }
     }
@@ -682,11 +621,10 @@ public class ApprovalStatusV2ServiceImpl extends ApprovalStatusServiceImpl imple
         try {
             prepareBothTransactionsParams(filterParams, request);
 
-            // Execute all queries concurrently with retry
-            CompletableFuture<List<ApprovalStatusTxn>> txnListFuture = executeWithRetry(
-                () -> transactionWorkflowV2DAO.getBulkBothApprovalStatusTxnList(filterParams, PAYEE_TAX),
-                "getBulkBothApprovalStatusTxnList"
-            );
+            // Start main query
+            CompletableFuture<List<ApprovalStatusTxn>> txnListFuture = CompletableFuture
+                .supplyAsync(() -> transactionWorkflowV2DAO.getBulkBothApprovalStatusTxnList(filterParams, PAYEE_TAX), 
+                           executorService);
 
             List<ApprovalStatusTxn> approvalStatusList = txnListFuture.get(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
             
@@ -695,79 +633,49 @@ public class ApprovalStatusV2ServiceImpl extends ApprovalStatusServiceImpl imple
             }
 
             List<String> transIds = extractTransactionIds(approvalStatusList);
-
-            // Process in batches if needed
             List<List<String>> transIdBatches = Lists.partition(transIds, BATCH_SIZE);
-            
-            // Execute remaining queries concurrently
-            CompletableFuture<Integer> countFuture = executeWithRetry(
-                () -> transactionWorkflowV2DAO.getV2BulkBothApprovalStatusTxnCount(filterParams),
-                "getV2BulkBothApprovalStatusTxnCount"
-            );
 
-            // Process FX contracts in batches
-            CompletableFuture<Map<String, ApprovalStatusTxn>> fxContractsFuture = processFxContractsInBatches(transIdBatches);
+            // Start supporting queries simultaneously
+            CompletableFuture<Integer> countFuture = CompletableFuture
+                .supplyAsync(() -> transactionWorkflowV2DAO.getV2BulkBothApprovalStatusTxnCount(filterParams),
+                           executorService);
 
-            // Wait for all futures with timeout
-            int count = countFuture.get(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-            Map<String, ApprovalStatusTxn> fxContractMap = fxContractsFuture.get(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            CompletableFuture<Map<String, ApprovalStatusTxn>> fxContractsFuture = 
+                processFxContractsInBatches(transIdBatches);
+
+            // Wait for all futures to complete
+            CompletableFuture.allOf(countFuture, fxContractsFuture)
+                .get(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+
+            int count = countFuture.join();
+            Map<String, ApprovalStatusTxn> fxContractMap = fxContractsFuture.join();
 
             updateBothTransactions(approvalStatusList, count, fxContractMap);
             return approvalStatusList;
 
+        } catch (TimeoutException e) {
+            throw new TransactionProcessingException("Query timeout occurred", e);
         } catch (Exception e) {
-            handleProcessingError(e, "both");
             throw new TransactionProcessingException("Failed to process both transactions", e);
         }
     }
 
-    private CompletableFuture<Map<String, ApprovalStatusTxn>> processFxContractsInBatches(List<List<String>> transIdBatches) {
-        return CompletableFuture.supplyAsync(() -> {
-            try {
-                return transIdBatches.parallelStream()
-                    .map(batch -> {
-                        try {
-                            return transactionWorkflowV2DAO.getFxContracts(batch);
-                        } catch (Exception e) {
-                            log.error("Error processing FX contracts batch", e);
-                            return Collections.<ApprovalStatusTxn>emptyList();
-                        }
-                    })
-                    .flatMap(List::stream)
-                    .collect(Collectors.toMap(
-                        ApprovalStatusTxn::getTransactionId,
-                        Function.identity(),
-                        (existing, replacement) -> existing
-                    ));
-            } catch (Exception e) {
-                log.error("Error in FX contracts batch processing", e);
-                return Collections.emptyMap();
-            }
-        }, executorService);
-    }
-
-    private void handleProcessingError(Exception e, String transactionType) {
-        if (e instanceof TimeoutException) {
-            log.error("Timeout while processing {} transactions", transactionType, e);
-            // Consider partial results or fallback strategy
-        } else if (e instanceof CompletionException) {
-            log.error("Error in concurrent execution for {} transactions", transactionType, e.getCause());
-        } else {
-            log.error("Unexpected error processing {} transactions", transactionType, e);
-        }
-    }
-
-    @VisibleForTesting
-    String buildCacheKey(FilterParams filterParams) {
-        return String.format("%s_%s_%s",
-            filterParams.getCompanyId(),
-            filterParams.getAccountNumber(),
-            filterParams.getDateFrom()
+    private CompletableFuture<Map<String, ApprovalStatusTxn>> processFxContractsInBatches(
+            List<List<String>> transIdBatches) {
+        return CompletableFuture.supplyAsync(() -> 
+            transIdBatches.parallelStream()
+                .map(batch -> transactionWorkflowV2DAO.getFxContracts(batch))
+                .flatMap(List::stream)
+                .collect(Collectors.toMap(
+                    ApprovalStatusTxn::getTransactionId,
+                    Function.identity(),
+                    (existing, replacement) -> existing
+                )),
+            executorService
         );
     }
 
-    @VisibleForTesting
-    void updateTransactionCount(List<ApprovalStatusTxn> transactions, int count) {
+    private void updateTransactionCount(List<ApprovalStatusTxn> transactions, int count) {
         BigDecimal countValue = BigDecimal.valueOf(count);
         transactions.forEach(txn -> txn.setCount(countValue));
     }
