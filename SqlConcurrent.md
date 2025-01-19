@@ -79,96 +79,99 @@ public class ApprovalStatusServiceImpl implements ApprovalStatusService {
         }
     }
 
-    /**
-     * Processes child transactions with concurrent execution of count query.
-     */
-    private List<ApprovalStatusTxn> processChildTransactions(FilterParams filterParams) {
-        try {
-            filterParams.setIsChildY(YES);
+/**
+ * Processes child transactions with truly concurrent execution of queries.
+ */
+private List<ApprovalStatusTxn> processChildTransactions(FilterParams filterParams) {
+    try {
+        filterParams.setIsChildY(YES);
 
-            // Execute main transaction list query
-            CompletableFuture<List<ApprovalStatusTxn>> txnListFuture = CompletableFuture
-                .supplyAsync(() -> transactionWorkflowDAO.getBulkApprovalStatusTxnList(filterParams), 
-                           executorService);
+        // Start both queries simultaneously
+        CompletableFuture<List<ApprovalStatusTxn>> txnListFuture = CompletableFuture
+            .supplyAsync(() -> transactionWorkflowDAO.getBulkApprovalStatusTxnList(filterParams), 
+                       executorService);
 
-            List<ApprovalStatusTxn> approvalStatusList = txnListFuture.get(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-            
-            if (ObjectUtils.isEmpty(approvalStatusList)) {
-                return approvalStatusList;
-            }
+        CompletableFuture<Integer> countFuture = CompletableFuture
+            .supplyAsync(() -> transactionWorkflowDAO.getBulkApprovalStatusTxnCount(filterParams),
+                       executorService);
 
-            // Execute count query concurrently
-            CompletableFuture<Integer> countFuture = CompletableFuture
-                .supplyAsync(() -> transactionWorkflowDAO.getBulkApprovalStatusTxnCount(filterParams),
-                           executorService);
-
-            int count = countFuture.get(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-            log.info("Total number of child transactions: {}", count);
-            
-            // Update transaction count
-            approvalStatusList.stream()
-                .findFirst()
-                .ifPresent(txn -> txn.setCount(BigDecimal.valueOf(count)));
-
+        // Wait for both futures to complete
+        List<ApprovalStatusTxn> approvalStatusList = txnListFuture.get(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        
+        if (ObjectUtils.isEmpty(approvalStatusList)) {
             return approvalStatusList;
-
-        } catch (TimeoutException e) {
-            throw new TransactionProcessingException("Query timeout occurred", e);
-        } catch (Exception e) {
-            throw new TransactionProcessingException("Failed to process child transactions", e);
         }
+
+        // Get count results and update
+        int count = countFuture.get(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        log.info("Total number of child transactions: {}", count);
+        
+        approvalStatusList.stream()
+            .findFirst()
+            .ifPresent(txn -> txn.setCount(BigDecimal.valueOf(count)));
+
+        return approvalStatusList;
+
+    } catch (TimeoutException e) {
+        throw new TransactionProcessingException("Query timeout occurred", e);
+    } catch (Exception e) {
+        throw new TransactionProcessingException("Failed to process child transactions", e);
     }
+}
 
-    /**
-     * Processes parent transactions with concurrent execution of count, FX contracts,
-     * and charges queries.
-     */
-    private List<ApprovalStatusTxn> processParentTransactions(FilterParams filterParams) {
-        try {
-            filterParams.setIsChildN(YES);
+/**
+ * Processes parent transactions with truly concurrent execution of all queries.
+ */
+private List<ApprovalStatusTxn> processParentTransactions(FilterParams filterParams) {
+    try {
+        filterParams.setIsChildN(YES);
 
-            // Execute main transaction list query
-            CompletableFuture<List<ApprovalStatusTxn>> txnListFuture = CompletableFuture
-                .supplyAsync(() -> transactionWorkflowDAO.getBulkParentApprovalStatusTxnList(filterParams), 
-                           executorService);
+        // Start main transaction list query
+        CompletableFuture<List<ApprovalStatusTxn>> txnListFuture = CompletableFuture
+            .supplyAsync(() -> transactionWorkflowDAO.getBulkParentApprovalStatusTxnList(filterParams), 
+                       executorService);
 
-            List<ApprovalStatusTxn> approvalStatusList = txnListFuture.get(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-            
-            if (ObjectUtils.isEmpty(approvalStatusList)) {
-                return approvalStatusList;
-            }
-
-            List<String> transIds = extractTransactionIds(approvalStatusList);
-
-            // Execute all supporting queries concurrently
-            CompletableFuture<Integer> countFuture = CompletableFuture
-                .supplyAsync(() -> transactionWorkflowDAO.getBulkParentApprovalStatusTxnCount(filterParams),
-                           executorService);
-
-            CompletableFuture<List<PwsTransactionCharges>> chargesFuture = CompletableFuture
-                .supplyAsync(() -> transactionWorkflowDAO.getChargesDetail(transIds),
-                           executorService);
-
-            CompletableFuture<List<ApprovalStatusTxn>> fxContractsFuture = CompletableFuture
-                .supplyAsync(() -> transactionWorkflowDAO.getFxContracts(transIds),
-                           executorService);
-
-            // Wait for all futures to complete
-            int count = countFuture.get(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-            List<PwsTransactionCharges> chargesDetail = chargesFuture.get(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-            List<ApprovalStatusTxn> fxContracts = fxContractsFuture.get(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-
-            // Update approval status list with results
-            updateParentTransactions(approvalStatusList, count, chargesDetail, fxContracts);
+        // Wait only for transaction list to get IDs
+        List<ApprovalStatusTxn> approvalStatusList = txnListFuture.get(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        
+        if (ObjectUtils.isEmpty(approvalStatusList)) {
             return approvalStatusList;
-
-        } catch (TimeoutException e) {
-            throw new TransactionProcessingException("Query timeout occurred", e);
-        } catch (Exception e) {
-            throw new TransactionProcessingException("Failed to process parent transactions", e);
         }
-    }
 
+        List<String> transIds = extractTransactionIds(approvalStatusList);
+
+        // Start all supporting queries simultaneously
+        CompletableFuture<Integer> countFuture = CompletableFuture
+            .supplyAsync(() -> transactionWorkflowDAO.getBulkParentApprovalStatusTxnCount(filterParams),
+                       executorService);
+
+        CompletableFuture<List<PwsTransactionCharges>> chargesFuture = CompletableFuture
+            .supplyAsync(() -> transactionWorkflowDAO.getChargesDetail(transIds),
+                       executorService);
+
+        CompletableFuture<List<ApprovalStatusTxn>> fxContractsFuture = CompletableFuture
+            .supplyAsync(() -> transactionWorkflowDAO.getFxContracts(transIds),
+                       executorService);
+
+        // Wait for all supporting queries to complete using allOf
+        CompletableFuture.allOf(countFuture, chargesFuture, fxContractsFuture)
+            .get(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+
+        // Get results from futures
+        int count = countFuture.join();
+        List<PwsTransactionCharges> chargesDetail = chargesFuture.join();
+        List<ApprovalStatusTxn> fxContracts = fxContractsFuture.join();
+
+        // Update approval status list with results
+        updateParentTransactions(approvalStatusList, count, chargesDetail, fxContracts);
+        return approvalStatusList;
+
+    } catch (TimeoutException e) {
+        throw new TransactionProcessingException("Query timeout occurred", e);
+    } catch (Exception e) {
+        throw new TransactionProcessingException("Failed to process parent transactions", e);
+    }
+}
     /**
      * Updates parent transactions with charge and FX contract details.
      */
