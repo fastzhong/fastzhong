@@ -1,3 +1,11 @@
+
+The issue with dependency injection due to Java dynamic proxies in Spring Boot 3.2 and Java 17 arises because Spring defaults to JDK dynamic proxies for beans implementing interfaces. This can cause injection errors when the target bean is expected as a concrete class but is proxied as an interface-based proxy.
+Solutions:
+	1.	Force CGLIB Proxies: Add `spring.aop.proxy-target-class=true` in `application.properties` or annotate with `@EnableAsync(proxyTargetClass = true)` or `@EnableCaching(proxyTargetClass = true)`.
+	2.	Inject Interfaces: Instead of injecting the concrete class, inject one of its interfaces.
+	3.	Compile with `-parameters`: Ensure bytecode includes parameter names by enabling the `-parameters` option in your compiler.
+	4.	Check Dependencies: Ensure compatibility of third-party libraries with Spring Boot 3.x and Java 17.
+
 # ApprovalStatusServiceImpl
 
 ## code 
