@@ -1,4 +1,38 @@
 ```xml
+    <select id="getAuditByMQ"  statementType="PREPARED"
+            parameterType="com.uob.gwb.aqs.domain.AuditMessage"  resultMap="AuditEventsInfoMap">
+        <![CDATA[select
+		         ac.audit_event_code,
+		         ac.audit_category_code,
+		         ac.audit_tab_code ,
+		         arc.audit_result_code
+		         from aqs_audit_codes ac
+		         left join aqs_audit_result_code arc on ac.audit_type_id=arc.audit_type_id
+		         where
+		            arc.audit_result_code = <@p name='resultCode'/>
+		         <#if auditMessage.auditKey??>
+		         and ac.audit_key = <@p name='auditMessage.auditKey'/>
+		         </#if>
+		         <#if auditMessage.endpoint??>
+		         and ac.API_ENDPOINT = <@p name='auditMessage.endpoint'/>
+		         </#if>
+		         <#if auditMessage.microService??>
+		         and ac.MICROSERVICE_NAME = <@p name='auditMessage.microService'/>
+		         </#if>
+		]]>
+    </select>
+
+    <resultMap id="AuditEventsInfoMap"
+               type="com.uob.gwb.aqs.domain.AuditCodes">
+        <result column="audit_event_code" property="eventCode" />
+        <result column="audit_category_code" property="categoryCode" />
+        <result column="audit_tab_code" property="tabCode" />
+        <result column="audit_result_code" property="resultCode" />
+        <result column="AUDIT_KEY" property="auditActionKey" />
+    </resultMap>
+```
+
+```xml
 
 <routes>
     <route id="initiation-audit-query-route" autoStartup="{{ufw.app.qfeature.audit-query-async-event.start-audit-queue}}"><description>Route to send message from Audit Query</description>
