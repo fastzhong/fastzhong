@@ -1,3 +1,44 @@
+# Mybatis 
+
+```java
+public class MyBatisMapperPwsConfig {
+    
+    @Autowired
+    @Qualifier("pwsSqlSessionTemplate")
+    private SqlSessionTemplate pwsSqlSessionTemplate;
+    
+    @PostConstruct
+    public void displayMapperLocations() {
+        SqlSessionFactory sqlSessionFactory = pwsSqlSessionTemplate.getSqlSessionFactory();
+        Configuration configuration = sqlSessionFactory.getConfiguration();
+        
+        // Display loaded XML files
+        System.out.println("\n=== PWS SqlSessionTemplate Mapper Locations ===");
+        Collection<String> loadedResources = configuration.getLoadedResources();
+        System.out.println("Loaded XML files:");
+        for (String resource : loadedResources) {
+            System.out.println(resource);
+        }
+        
+        // Display all mapped statements (SQL IDs)
+        System.out.println("\nMapped Statements:");
+        Collection<MappedStatement> statements = configuration.getMappedStatements();
+        for (MappedStatement statement : statements) {
+            System.out.println(statement.getId());
+        }
+        
+        // Display registered mapper interfaces
+        System.out.println("\nRegistered Mapper Interfaces:");
+        Collection<Class<?>> mappers = configuration.getMapperRegistry().getMappers();
+        for (Class<?> mapper : mappers) {
+            System.out.println(mapper.getName());
+        }
+        System.out.println("=======================================\n");
+    }
+}
+```
+
+
 # Oracle DB 
 
 For the other optimizations (NOLOGGING, disabling indexes, changing system parameters), I would recommend:
