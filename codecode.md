@@ -1,61 +1,44 @@
 ```java
 public ReportHandler createReportHandler(ServiceModel serviceModel) {
-        if (serviceModel instanceof OnlineReportReq) {
-            OnlineReportReq onlineReportReq = (OnlineReportReq) serviceModel;
-
-            // Advice
-            if (IS_CREDIT_ADVICE_ONLINE.test(onlineReportReq) || IS_DEBIT_ADVICE_ONLINE.test(onlineReportReq)) {
-                return adviceOnlineHandler;
-            }
-
-            // Auth Setup
-            if (IS_AUTH_SETUP_ONLINE.test(onlineReportReq)) {
-                return authSetupOnlineHandler;
-            }
-
-            // Manage PayerPayee
-            if (IS_MANAGE_PAYERPAYEE_ONLINE.test(onlineReportReq)) {
-                return managePayerPayeeOnlineHandler;
-            }
-
-            // txn
-            Boolean isSingleChild = IS_WITH_SINGLE_CHILD.test(onlineReportReq);
-            Boolean isBulkOnline = ONLINE_IS_BULK.test(onlineReportReq);
-            if (!isSingleChild) {
-                return singleOnlineReportHandler;
-            } else if (isBulkOnline) {
-                return bulkOnlineReportHandler;
-            } else {
-                // generate one child of bulk online report
-                return bulkChildOnlineReportHandler;
-            }
-
-        } else if (serviceModel instanceof OfflineReportReq) {
-            OfflineReportReq offlineReportReq = (OfflineReportReq) serviceModel;
-
-            // Advice
-            if (IS_CREDIT_ADVICE_OFFLINE.test(offlineReportReq) || IS_DEBIT_ADVICE_OFFLINE.test(offlineReportReq)) {
-                return adviceOfflineHandler;
-            }
-
-            // Auth Setup
-            if (IS_AUTH_SETUP_OFFLINE.test(offlineReportReq)) {
-                return authSetupOfflineHandler;
-            }
-
-            // Manage PayerPayee
-            if (IS_MANAGE_PAYERPAYEE_OFFLINE.test(offlineReportReq)) {
-                return managePayerPayeeOfflineHandler;
-            }
-
-            // txn
-            if (OFFLINE_BULK.test(offlineReportReq)) {
-                return bulkOfflineReportHandler;
-            } else {
-                return singleOfflineReportHandler;
-            }
-        } else {
-            return null;
-        }
+    if (serviceModel instanceof OnlineReportReq) {
+        return handleOnlineReport((OnlineReportReq) serviceModel);
+    } else if (serviceModel instanceof OfflineReportReq) {
+        return handleOfflineReport((OfflineReportReq) serviceModel);
     }
+    return null;
+}
+
+private ReportHandler handleOnlineReport(OnlineReportReq request) {
+    if (IS_CREDIT_ADVICE_ONLINE.test(request) || IS_DEBIT_ADVICE_ONLINE.test(request)) {
+        return adviceOnlineHandler;
+    }
+    if (IS_AUTH_SETUP_ONLINE.test(request)) {
+        return authSetupOnlineHandler;
+    }
+    if (IS_MANAGE_PAYERPAYEE_ONLINE.test(request)) {
+        return managePayerPayeeOnlineHandler;
+    }
+    return getOnlineTransactionHandler(request);
+}
+
+private ReportHandler getOnlineTransactionHandler(OnlineReportReq request) {
+    if (!IS_WITH_SINGLE_CHILD.test(request)) {
+        return singleOnlineReportHandler;
+    }
+    return ONLINE_IS_BULK.test(request) ? bulkOnlineReportHandler : bulkChildOnlineReportHandler;
+}
+
+private ReportHandler handleOfflineReport(OfflineReportReq request) {
+    if (IS_CREDIT_ADVICE_OFFLINE.test(request) || IS_DEBIT_ADVICE_OFFLINE.test(request)) {
+        return adviceOfflineHandler;
+    }
+    if (IS_AUTH_SETUP_OFFLINE.test(request)) {
+        return authSetupOfflineHandler;
+    }
+    if (IS_MANAGE_PAYERPAYEE_OFFLINE.test(request)) {
+        return managePayerPayeeOfflineHandler;
+    }
+    return OFFLINE_BULK.test(request) ? bulkOfflineReportHandler : singleOfflineReportHandler;
+}
+
 ```
