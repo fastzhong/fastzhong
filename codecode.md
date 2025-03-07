@@ -233,52 +233,347 @@ public class SingleOnlineReportHandler implements ReportHandler<OnlineReportReq>
 
 # Generator
 ```java
-@Component
-public class CustomTransactionReportProvider implements ReportGenerator.ReportParameterProvider {
+public class ReportGenerator {
 
-    @Autowired
-    private ReportGenerator reportGenerator;
+    public static final String TEMPLATE_PATH = "TEMPLATE_PATH";
+    public static final String TITLE = "TITLE";
+    public static final String COMPILED_TEMPLATES = "compiledJaspertemplates";
+    public static final String HEADER_TEMPLATE = "headerTemplate";
+    public static final String FOOTER_TEMPLATE = "footerTemplate";
+    public static final String HEADER_JASPER = "header.jasper";
+    public static final String FOOTER_JASPER = "footer.jasper";
+    public static final String SINGAPORE = "SG";
+    public static final String EN = "en";
+
+    // Constants for report types
+    public static final String REPORT_TYPE_TRANSACTION = "transaction";
+    public static final String REPORT_TYPE_CREDITOR_LIST = "creditorList";
+    public static final String REPORT_TYPE_CREDIT_ADVICE = "creditAdvice";
+    public static final String REPORT_TYPE_DEBIT_ADVICE = "debitAdvice";
+    
+    // Constants for export formats
+    public static final String FORMAT_PDF = "pdf";
+    public static final String FORMAT_CSV = "csv";
+    public static final String FORMAT_EXCEL = "excel";
+    
+    // Template paths mapping
+    private static final Map<String, String> TEMPLATE_MAP = Map.of(
+        "FT", "/jasper/reportTemplates/single-transaction.jrxml", 
+        "BC", "/jasper/reportTemplates/bulk-child-transaction.jrxml", 
+        "BK", "/jasper/reportTemplates/bulk-transaction.jrxml",
+        "CL", "/jasper/reportTemplates/creditor-list.jrxml",
+        "CA", "/jasper/reportTemplates/credit-advice.jrxml",
+        "DA", "/jasper/reportTemplates/debit-advice.jrxml"
+    );
+    
+    // Registry of report-specific parameter providers
+    private final Map<String, ReportParameterProvider> reportParameterProviders = new HashMap<>();
     
     @PostConstruct
     public void init() {
-        // Register this custom provider for transaction reports
-        reportGenerator.registerParameterProvider(ReportGenerator.REPORT_TYPE_TRANSACTION, this);
+        // Register default parameter providers
+        registerParameterProvider(REPORT_TYPE_TRANSACTION, new TransactionReportParameterProvider());
+        registerParameterProvider(REPORT_TYPE_CREDITOR_LIST, new CreditorListReportParameterProvider());
+        registerParameterProvider(REPORT_TYPE_CREDIT_ADVICE, new CreditAdviceReportParameterProvider());
+        registerParameterProvider(REPORT_TYPE_DEBIT_ADVICE, new DebitAdviceReportParameterProvider());
     }
     
-    @Override
-    public void addParameters(String reportType, String tab, Map<String, Object> jrparameters) throws JRException, IOException {
-        // Add standard address parameters (like the default provider does)
-        if (tab.equalsIgnoreCase("customerOnBehalfOf")) {
-            JasperReport structuredAddressRpt = loadPreCompiledReport("customer-address-details-structured.jasper");
-            JasperReport unStructuredAddressRpt = loadPreCompiledReport("customer-address-details-unStructured.jasper");
-            jrparameters.put("customerAddressDetailsStructuredTemplate", structuredAddressRpt);
-            jrparameters.put("customerAddressDetailsUnstructuredTemplate", unStructuredAddressRpt);
-        }
-        if (tab.equalsIgnoreCase("payeeThirdPartyDetails")) {
-            JasperReport structuredAddressRpt = loadPreCompiledReport("payee-address-details-structured.jasper");
-            JasperReport unStructuredAddressRpt = loadPreCompiledReport("payee-address-details-unStructured.jasper");
-            jrparameters.put("payeeAddressDetailsStructuredTemplate", structuredAddressRpt);
-            jrparameters.put("payeeAddressDetailsUnstructuredTemplate", unStructuredAddressRpt);
+    /**
+     * Register a parameter provider for a specific report type
+     */
+    public void registerParameterProvider(String reportType, ReportParameterProvider provider) {
+        reportParameterProviders.put(reportType, provider);
+    }
+    
+    @Autowired
+    private ReportConfig reportConfig;
+
+    /**
+     * Generate a report with the specified format
+     * 
+     * @param reportType Type of report to generate (from constants)
+     * @param items Data to include in the report
+     * @param outputFormat Format to output the report (PDF, CSV, etc.)
+     * @param additionalParameters Optional additional parameters to pass to the report
+     * @return Byte array containing the generated report
+     * @throws IOException If there's an error reading the template
+     * @throws JRException If there's an error generating the report
+     */
+    public byte[] generateReport(String reportType, Object items, String outputFormat, Map<String, Object> additionalParameters) 
+            throws IOException, JRException {
+        log.info("ReportGenerator.generateReport :: START with type {}, format {}", reportType, outputFormat);
+        
+        // Default to PDF if no format specified
+        if (outputFormat == null || outputFormat.isEmpty()) {
+            outputFormat = FORMAT_PDF;
         }
         
-        // Add company-specific branding for transaction reports
-        if (tab.equalsIgnoreCase("mainTab")) {
-            JasperReport companyLogoRpt = loadPreCompiledReport("company-logo.jasper");
-            jrparameters.put("companyLogoTemplate", companyLogoRpt);
+        ReportInfo reportInfo = getReportInfo(reportType);
+        Map<String, Object> subReportObjects = new HashMap<>();
+        subReportObjects.put("items", items);
+
+        // Get configuration for report type
+        List<ReportTypePojoConfig> pojoConfigs = reportConfig.getReportTypePojoConfigs();
+        ReportTypePojoConfig pojoConfig = pojoConfigs.stream()
+                .filter(a -> reportInfo != null && reportInfo.getReportType() != null
+                        && reportInfo.getReportType().equalsIgnoreCase(a.getReportType()))
+                .findFirst()
+                .orElseThrow(() -> new ApplicationException("Failed to load pojo configs for report type: " + reportType));
+
+        String reportName = pojoConfig.getReportName();
+        String parentTemplate = pojoConfig.getParentTemplate();
+        List<String> enabledTabs = pojoConfig.getEnablePojoClasses();
+        
+        // Set up locale and parameters
+        Locale locale = new Locale(EN, SINGAPORE);
+        Map<String, Object> jrparameters = new HashMap<>();
+        
+        // Add any additional parameters provided by the caller
+        if (additionalParameters != null) {
+            jrparameters.putAll(additionalParameters);
+        }
+        
+        ResourceBundle discoverProperties = ResourceBundle.getBundle("export.reportsDiscover");
+        setDefaultJrParameters(jrparameters, locale, reportName);
+
+        // Load all required subreport templates
+        for (String tab : enabledTabs) {
+            Object jaspertemplate = discoverProperties.getObject(new StringBuilder(tab).append(".jasper").toString());
             
-            // Add watermark for draft transactions
-            if (jrparameters.containsKey("IS_DRAFT") && Boolean.TRUE.equals(jrparameters.get("IS_DRAFT"))) {
-                JasperReport watermarkRpt = loadPreCompiledReport("draft-watermark.jasper");
-                jrparameters.put("watermarkTemplate", watermarkRpt);
+            // Add report-specific parameters for this tab
+            addReportSpecificParameters(reportType, tab, jrparameters);
+            
+            StringBuilder templateName = new StringBuilder(tab).append("Template");
+            JasperReport rpt = loadPreCompiledReport(jaspertemplate.toString());
+            jrparameters.put(templateName.toString(), rpt);
+        }
+
+        // Create data source from the provided items
+        JRMapCollectionDataSource mapDataSource = new JRMapCollectionDataSource(List.of(subReportObjects));
+        
+        // Fill the report with data
+        JasperPrint jasperPrint = JasperFillManager.fillReport(loadMainTemplate(parentTemplate), jrparameters, mapDataSource);
+        
+        // Export to the requested format
+        return exportReport(jasperPrint, outputFormat);
+    }
+    
+    /**
+     * Overloaded method for backward compatibility - defaults to PDF format
+     */
+    public byte[] generateReport(String reportType, Object items) throws IOException, JRException {
+        return generateReport(reportType, items, FORMAT_PDF, null);
+    }
+    
+    /**
+     * Overloaded method with format but no additional parameters
+     */
+    public byte[] generateReport(String reportType, Object items, String outputFormat) throws IOException, JRException {
+        return generateReport(reportType, items, outputFormat, null);
+    }
+    
+    /**
+     * Export the JasperPrint to the specified format
+     */
+    private byte[] exportReport(JasperPrint jasperPrint, String outputFormat) throws JRException {
+        switch (outputFormat.toLowerCase()) {
+            case FORMAT_PDF:
+                return JasperExportManager.exportReportToPdf(jasperPrint);
+                
+            case FORMAT_CSV:
+                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                JRCsvExporter exporter = new JRCsvExporter();
+                exporter.setExporterInput(new SimpleExporterInput(jasperPrint));
+                exporter.setExporterOutput(new SimpleWriterExporterOutput(baos));
+                
+                SimpleCsvExporterConfiguration configuration = new SimpleCsvExporterConfiguration();
+                configuration.setFieldDelimiter(",");
+                exporter.setConfiguration(configuration);
+                exporter.exportReport();
+                return baos.toByteArray();
+                
+            case FORMAT_EXCEL:
+                ByteArrayOutputStream xlsOut = new ByteArrayOutputStream();
+                JRXlsExporter xlsExporter = new JRXlsExporter();
+                xlsExporter.setExporterInput(new SimpleExporterInput(jasperPrint));
+                xlsExporter.setExporterOutput(new SimpleOutputStreamExporterOutput(xlsOut));
+                
+                SimpleXlsReportConfiguration xlsConfig = new SimpleXlsReportConfiguration();
+                xlsConfig.setOnePagePerSheet(false);
+                xlsConfig.setRemoveEmptySpaceBetweenRows(true);
+                xlsConfig.setDetectCellType(true);
+                xlsConfig.setWhitePageBackground(false);
+                xlsExporter.setConfiguration(xlsConfig);
+                xlsExporter.exportReport();
+                return xlsOut.toByteArray();
+                
+            default:
+                log.warn("Unsupported export format: {}. Defaulting to PDF.", outputFormat);
+                return JasperExportManager.exportReportToPdf(jasperPrint);
+        }
+    }
+
+    private ReportInfo getReportInfo(String reportType) {
+        List<ReportTypeProperty> reportTypeProperties = reportConfig.getReportTypeProperties()
+                .stream()
+                .filter(e -> e.getReportType().equalsIgnoreCase(reportType))
+                .toList();
+                
+        if (reportTypeProperties.isEmpty()) {
+            throw new ApplicationException("No report type properties found for: " + reportType);
+        }
+        
+        ReportTypeProperty reportTypeProperty = reportTypeProperties.get(0);
+        String resourceId = reportTypeProperty.getProductType();
+        String featureId = reportTypeProperty.getReportCategory();
+        return ReportInfo.builder().reportType(reportType).resourceId(resourceId).featureId(featureId).build();
+    }
+
+    private JasperReport loadPreCompiledReport(String reportName) throws JRException, IOException {
+        ClassPathResource resource = new ClassPathResource(COMPILED_TEMPLATES + "/" + reportName);
+        try (InputStream inputStream = resource.getInputStream()) {
+            return (JasperReport) JRLoader.loadObject(inputStream);
+        }
+    }
+
+    private JasperReport loadMainTemplate(String parentTemplate) throws JRException {
+        try {
+            ClassPathResource resource = new ClassPathResource("/jasper/reportTemplates/" + parentTemplate);
+            try (InputStream inputStream = resource.getInputStream()) {
+                return JasperCompileManager.compileReport(inputStream);
+            }
+        } catch (IOException e) {
+            log.error("ReportGenerator.loadMainTemplate :: Template path is not correct", e);
+            throw new ApplicationException("Failed to load report template: " + parentTemplate, e);
+        }
+    }
+
+    private String getTemplatePath(String reportType) {
+        for (Map.Entry<String, String> entry : TEMPLATE_MAP.entrySet()) {
+            if (reportType.startsWith(entry.getKey())) {
+                return entry.getValue();
+            }
+        }
+        throw new ApplicationException("No template found for report type: " + reportType);
+    }
+
+    /**
+     * Interface for report-specific parameter providers
+     */
+    public interface ReportParameterProvider {
+        /**
+         * Add report-specific parameters
+         * 
+         * @param reportType The type of report being generated
+         * @param tab The current tab being processed
+         * @param jrparameters The parameter map to populate
+         * @throws JRException If there's an error loading report templates
+         * @throws IOException If there's an error reading templates
+         */
+        void addParameters(String reportType, String tab, Map<String, Object> jrparameters) throws JRException, IOException;
+    }
+    
+    /**
+     * Default implementation for transaction reports
+     */
+    public class TransactionReportParameterProvider implements ReportParameterProvider {
+        @Override
+        public void addParameters(String reportType, String tab, Map<String, Object> jrparameters) throws JRException, IOException {
+            if (tab.equalsIgnoreCase("customerOnBehalfOf")) {
+                JasperReport structuredAddressRpt = loadPreCompiledReport("customer-address-details-structured.jasper");
+                JasperReport unStructuredAddressRpt = loadPreCompiledReport("customer-address-details-unStructured.jasper");
+                jrparameters.put("customerAddressDetailsStructuredTemplate", structuredAddressRpt);
+                jrparameters.put("customerAddressDetailsUnstructuredTemplate", unStructuredAddressRpt);
+            }
+            if (tab.equalsIgnoreCase("payeeThirdPartyDetails")) {
+                JasperReport structuredAddressRpt = loadPreCompiledReport("payee-address-details-structured.jasper");
+                JasperReport unStructuredAddressRpt = loadPreCompiledReport("payee-address-details-unStructured.jasper");
+                jrparameters.put("payeeAddressDetailsStructuredTemplate", structuredAddressRpt);
+                jrparameters.put("payeeAddressDetailsUnstructuredTemplate", unStructuredAddressRpt);
             }
         }
     }
     
-    private JasperReport loadPreCompiledReport(String reportName) throws JRException, IOException {
-        ClassPathResource resource = new ClassPathResource("compiledJaspertemplates/" + reportName);
-        try (InputStream inputStream = resource.getInputStream()) {
-            return (JasperReport) JRLoader.loadObject(inputStream);
+    /**
+     * Implementation for creditor list reports
+     */
+    public class CreditorListReportParameterProvider implements ReportParameterProvider {
+        @Override
+        public void addParameters(String reportType, String tab, Map<String, Object> jrparameters) throws JRException, IOException {
+            // Add creditor list specific parameters
+            if (tab.equalsIgnoreCase("creditorDetails")) {
+                JasperReport creditorDetailsRpt = loadPreCompiledReport("creditor-details.jasper");
+                jrparameters.put("creditorDetailsTemplate", creditorDetailsRpt);
+            }
         }
+    }
+    
+    /**
+     * Implementation for credit advice reports
+     */
+    public class CreditAdviceReportParameterProvider implements ReportParameterProvider {
+        @Override
+        public void addParameters(String reportType, String tab, Map<String, Object> jrparameters) throws JRException, IOException {
+            // Add credit advice specific parameters
+            if (tab.equalsIgnoreCase("creditAdviceDetails")) {
+                JasperReport adviceDetailsRpt = loadPreCompiledReport("credit-advice-details.jasper");
+                jrparameters.put("creditAdviceDetailsTemplate", adviceDetailsRpt);
+            }
+        }
+    }
+    
+    /**
+     * Implementation for debit advice reports
+     */
+    public class DebitAdviceReportParameterProvider implements ReportParameterProvider {
+        @Override
+        public void addParameters(String reportType, String tab, Map<String, Object> jrparameters) throws JRException, IOException {
+            // Add debit advice specific parameters
+            if (tab.equalsIgnoreCase("debitAdviceDetails")) {
+                JasperReport adviceDetailsRpt = loadPreCompiledReport("debit-advice-details.jasper");
+                jrparameters.put("debitAdviceDetailsTemplate", adviceDetailsRpt);
+            }
+        }
+    }
+    
+    /**
+     * Get the appropriate parameter provider for the report type
+     */
+    private ReportParameterProvider getParameterProvider(String reportType) {
+        ReportParameterProvider provider = reportParameterProviders.get(reportType);
+        if (provider == null) {
+            log.warn("No parameter provider found for report type: {}. Using default.", reportType);
+            return new ReportParameterProvider() {
+                @Override
+                public void addParameters(String reportType, String tab, Map<String, Object> jrparameters) {
+                    // Default implementation does nothing
+                }
+            };
+        }
+        return provider;
+    }
+    
+    /**
+     * Add report-specific parameters based on the tab
+     */
+    private void addReportSpecificParameters(String reportType, String tab, Map<String, Object> jrparameters) 
+            throws JRException, IOException {
+        ReportParameterProvider provider = getParameterProvider(reportType);
+        provider.addParameters(reportType, tab, jrparameters);
+    }
+
+    private void setDefaultJrParameters(Map<String, Object> jrparameters, Locale locale, String localisedReportName)
+            throws JRException, IOException {
+        ObjectMapper mapper = new ObjectMapper();
+        mapper.registerModule(new JavaTimeModule());
+        ResourceBundle resourceBundle = ResourceBundle.getBundle("export.reportsLocalization", locale);
+        jrparameters.put(TEMPLATE_PATH, new ClassPathResource("/jasper").getPath() + "/");
+        jrparameters.put(JRParameter.REPORT_LOCALE, locale);
+        jrparameters.put(JRParameter.REPORT_TIME_ZONE, TimeZone.getTimeZone("Asia/Singapore"));
+        jrparameters.put(JRParameter.REPORT_RESOURCE_BUNDLE, resourceBundle);
+        jrparameters.put(TITLE, localisedReportName);
+        jrparameters.put(HEADER_TEMPLATE, loadPreCompiledReport(HEADER_JASPER));
+        jrparameters.put(FOOTER_TEMPLATE, loadPreCompiledReport(FOOTER_JASPER));
     }
 }
 ```
