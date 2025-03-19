@@ -1,5 +1,4 @@
 ```java
-I have following java method:
 public void processPabAccountChange(String userId, List<PwsValidateTransactions> transactionsList) {
         CompanyAndAccountsForUserResourceFeaturesResp companyAccounts = apisClient
                 .getV1CompanyAndAccountsForUserResourceFeatures(getV1CompanyRequest(userId,
@@ -14,8 +13,6 @@ public void processPabAccountChange(String userId, List<PwsValidateTransactions>
         transactionsList.parallelStream()
                 .forEach(transaction -> validateNraAccount(accounts.get(transaction.getAccountNumber()), transaction));
     }
-
-how do i unit-test this method and make sure parallelStream has not concurrency issue? 
 ```
 
 ```java
@@ -45,41 +42,47 @@ public void processPabAccountChange(String userId, List<PwsValidateTransactions>
 ```java
 @Test
 public void testProcessPabAccountChange_Functionality() {
-    // Create a spy of the class under test
-    YourClass processor = new YourClass(); // Replace YourClass with the actual class name
-    YourClass spyProcessor = spy(processor);
+    // Create mocks
+    YourClass processor = mock(YourClass.class);
+    ApiClient apisClient = mock(ApiClient.class);
     
     // Inject mocked API client
-    ApiClient apisClient = mock(ApiClient.class);
-    ReflectionTestUtils.setField(spyProcessor, "apisClient", apisClient); // Spring way to set private field
-    // Alternative: use setter if available
-    // spyProcessor.setApisClient(apisClient);
+    ReflectionTestUtils.setField(processor, "apisClient", apisClient);
+    // Alternatively, if you have a setter:
+    // processor.setApisClient(apisClient);
     
-    // Rest of the test as before
+    // Allow the real method to be called, while other methods are mocked
+    doCallRealMethod().when(processor).processPabAccountChange(any(), any());
+    
+    // Test data
     String userId = "testUser";
     List<PwsValidateTransactions> transactionsList = createTestTransactions();
     
-    // Mock the API client response
+    // Mock API client response
     CompanyAndAccountsForUserResourceFeaturesResp mockResponse = createMockCompanyAccounts();
     when(apisClient.getV1CompanyAndAccountsForUserResourceFeatures(any())).thenReturn(mockResponse);
     
-    // Mock the accounts map
+    // Mock helper methods
     Map<String, Account> mockAccounts = createMockAccounts();
-    doReturn(mockAccounts).when(spyProcessor).getV2ValidAccountId(any(), any());
+    when(processor.getV2ValidAccountId(any(), any())).thenReturn(mockAccounts);
+    when(processor.getV1CompanyRequest(any(), any(), any())).thenCallRealMethod();
     
     // Act
-    spyProcessor.processPabAccountChange(userId, transactionsList);
+    processor.processPabAccountChange(userId, transactionsList);
     
     // Assert
     // Verify methods were called the correct number of times
     verify(apisClient, times(1)).getV1CompanyAndAccountsForUserResourceFeatures(any());
-    verify(spyProcessor, times(1)).getV2ValidAccountId(any(), any());
+    verify(processor, times(1)).getV2ValidAccountId(any(), any());
     
-    // Verify each transaction was processed
+    // Verify each transaction was processed exactly once
     for (PwsValidateTransactions transaction : transactionsList) {
-        verify(spyProcessor).mapPabAccountChange(mockAccounts.get(transaction.getAccountNumber()), transaction);
-        verify(spyProcessor).validateDormantAccount(mockAccounts.get(transaction.getAccountNumber()), transaction);
-        verify(spyProcessor).validateNraAccount(mockAccounts.get(transaction.getAccountNumber()), transaction);
+        verify(processor, times(1)).mapPabAccountChange(
+            mockAccounts.get(transaction.getAccountNumber()), transaction);
+        verify(processor, times(1)).validateDormantAccount(
+            mockAccounts.get(transaction.getAccountNumber()), transaction);
+        verify(processor, times(1)).validateNraAccount(
+            mockAccounts.get(transaction.getAccountNumber()), transaction);
     }
 }
 ```
@@ -87,51 +90,77 @@ public void testProcessPabAccountChange_Functionality() {
 ```java
 @Test
 public void testProcessPabAccountChange_ConcurrencySafety() {
-    // Create a spy of the class under test
-    YourClass processor = new YourClass(); // Replace YourClass with the actual class name
-    YourClass spyProcessor = spy(processor);
+    // Create a real instance for actual testing
+    YourClass realProcessor = new YourClass();
     
-    // Inject mocked API client
+    // Create mocks for dependencies
     ApiClient apisClient = mock(ApiClient.class);
-    ReflectionTestUtils.setField(spyProcessor, "apisClient", apisClient);
+    ReflectionTestUtils.setField(realProcessor, "apisClient", apisClient);
     
-    // Arrange
+    // Test data - create a large list to increase parallel execution
     String userId = "testUser";
-    // Create a large list of transactions to increase parallel processing
     List<PwsValidateTransactions> largeTransactionsList = createLargeTransactionsList(100);
     
-    // Create a ConcurrentHashMap to track method executions
-    final ConcurrentHashMap<String, AtomicInteger> methodCalls = new ConcurrentHashMap<>();
-    methodCalls.put("mapPabAccountChange", new AtomicInteger(0));
-    methodCalls.put("validateDormantAccount", new AtomicInteger(0));
-    methodCalls.put("validateNraAccount", new AtomicInteger(0));
+    // Create thread-safe collections to track method executions
+    ConcurrentMap<String, AtomicInteger> callCounts = new ConcurrentHashMap<>();
+    callCounts.put("mapPabAccountChange", new AtomicInteger(0));
+    callCounts.put("validateDormantAccount", new AtomicInteger(0));
+    callCounts.put("validateNraAccount", new AtomicInteger(0));
     
-    // Mock the API client response
+    // Create a CountDownLatch to ensure all method calls complete
+    int expectedCalls = largeTransactionsList.size() * 3; // 3 methods per transaction
+    CountDownLatch latch = new CountDownLatch(expectedCalls);
+    
+    // Mock API response
     CompanyAndAccountsForUserResourceFeaturesResp mockResponse = createMockCompanyAccounts();
     when(apisClient.getV1CompanyAndAccountsForUserResourceFeatures(any())).thenReturn(mockResponse);
     
-    // Mock the accounts map
+    // Replace actual methods with mocks that increment counters
+    YourClass processor = mock(YourClass.class);
+    when(processor.getV1CompanyRequest(any(), any(), any())).thenReturn(new Object()); // Adjust return type as needed
+    
     Map<String, Account> mockAccounts = createMockAccounts();
-    doReturn(mockAccounts).when(spyProcessor).getV2ValidAccountId(any(), any());
+    when(processor.getV2ValidAccountId(any(), any())).thenReturn(mockAccounts);
     
-    // Mock methods to track concurrent access
+    // Allow the real method to be called
+    doCallRealMethod().when(processor).processPabAccountChange(any(), any());
+    
+    // Create mocks for the three parallel methods
     doAnswer(invocation -> {
-        Account account = invocation.getArgument(0);
-        PwsValidateTransactions transaction = invocation.getArgument(1);
-        methodCalls.get("mapPabAccountChange").incrementAndGet();
-        // Simulate work to increase chance of concurrency issues
-        Thread.sleep(5);
+        // Simulate random processing time to increase chance of race conditions
+        Thread.sleep(new Random().nextInt(10));
+        callCounts.get("mapPabAccountChange").incrementAndGet();
+        latch.countDown();
         return null;
-    }).when(spyProcessor).mapPabAccountChange(any(), any());
+    }).when(processor).mapPabAccountChange(any(), any());
     
-    // Similar mocks for other methods...
+    doAnswer(invocation -> {
+        Thread.sleep(new Random().nextInt(10));
+        callCounts.get("validateDormantAccount").incrementAndGet();
+        latch.countDown();
+        return null;
+    }).when(processor).validateDormantAccount(any(), any());
+    
+    doAnswer(invocation -> {
+        Thread.sleep(new Random().nextInt(10));
+        callCounts.get("validateNraAccount").incrementAndGet();
+        latch.countDown();
+        return null;
+    }).when(processor).validateNraAccount(any(), any());
     
     // Act
     processor.processPabAccountChange(userId, largeTransactionsList);
     
+    // Wait for all parallel operations to complete
+    try {
+        latch.await(5, TimeUnit.SECONDS);
+    } catch (InterruptedException e) {
+        fail("Test timed out waiting for parallel operations");
+    }
+    
     // Assert
-    assertEquals(largeTransactionsList.size(), methodCalls.get("mapPabAccountChange").get());
-    assertEquals(largeTransactionsList.size(), methodCalls.get("validateDormantAccount").get());
-    assertEquals(largeTransactionsList.size(), methodCalls.get("validateNraAccount").get());
+    assertEquals(largeTransactionsList.size(), callCounts.get("mapPabAccountChange").get());
+    assertEquals(largeTransactionsList.size(), callCounts.get("validateDormantAccount").get());
+    assertEquals(largeTransactionsList.size(), callCounts.get("validateNraAccount").get());
 }
 ```
