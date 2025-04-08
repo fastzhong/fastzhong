@@ -1,6 +1,6 @@
 
 #!/bin/bash
-# File: filewatcher.sh
+# File: dmpslit.sh
 
 # Load configuration
 CONFIG_FILE="./filewatcher_config.conf"
