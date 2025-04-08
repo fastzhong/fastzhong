@@ -1,4 +1,4 @@
-```bash
+
 #!/bin/bash
 # File: filewatcher.sh
 
@@ -145,4 +145,4 @@ watch_directory_polling() {
 check_directories
 log_message "File watcher service started"
 watch_directory_inotify
-```
+
