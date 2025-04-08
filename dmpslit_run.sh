@@ -1,5 +1,5 @@
 #!/bin/bash
-# File: filewatcher_service.sh
+# File: dmpsplit_run.sh
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
