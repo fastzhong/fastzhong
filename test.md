@@ -1,3 +1,13 @@
+git fetch origin my-project-release     # 拉取远程分支最新代码
+git merge origin/my-project-release     # 合并到临时分支
+
+# 解决冲突后提交
+git add .
+git commit -m "Merge origin/my-project-release into release-merge-master"
+git push origin release-merge-master
+
+raise PR
+
 # AdviceSummaryImplTest
 
 ```java
