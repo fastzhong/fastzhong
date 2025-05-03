@@ -8,6 +8,8 @@ git push origin release-merge-master
 
 raise PR
 
+i have this java NoSuchMethodError void com.ibm.mq.jmqi.system.jmqiConnectOptions.setCertificateValPolicy(int)
+
 # AdviceSummaryImplTest
 
 ```java
