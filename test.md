@@ -83,9 +83,64 @@ org.springframework.web.multipart.MultipartException: Failed to parse multipart 
 	   at org.apache.catalina.valves.ErrorReportValve.invoke(ErrorReportValve.java:93)_
 	  at org.apache.catalina.core.StandardEngineValve.invoke(StandardEngineValve.java:74)_    at org.apache.catalina.valves.AbstractAccessLogValve.invoke(AbstractAccessLogValve.java:663)_  at org.apache.catalina.connector.CoyoteAdapter.service(CoyoteAdapter.java:344)_
 	
-	
 ```
 
+
+```java
+
+ /*
+ * Copyright (c) United Overseas Bank Limited Co.
+ * All rights reserved.
+ *
+ * This software is the confidential and proprietary information of
+ * United Overseas Bank Limited Co. ("Confidential Information").  You shall not
+ * disclose such Confidential Information and shall use it only in accordance
+ * with the terms of the license agreement you entered into with
+ * United Overseas Bank Limited Co.
+ */
+package com.uob.gwb.aqp.service.impl;
+
+
+import com.uob.gwb.aqp.mapper.AuditQueryMapper;
+import com.uob.gwb.aqp.model.AuditQueryRequestDto;
+import com.uob.gwb.aqp.utils.AuditUtils;
+import jakarta.servlet.http.HttpServletRequest;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.ObjectUtils;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+@Service("auditHttpRequestFilterProcessService")
+@Slf4j
+@RequiredArgsConstructor
+public class AuditHttpRequestFilterService {
+    private final AuditUtils auditUtils;
+    private final AuditQueryMapper auditQueryMapper;
+
+    @Value("${spring.application.name}")
+    private String microServiceName;
+
+    @Value("${audit.endpoints:}")
+    private String auditFilterEndpoints;
+
+    public final AuditQueryRequestDto processHttpRequest(HttpServletRequest httpServletRequest) {
+        log.info("Start processing audit query http request");
+        var requestApiFilter = getAuditRequestApiFilterEndpoint(httpServletRequest);
+        var headers = auditUtils.getRequestHeaders(httpServletRequest);
+        var requestUri = auditUtils.getRequestURI(httpServletRequest);
+        var requestUriUpdate = auditUtils.getRequestURIUpdate(requestUri, httpServletRequest);
+        var endPoint = (ObjectUtils.isNotEmpty(requestUriUpdate)) ? requestUriUpdate : requestUri;
+        return auditQueryMapper.mapHttpRequestHeaderFromPostRequest(microServiceName, endPoint, requestApiFilter,
+                headers);
+    }
+
+    protected boolean getAuditRequestApiFilterEndpoint(HttpServletRequest httpServletRequest) {
+        String requestUrl = httpServletRequest.getRequestURI();
+        return auditUtils.getFilterEndPointList(auditFilterEndpoints, requestUrl);
+    }
+}
+```
 
 
 git fetch origin my-project-release     # 拉取远程分支最新代码
