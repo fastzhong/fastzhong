@@ -642,20 +642,22 @@ Deadlock Problem Analysis
   ## How This Fixes the Deadlock
 
   Before (Problematic)
-
+```txt
   Thread 1 (Child 1): updateFinalBulkParentStatus() → Lock PWS_TRANSACTIONS row
   Thread 2 (Child 2): updateFinalBulkParentStatus() → Wait for PWS_TRANSACTIONS row
   Thread 3 (Child 3): updateFinalBulkParentStatus() → Wait for PWS_TRANSACTIONS row
   ...
   Thread 1000 (Child 1000): updateFinalBulkParentStatus() → DEADLOCK!
-
+```
+  
   After (Fixed)
-
+```txt
   Thread 1 (Child 1): Acquire app lock → Update database → Release app lock
   Thread 2 (Child 2): Wait for app lock → Update database → Release app lock
   Thread 3 (Child 3): Wait for app lock → Update database → Release app lock
   ...
   Thread 1000 (Child 1000): Wait for app lock → Update database → Success!
+```
 
   Benefits of This Solution
 
