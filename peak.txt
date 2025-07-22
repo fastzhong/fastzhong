@@ -20,8 +20,6 @@ Innovation, experimentation with emerging technologies, e.g., Generative AI.
 At least 3-4 use cases which will help to increase efficiency, productivity and improve quality - POC should be done
 Target to have at least 2 such initiatives to be embedded into project activities - Target Q3 2025
 
-review 
-=======
 
 # Engineering excellence, Quality of Delivery, T2M, Cost Effectiveness
 
@@ -40,8 +38,6 @@ Critical & High Defects aging: median 7 days
 Reduce defect density for (SIT & UAT) to 35%, reduce UAT defect leakage to 10%, critical defect leakage to production <2%
 98% availability of env for SIT and UAT for all apps. Daily monitorings should be in place and all downtimes should be planned and agreed as per the agreed downtime windows applications
 
-review 
-=======
 
 # Engineering excellence, Quality of Delivery, T2M, Cost Effectiveness 
 
@@ -60,8 +56,6 @@ Critical & High Defects aging: median 7 days
 Reduce defect density for (SIT & UAT) to 35%, reduce UAT defect leakage to 10%, critical defect leakage to production <2%
 98% availability of env for SIT and UAT for all apps. Daily monitorings should be in place and all downtimes should be planned and agreed as per the agreed downtime windows
 
-review 
-=======
 
 # Managing Top Risks & Operational Efficiency
 
@@ -82,7 +76,15 @@ No missed housekeeping, monitoring alerts, VBM extracts for apps
 
 review 
 =======
-While TH CMPT is still in the development phase, I ensured that SIT had started smoothly, and I remained actively involved in monitoring potential risks, including system problems, security vulnerabilities, and UAT issues arising from other projects. I remained committed to preventing regulatory breaches related to changes in authentication matrices, data synchronization from GEB, and entitlement changes, ensuring strict adherence to compliance standards.
+Successfully implemented an API/Microservices-first approach using UFW specifications for TH CMPT A1.2 development, enabling the delivery of new products and features, including bulk file upload, manage batch, customer report, and audit functionalities. Several features were built from scratch, aligning with strategic program goals for commercialization and NPS baseline as per GWB and GR Transformation & Balanced Scorecard.
+
+Leveraged Generative AI tools to enhance developer productivity, resolving technical issues (e.g., Java exceptions, SQL query optimization), analyzing existing code behavior, and auto-generating unit tests. Completed three proof-of-concept (POC) use cases, meeting the target of 3-4 use cases, contributing to increased efficiency, productivity, and quality.
+
+Enhanced Liquibase workflows to support the complex TH environment (e.g., coexistence of A1.1, A1.2, and B1.1 in a single environment), improving deployment reliability and configuration management.
+
+Struggled with aging critical and high defects (median 10 days vs. target 7 days) during UAT sign-off due to high defect volumes. Skill on effective resource allocation plan and defect prioritization framework is required to meet the 7-day median target in future. 
+
+For the first A1.2 PI release, post-go-live issues (e.g., missing Liquibase files, batch JAR, configuration errors, and filewatcher scripts) were promptly rectified with no PVT impact. The first A1.2 PI release encountered issues (e.g., missing files, configuration errors), highlighting the need for stricter pre-production gate checks. Enhanced configuration management and validation processes to be learned and improved to prevent recurrence.
 
 # Category: SEED Competencies
 ## Competency Strategise
@@ -129,3 +131,11 @@ D7 Is aware of team members' long term and short term career goals
 D8 Provides challenging tasks and stretched assignments for direct reports or project team members
 D9 Encourages team members to learn from one another's successes and failures.
 
+review 
+=======
+
+Effectively translated high-level requirements for TH CMPT A1.2 into actionable plans, defining clear milestones for features and following the SDM. Team execution speed was not always satisfactory and vendor management skills need improved to address team member responsibility and time management issues. 
+
+Fostered an inclusive environment by encouraging participation from diverse team members, including SAs, experienced developers, and new developers, ensuring varied perspectives enriched the A1.2 project development. 
+
+Skills in handling issues with stakeholders, require improvement, alongside formalizing team development plans, to be enhanced, particularly in managing difficult conversations to ensure accountability without straining relationships. 
